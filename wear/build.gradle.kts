@@ -1,5 +1,7 @@
+import java.io.FileInputStream
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.ksp)
@@ -37,8 +39,25 @@ fun generateDate(): String {
 }
 
 
+val keystorePropertiesFile = file("${System.getProperty("user.home")}/dev/androidkey/keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = "app.aaps.wear"
+
+    if (keystorePropertiesFile.exists()) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
 
     defaultConfig {
         minSdk = Versions.wearMinSdk
@@ -47,14 +66,17 @@ android {
         buildConfigField("String", "BUILDVERSION", "\"${generateGitBuild()}-${generateDate()}\"")
     }
 
-    android {
-        buildTypes {
-            debug {
-                enableUnitTestCoverage = true
-                // Disable androidTest coverage, since it performs offline coverage
-                // instrumentation and that causes online (JavaAgent) instrumentation
-                // to fail in this project.
-                enableAndroidTestCoverage = false
+    buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+            // Disable androidTest coverage, since it performs offline coverage
+            // instrumentation and that causes online (JavaAgent) instrumentation
+            // to fail in this project.
+            enableAndroidTestCoverage = false
+        }
+        release {
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }
