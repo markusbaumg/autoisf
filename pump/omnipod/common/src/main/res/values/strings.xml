@@ -48,6 +48,7 @@
     <string name="omnipod_common_overview_button_resume_delivery">Resume Delivery</string>
     <string name="omnipod_common_overview_button_pod_management">Pod Mgmt</string>
     <string name="omnipod_common_overview_button_silence_alerts">Silence Alerts</string>
+    <string name="omnipod_common_overview_button_site_rotation">Site</string>
     <string name="omnipod_common_overview_pod_status">Pod Status</string>
     <string name="omnipod_common_overview_total_delivered">Total Delivered</string>
     <string name="omnipod_common_overview_total_delivered_value">%1$.2f U</string>

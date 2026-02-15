@@ -26,6 +26,16 @@
         android:text="@string/omnipod_common_overview_button_pod_management" />
 
     <com.google.android.material.button.MaterialButton
+        android:id="@+id/button_site_rotation"
+        style="@style/ButtonSmallFontStyle"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:drawableTop="@drawable/ic_site_rotation"
+        android:drawablePadding="@dimen/omnipod_icon_button_drawable_padding"
+        android:text="@string/omnipod_common_overview_button_site_rotation" />
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/button_silence_alerts"
         style="@style/ButtonSmallFontStyle"
         android:layout_width="match_parent"

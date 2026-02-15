@@ -121,6 +121,10 @@ class OmnipodDashOverviewFragment : DaggerFragment() {
             }
         }
 
+        buttonBinding.buttonSiteRotation.setOnClickListener {
+            uiInteraction.runSiteRotationDialog(childFragmentManager)
+        }
+
         buttonBinding.buttonResumeDelivery.setOnClickListener {
             disablePodActionButtons()
             commandQueue.customCommand(
