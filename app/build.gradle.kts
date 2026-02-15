@@ -1,6 +1,8 @@
 import org.gradle.kotlin.dsl.debugImplementation
+import java.io.FileInputStream
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.ksp)
@@ -81,10 +83,10 @@ fun allCommitted(): Boolean {
     }
 }
 
-val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = java.util.Properties()
+val keystorePropertiesFile = file("${System.getProperty("user.home")}/dev/androidkey/keystore.properties")
+val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
