@@ -8,6 +8,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.fragment.findNavController
+import app.aaps.core.interfaces.ui.UiInteraction
+import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.pump.omnipod.common.R
 import app.aaps.pump.omnipod.common.di.OmnipodPluginQualifier
 import app.aaps.pump.omnipod.common.ui.wizard.activation.viewmodel.info.AttachPodViewModel
@@ -19,6 +22,9 @@ class AttachPodFragment : InfoFragmentBase() {
     @Inject
     @OmnipodPluginQualifier
     lateinit var viewModelFactory: ViewModelProvider.Factory
+
+    @Inject lateinit var uiInteraction: UiInteraction
+    @Inject lateinit var preferences: Preferences
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,6 +40,11 @@ class AttachPodFragment : InfoFragmentBase() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Show previous pod sites before attaching new pod
+        if (preferences.get(BooleanKey.SiteRotationManagePump)) {
+            uiInteraction.runSiteRotationDialog(childFragmentManager)
+        }
 
         view.findViewById<Button>(R.id.button_next).setOnClickListener {
             context?.let {
