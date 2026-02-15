@@ -35,7 +35,7 @@ class TreatmentActivity : ViewSelectorActivity() {
 
     private inner class MyPagerAdapter : PagerAdapter() {
 
-        override fun getPageCount(): Int = 3
+        override fun getPageCount(): Int = 2  // Kusi: was 3, but carbs page is disabled
 
         val incrementInsulin1 = (preferences.get(DoubleKey.OverviewInsulinButtonIncrement1) * 10).roundToInt() / 10.0
         val incrementInsulin2 = (preferences.get(DoubleKey.OverviewInsulinButtonIncrement2) * 10).roundToInt() / 10.0
@@ -65,6 +65,7 @@ class TreatmentActivity : ViewSelectorActivity() {
                 }
             }
 
+            /* Kusi: I don't want carbs input, just the insulin
             1    -> {
                 // Page 1: Carbs input page
                 val frameLayout = FrameLayout(applicationContext).apply {
@@ -84,6 +85,7 @@ class TreatmentActivity : ViewSelectorActivity() {
                     )
                 }
             }
+             */
 
             else -> {
                 // Page 2: Confirm page
