@@ -20,6 +20,7 @@ import app.aaps.core.data.time.T
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ue.ValueWithUnit
+import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.automation.Automation
 import app.aaps.core.interfaces.automation.AutomationEvent
@@ -97,6 +98,13 @@ import javax.inject.Singleton
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.min
+
+/**
+ * How much BG history the watch gets in `GraphData`: the largest window a watch surface draws (the
+ * chart timeframe of the watchfaces goes up to 5 h, the circle face's history ring 30 min), plus
+ * margin. Raise it together with those settings, never on its own.
+ */
+internal const val WEAR_GRAPH_HOURS = 6L
 
 @Singleton
 class DataHandlerMobile @Inject constructor(
@@ -1278,9 +1286,7 @@ class DataHandlerMobile @Inject constructor(
         //UserAction
         sendUserActions()
         // GraphData
-        iobCobCalculator.ads.getBucketedDataTableCopy()?.let { bucketedData ->
-            rxBus.send(EventMobileToWear(EventData.GraphData(ArrayList(bucketedData.map { getSingleBG(it) }))))
-        }
+        buildGraphData()?.let { rxBus.send(EventMobileToWear(it)) }
         // Treatments
         sendTreatments()
         // Status
@@ -1289,20 +1295,37 @@ class DataHandlerMobile @Inject constructor(
         handleAvailableLoopStates()
     }
 
-    private fun AutomationEvent.toWear(now: Long): EventData.UserAction.UserActionEntry =
+    /**
+     * The BG history for the watch graph, or null before the bucketed table exists.
+     *
+     * The table holds 24 h plus the longest DIA, about 400 buckets (~120 KB as a message); the watch
+     * draws at most [WEAR_GRAPH_HOURS] of it. Sending all of it cost the transfer, the parse and the
+     * store on the watch, on every resend.
+     */
+    // internal, not private, so the test can drive it without the rest of resendData.
+    internal fun buildGraphData(): EventData.GraphData? =
+        iobCobCalculator.ads.getBucketedDataTableCopy()?.let { bucketedData ->
+            val graphStart = dateUtil.now() - T.hours(WEAR_GRAPH_HOURS).msecs()
+            val bgContext = singleBgContext()
+            EventData.GraphData(ArrayList(bucketedData.filter { it.timestamp >= graphStart }.map { buildSingleBg(it, bgContext) }))
+        }
+
+    // The entries used to carry the send time. Nothing on the watch reads it, but the watch only
+    // stores the list and refreshes its tile when the serialized list differs from the stored one,
+    // and with a fresh time in every entry it always differed. The field stays, at 0, for the format.
+    private fun AutomationEvent.toWear(): EventData.UserAction.UserActionEntry =
         EventData.UserAction.UserActionEntry(
-            timeStamp = now,
+            timeStamp = 0L,
             id = hashCode(),
             title = title
         )
 
     fun sendUserActions() {
-        val now = System.currentTimeMillis()
         val events = automation.userEvents()
         rxBus.send(
             EventMobileToWear(
                 EventData.UserAction(
-                    ArrayList(events.filter { it.isEnabled && it.canRun() }.map { it.toWear(now) })
+                    ArrayList(events.filter { it.isEnabled && it.canRun() }.map { it.toWear() })
                 )
             )
         )
@@ -1316,11 +1339,14 @@ class DataHandlerMobile @Inject constructor(
         val boluses = arrayListOf<EventData.TreatmentData.Treatment>()
         val predictions = arrayListOf<EventData.SingleBg>()
         val profile = profileFunction.getProfile() ?: return
+        // One read for the whole window; the 5 min walk below asked the database at every step (66 of
+        // them), on every resend.
+        val tempBasals = processedTbrEbData.getTempBasalsIncludingConvertedExtended(startTimeWindow, now)
         var beginBasalSegmentTime = startTimeWindow
         var runningTime = startTimeWindow
         var beginBasalValue = profile.getBasal(beginBasalSegmentTime)
         var endBasalValue = beginBasalValue
-        var tb1 = processedTbrEbData.getTempBasalIncludingConvertedExtended(runningTime)
+        var tb1 = tempBasals.at(runningTime)
         var tb2: TB?
         var tbBefore = beginBasalValue
         var tbAmount = beginBasalValue
@@ -1346,7 +1372,7 @@ class DataHandlerMobile @Inject constructor(
             }
 
             //temps
-            tb2 = processedTbrEbData.getTempBasalIncludingConvertedExtended(runningTime)
+            tb2 = tempBasals.at(runningTime)
             when {
                 tb1 == null && tb2 == null -> {
                     //no temp stays no temp
@@ -1384,7 +1410,7 @@ class DataHandlerMobile @Inject constructor(
             basals.add(EventData.TreatmentData.Basal(beginBasalSegmentTime, runningTime, beginBasalValue))
         }
         if (tb1 != null) {
-            tb2 = processedTbrEbData.getTempBasalIncludingConvertedExtended(now) //use "now" to express current situation
+            tb2 = tempBasals.at(now) //use "now" to express current situation
             if (tb2 == null) {
                 //express the cancelled temp by painting it down one minute early
                 temps.add(EventData.TreatmentData.TempBasal(tbStart, tbBefore, now - 60 * 1000, endBasalValue, tbAmount))
@@ -1400,7 +1426,7 @@ class DataHandlerMobile @Inject constructor(
                 }
             }
         } else {
-            tb2 = processedTbrEbData.getTempBasalIncludingConvertedExtended(now) //use "now" to express current situation
+            tb2 = tempBasals.at(now) //use "now" to express current situation
             if (tb2 != null) {
                 //onset at the end
                 val profileTB = profileFunction.getProfile(runningTime)
@@ -1566,18 +1592,42 @@ class DataHandlerMobile @Inject constructor(
         return deltaStringDetailed
     }
 
-    private fun getSingleBG(glucoseValue: InMemoryGlucoseValue): EventData.SingleBg {
-        val glucoseStatus = glucoseStatusProvider.getGlucoseStatusData(true)
+    /** What [buildSingleBg] needs that is the same for every point of a message. */
+    private class SingleBgContext(
+        val glucoseStatus: GlucoseStatus?,
+        val units: GlucoseUnit,
+        val lowLine: Double,
+        val highLine: Double,
+        val slopeArrow: String
+    )
+
+    // Read once per message, not once per graph point: getGlucoseStatusData copies the bucketed table
+    // and fits a polynomial on every call.
+    private fun singleBgContext(): SingleBgContext {
         val units = profileFunction.getUnits()
-        val lowLine = profileUtil.convertToMgdl(preferences.get(UnitDoubleKey.OverviewLowMark), units)
-        val highLine = profileUtil.convertToMgdl(preferences.get(UnitDoubleKey.OverviewHighMark), units)
+        return SingleBgContext(
+            glucoseStatus = glucoseStatusProvider.getGlucoseStatusData(true),
+            units = units,
+            lowLine = profileUtil.convertToMgdl(preferences.get(UnitDoubleKey.OverviewLowMark), units),
+            highLine = profileUtil.convertToMgdl(preferences.get(UnitDoubleKey.OverviewHighMark), units),
+            slopeArrow = (trendCalculator.getTrendArrow(iobCobCalculator.ads) ?: TrendArrow.NONE).symbol
+        )
+    }
+
+    private fun getSingleBG(glucoseValue: InMemoryGlucoseValue): EventData.SingleBg = buildSingleBg(glucoseValue, singleBgContext())
+
+    private fun buildSingleBg(glucoseValue: InMemoryGlucoseValue, bgContext: SingleBgContext): EventData.SingleBg {
+        val glucoseStatus = bgContext.glucoseStatus
+        val units = bgContext.units
+        val lowLine = bgContext.lowLine
+        val highLine = bgContext.highLine
 
         return EventData.SingleBg(
             dataset = 0,
             timeStamp = glucoseValue.timestamp,
             sgvString = profileUtil.stringInCurrentUnitsDetect(glucoseValue.recalculated),
             glucoseUnits = units.asText,
-            slopeArrow = (trendCalculator.getTrendArrow(iobCobCalculator.ads) ?: TrendArrow.NONE).symbol,
+            slopeArrow = bgContext.slopeArrow,
             delta = glucoseStatus?.let { deltaString(it.delta, it.delta * Constants.MGDL_TO_MMOLL, units) } ?: "--",
             deltaDetailed = glucoseStatus?.let { deltaStringDetailed(it.delta, it.delta * Constants.MGDL_TO_MMOLL, units) } ?: "--",
             avgDelta = glucoseStatus?.let { deltaString(it.shortAvgDelta, it.shortAvgDelta * Constants.MGDL_TO_MMOLL, units) } ?: "--",

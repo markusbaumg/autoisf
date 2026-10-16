@@ -30,7 +30,11 @@ import app.aaps.core.interfaces.rx.weardata.CwfMetadataKey
 import app.aaps.core.interfaces.rx.weardata.EventData
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.DoubleKey
+import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.StringNonKey
+import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
 import app.aaps.plugins.sync.R
@@ -69,6 +73,14 @@ class WearPlugin @Inject constructor(
 
     private val disposable = CompositeDisposable()
 
+    private val resendCoalescer = WearResendCoalescer(aapsSchedulers.io) { reason ->
+        try {
+            dataHandlerMobile.resendData(reason)
+        } catch (e: Exception) {
+            fabricPrivacy.logException(e)
+        }
+    }
+
     var connectedDevice = "---"
     var savedCustomWatchface: CwfData? = null
 
@@ -94,21 +106,27 @@ class WearPlugin @Inject constructor(
                                if (isEnabled()) rxBus.send(EventMobileToWear(EventData.BolusProgress(percent = BolusProgressData.percent, status = BolusProgressData.wearStatus)))
                            }
                        }, fabricPrivacy::logException)
+        // Only the settings the watch gets in a resend start one. Every SharedPreferences write fires
+        // EventPreferenceChange while a settings screen exists, and the loop, the sensor plugins and
+        // the activity monitor write several keys per BG: on a phone 92 % of all resends (about one a
+        // second, ~150 KB each) came from keys the watch never shows.
         disposable += rxBus
             .toObservable(EventPreferenceChange::class.java)
+            .filter { isWatchPreference(it.changedKey) }
             .observeOn(aapsSchedulers.io)
             .subscribe({
-                           dataHandlerMobile.resendData("EventPreferenceChange")
+                           resendCoalescer.request("EventPreferenceChange ${it.changedKey}")
                            checkCustomWatchfacePreferences()
                        }, fabricPrivacy::logException)
+        // The resends after a BG go through one 2 s debounce: the calculation and the loop each send
+        // their event within seconds, often twice, and each one used to start a full resend.
+        // A watch asking for data (connect, its own refresh) is answered at once by DataHandlerMobile.
         disposable += rxBus
             .toObservable(EventAutosensCalculationFinished::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ dataHandlerMobile.resendData("EventAutosensCalculationFinished") }, fabricPrivacy::logException)
+            .subscribe({ resendCoalescer.request("EventAutosensCalculationFinished") }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventLoopUpdateGui::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ dataHandlerMobile.resendData("EventLoopUpdateGui") }, fabricPrivacy::logException)
+            .subscribe({ resendCoalescer.request("EventLoopUpdateGui") }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventWearUpdateTiles::class.java)
             .observeOn(aapsSchedulers.io)
@@ -161,6 +179,7 @@ class WearPlugin @Inject constructor(
 
     override fun onStop() {
         disposable.clear()
+        resendCoalescer.cancel()
         super.onStop()
         dataLayerListenerServiceMobileHelper.stopService(context)
     }
@@ -191,6 +210,41 @@ class WearPlugin @Inject constructor(
                 aapsLogger.debug(LTag.WEAR, "Sending broadcast " + intent.action + " to: " + it)
             }
         }
+    }
+
+    companion object {
+
+        /**
+         * The keys of the settings the watch gets with a resend (or that change what it gets), so a
+         * change of one of them is sent to the watch: the Preferences message (wear control, units,
+         * bolus %, max carbs / bolus, button increments), the graph and BG colouring (low / high mark),
+         * the status (patient name, reservoir levels), the quick wizard buttons, the texts (language)
+         * and the custom watchface settings.
+         */
+        internal val WATCH_PREFERENCE_KEYS: Set<String> = setOf(
+            BooleanKey.WearControl.key,
+            StringKey.GeneralUnits.key,
+            StringKey.GeneralLanguage.key,
+            IntKey.OverviewBolusPercentage.key,
+            IntKey.SafetyMaxCarbs.key,
+            DoubleKey.SafetyMaxBolus.key,
+            DoubleKey.OverviewInsulinButtonIncrement1.key,
+            DoubleKey.OverviewInsulinButtonIncrement2.key,
+            IntKey.OverviewCarbsButtonIncrement1.key,
+            IntKey.OverviewCarbsButtonIncrement2.key,
+            UnitDoubleKey.OverviewLowMark.key,
+            UnitDoubleKey.OverviewHighMark.key,
+            StringKey.GeneralPatientName.key,
+            IntKey.OverviewResCritical.key,
+            IntKey.OverviewResWarning.key,
+            StringNonKey.QuickWizard.key,
+            BooleanKey.WearCustomWatchfaceAuthorization.key,
+            StringNonKey.WearCwfWatchfaceName.key,
+            StringNonKey.WearCwfAuthorVersion.key,
+            StringNonKey.WearCwfFileName.key
+        )
+
+        internal fun isWatchPreference(key: String?): Boolean = key != null && key in WATCH_PREFERENCE_KEYS
     }
 
     override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {

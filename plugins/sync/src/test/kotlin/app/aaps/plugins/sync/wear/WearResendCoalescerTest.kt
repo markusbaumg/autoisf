@@ -1,0 +1,68 @@
+package app.aaps.plugins.sync.wear
+
+import com.google.common.truth.Truth.assertThat
+import io.reactivex.rxjava3.schedulers.TestScheduler
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import java.util.concurrent.TimeUnit
+
+class WearResendCoalescerTest {
+
+    private lateinit var scheduler: TestScheduler
+    private val sent = mutableListOf<Pair<Long, String>>()
+    private lateinit var sut: WearResendCoalescer
+
+    @BeforeEach fun prepare() {
+        scheduler = TestScheduler()
+        sent.clear()
+        sut = WearResendCoalescer(scheduler, quietMs = 2_000L, maxWaitMs = 10_000L) { sent.add(scheduler.now(TimeUnit.MILLISECONDS) to it) }
+    }
+
+    private fun advance(ms: Long) = scheduler.advanceTimeBy(ms, TimeUnit.MILLISECONDS)
+
+    @Test fun `one request is sent after the quiet time`() {
+        sut.request("A")
+        advance(1_999)
+        assertThat(sent).isEmpty()
+        advance(1)
+        assertThat(sent).containsExactly(2_000L to "A")
+    }
+
+    @Test fun `a burst gives one resend with the last reason`() {
+        sut.request("EventAutosensCalculationFinished")
+        advance(500)
+        sut.request("EventLoopUpdateGui")
+        advance(1_000)
+        sut.request("EventLoopUpdateGui2")
+        advance(10_000)
+        assertThat(sent).containsExactly(3_500L to "EventLoopUpdateGui2")
+    }
+
+    @Test fun `requests that never pause are still sent after max wait`() {
+        // one request a second, as the preference storm did: a plain debounce would never fire
+        repeat(25) {
+            sut.request("R$it")
+            advance(1_000)
+        }
+        assertThat(sent.map { it.first }).containsExactly(10_000L, 20_000L).inOrder()
+        assertThat(sent.first().second).isEqualTo("R9")
+    }
+
+    @Test fun `separate requests are each sent, at least the quiet time apart`() {
+        sut.request("A")
+        advance(5_000)
+        sut.request("B")
+        advance(5_000)
+        assertThat(sent).containsExactly(2_000L to "A", 7_000L to "B").inOrder()
+    }
+
+    @Test fun `cancel drops a request not sent yet`() {
+        sut.request("A")
+        sut.cancel()
+        advance(20_000)
+        assertThat(sent).isEmpty()
+        sut.request("B")
+        advance(2_000)
+        assertThat(sent).containsExactly(22_000L to "B")
+    }
+}
