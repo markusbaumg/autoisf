@@ -189,13 +189,15 @@ class DataHandlerWear @Inject constructor(
                 aapsLogger.debug(LTag.WEAR, "Status received: dataset=${it.dataset} iob=${it.iobSum} cob=${it.cob}")
                 // Store in DataStore - supports all datasets (0, 1, 2)
                 dataStoreScope.launch {
-                    complicationDataRepository.updateStatusData(it)
-
-                    // Trigger complications AFTER DataStore write completes
-                    // This ensures complications showing IOB/COB/BR update immediately
-                    triggerComplicationUpdates()
+                    // The phone resends the same status several times per loop run; only a changed
+                    // status is stored (DataStore write + flow emission) and refreshes the complications.
+                    if (complicationDataRepository.updateStatusData(it)) {
+                        // Trigger complications AFTER DataStore write completes
+                        // This ensures complications showing IOB/COB/BR update immediately
+                        triggerComplicationUpdates()
+                        LocalBroadcastManager.getInstance(context).sendBroadcast(Intent(DataLayerListenerServiceWear.INTENT_NEW_DATA))
+                    }
                 }
-                LocalBroadcastManager.getInstance(context).sendBroadcast(Intent(DataLayerListenerServiceWear.INTENT_NEW_DATA))
             }
         disposable += rxBus
             .toObservable(EventData.SingleBg::class.java)
@@ -205,35 +207,35 @@ class DataHandlerWear @Inject constructor(
 
                 // Store in DataStore - supports all datasets (0, 1, 2)
                 dataStoreScope.launch {
-                    complicationDataRepository.updateBgData(it)
-
-                    // Trigger complications AFTER DataStore write completes
-                    triggerComplicationUpdates()
+                    if (complicationDataRepository.updateBgData(it)) {
+                        // Trigger complications AFTER DataStore write completes
+                        triggerComplicationUpdates()
+                        LocalBroadcastManager.getInstance(context).sendBroadcast(Intent(DataLayerListenerServiceWear.INTENT_NEW_DATA))
+                    }
                 }
-
-                LocalBroadcastManager.getInstance(context).sendBroadcast(Intent(DataLayerListenerServiceWear.INTENT_NEW_DATA))
             }
         disposable += rxBus
             .toObservable(EventData.GraphData::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe {
                 aapsLogger.debug(LTag.WEAR, "GraphData received from ${it.sourceNodeId}")
-                // Store in DataStore
+                // Store in DataStore; unchanged graph data (the bucketed BG only gains a point every 5 min)
+                // is dropped here so the watchfaces do not rebuild their charts for it.
                 dataStoreScope.launch {
-                    complicationDataRepository.updateGraphData(it)
+                    if (complicationDataRepository.updateGraphData(it))
+                        LocalBroadcastManager.getInstance(context).sendBroadcast(Intent(DataLayerListenerServiceWear.INTENT_NEW_DATA))
                 }
-                LocalBroadcastManager.getInstance(context).sendBroadcast(Intent(DataLayerListenerServiceWear.INTENT_NEW_DATA))
             }
         disposable += rxBus
             .toObservable(EventData.TreatmentData::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe {
                 aapsLogger.debug(LTag.WEAR, "TreatmentData received from ${it.sourceNodeId}")
-                // Store in DataStore
+                // Store in DataStore (only when changed, see GraphData)
                 dataStoreScope.launch {
-                    complicationDataRepository.updateTreatmentData(it)
+                    if (complicationDataRepository.updateTreatmentData(it))
+                        LocalBroadcastManager.getInstance(context).sendBroadcast(Intent(DataLayerListenerServiceWear.INTENT_NEW_DATA))
                 }
-                LocalBroadcastManager.getInstance(context).sendBroadcast(Intent(DataLayerListenerServiceWear.INTENT_NEW_DATA))
             }
         disposable += rxBus
             .toObservable(EventData.Preferences::class.java)
@@ -283,9 +285,15 @@ class DataHandlerWear @Inject constructor(
             .subscribe {
                 aapsLogger.debug(LTag.WEAR, "Loop states received from ${it.sourceNodeId}")
                 val serialized = it.serialize()
-                if (serialized != sp.getString(R.string.key_loop_states_data, "")) {
+                val stored = sp.getString(R.string.key_loop_states_data, "")
+                if (serialized != stored) {
+                    // The list is stored whenever it differs: its timeStamp is the phone's authorization
+                    // token for the next loop state change and must be the latest one. The tile only
+                    // shows the states, so it is rebuilt only when those changed (the phone issues a new
+                    // token with every resend, i.e. several times per loop run).
                     sp.putString(R.string.key_loop_states_data, serialized)
-                    TileService.getUpdater(context).requestUpdate(LoopStateTileService::class.java)
+                    if (loopStatesChanged(stored, it))
+                        TileService.getUpdater(context).requestUpdate(LoopStateTileService::class.java)
                 }
             }
         disposable += rxBus
@@ -335,6 +343,24 @@ class DataHandlerWear @Inject constructor(
                     }
                 }
             }
+    }
+
+    companion object {
+
+        /**
+         * Whether the loop states of [received] differ from those in the [stored] serialized
+         * [EventData.LoopStatesList], ignoring its timeStamp (the phone's authorization token, renewed
+         * with every send). Anything that is not a stored list counts as changed.
+         */
+        fun loopStatesChanged(stored: String, received: EventData.LoopStatesList): Boolean {
+            if (stored.isEmpty()) return true
+            val previous = try {
+                EventData.deserialize(stored) as? EventData.LoopStatesList
+            } catch (_: Exception) {
+                null
+            } ?: return true
+            return previous.states != received.states
+        }
     }
 
     private fun handleBolusProgress(bolusProgress: EventData.BolusProgress) {

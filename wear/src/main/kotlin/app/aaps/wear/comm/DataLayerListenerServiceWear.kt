@@ -115,8 +115,11 @@ class DataLayerListenerServiceWear : WearableListenerService() {
 
         when (messageEvent.path) {
             rxPath     -> {
-                aapsLogger.debug(LTag.WEAR, "onMessageReceived: ${String(messageEvent.data)}")
+                // Decode once and do not log the payload: a GraphData message is ~120 KB and arrives with
+                // every resend, so two String copies plus a log concatenation per message were measurable
+                // garbage (logcat truncates the line anyway).
                 val command = EventData.deserialize(String(messageEvent.data))
+                aapsLogger.debug(LTag.WEAR, "onMessageReceived: ${command::class.simpleName} ${messageEvent.data.size} B")
                 rxBus.send(command.also { it.sourceNodeId = messageEvent.sourceNodeId })
                 // Use this sender
                 transcriptionNodeId = messageEvent.sourceNodeId

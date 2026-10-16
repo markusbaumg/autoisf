@@ -192,7 +192,9 @@ class CustomWatchface : BaseWatchFace() {
                 else -> binding.loopExt2.setBackgroundResource(R.drawable.loop_red_25)
             }
         //******************************
-        setupCharts()
+        // setColorDark() runs at the end of every setDataFields(), i.e. on every data update and every
+        // minute. The chart only needs rebuilding when its data or its style changed (see BaseWatchFace).
+        rebuildChartIfDirty()
     }
 
     override fun setColorBright() {
@@ -229,7 +231,8 @@ class CustomWatchface : BaseWatchFace() {
         customWatchfaceData?.let {
             updatePref(it.metadata)
             try {
-                json = JSONObject(it.json)
+                // Parse the watchface definition only when it changed; this runs on every data update.
+                if (jsonString != it.json) json = JSONObject(it.json)
                 if (!resDataMap.isEquals(it.resData) || jsonString != it.json) {
                     resDataMap = it.resData
                     jsonString = it.json
@@ -241,9 +244,11 @@ class CustomWatchface : BaseWatchFace() {
                     binding.freetext2.text = ""
                     binding.freetext3.text = ""
                     binding.freetext4.text = ""
+                    chartDirty = true   // colours and point size below come from the new definition
                 }
                 if (checkPref()) {
                     DynProvider.init(this, json)
+                    chartDirty = true   // dynamic preferences can change the chart colours
                 }
 
                 enableSecond = json.optBoolean(JsonKeys.ENABLESECOND.key) && sp.getBoolean(PrefMap.SHOW_SECOND.prefKey, PrefMap.SHOW_SECOND.defaultValue as Boolean)

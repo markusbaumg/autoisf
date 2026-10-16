@@ -43,6 +43,16 @@ class ComplicationDataRepository @Inject constructor(
         produceFile = { context.dataStoreFile("complication_data.pb") }
     )
 
+    companion object {
+
+        /**
+         * How often [ComplicationData.lastUpdateTimestamp] is refreshed while the phone keeps sending data
+         * that equals the stored data. Well below the staleness limit of the complications (Constants.STALE_MS),
+         * so an unchanged but live connection is never shown as "no sync".
+         */
+        const val HEARTBEAT_MS = 60_000L
+    }
+
     /**
      * Reactive Flow of complication data
      * Complications should collect this Flow to get automatic updates
@@ -56,77 +66,94 @@ class ComplicationDataRepository @Inject constructor(
     /**
      * Update BG data from phone
      * Supports multiple datasets for AAPSClient mode (0=primary, 1=client1, 2=client2)
+     *
+     * @return true when the stored data changed (and the [complicationData] flow emitted)
      */
-    suspend fun updateBgData(singleBg: EventData.SingleBg) {
-        try {
-            dataStore.updateData { current ->
-                when (singleBg.dataset) {
-                    0 -> current.copy(bgData = singleBg, lastUpdateTimestamp = System.currentTimeMillis())
-                    1 -> current.copy(bgData1 = singleBg, lastUpdateTimestamp = System.currentTimeMillis())
-                    2 -> current.copy(bgData2 = singleBg, lastUpdateTimestamp = System.currentTimeMillis())
-                    else -> {
-                        aapsLogger.warn(LTag.WEAR, "Unknown BG dataset ${singleBg.dataset}, ignoring")
-                        current
-                    }
+    suspend fun updateBgData(singleBg: EventData.SingleBg): Boolean =
+        updateIfChanged("BG") { current ->
+            when (singleBg.dataset) {
+                0    -> if (current.bgData == singleBg) current else current.copy(bgData = singleBg)
+                1    -> if (current.bgData1 == singleBg) current else current.copy(bgData1 = singleBg)
+                2    -> if (current.bgData2 == singleBg) current else current.copy(bgData2 = singleBg)
+                else -> {
+                    aapsLogger.warn(LTag.WEAR, "Unknown BG dataset ${singleBg.dataset}, ignoring")
+                    current
                 }
             }
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.WEAR, "Failed to update BG data", e)
         }
-    }
 
     /**
      * Update Status data from phone
      * Supports multiple datasets for AAPSClient mode (0=primary, 1=client1, 2=client2)
+     *
+     * @return true when the stored data changed (and the [complicationData] flow emitted)
      */
-    suspend fun updateStatusData(status: EventData.Status) {
-        try {
-            dataStore.updateData { current ->
-                when (status.dataset) {
-                    0 -> current.copy(statusData = status, lastUpdateTimestamp = System.currentTimeMillis())
-                    1 -> current.copy(statusData1 = status, lastUpdateTimestamp = System.currentTimeMillis())
-                    2 -> current.copy(statusData2 = status, lastUpdateTimestamp = System.currentTimeMillis())
-                    else -> {
-                        aapsLogger.warn(LTag.WEAR, "Unknown Status dataset ${status.dataset}, ignoring")
-                        current
-                    }
+    suspend fun updateStatusData(status: EventData.Status): Boolean =
+        updateIfChanged("status") { current ->
+            when (status.dataset) {
+                0    -> if (current.statusData == status) current else current.copy(statusData = status)
+                1    -> if (current.statusData1 == status) current else current.copy(statusData1 = status)
+                2    -> if (current.statusData2 == status) current else current.copy(statusData2 = status)
+                else -> {
+                    aapsLogger.warn(LTag.WEAR, "Unknown Status dataset ${status.dataset}, ignoring")
+                    current
                 }
             }
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.WEAR, "Failed to update status data", e)
         }
-    }
 
     /**
      * Update Graph data from phone
+     *
+     * @return true when the stored data changed (and the [complicationData] flow emitted)
      */
-    suspend fun updateGraphData(graphData: EventData.GraphData) {
-        try {
-            dataStore.updateData { current ->
-                current.copy(
-                    graphData = graphData,
-                    lastUpdateTimestamp = System.currentTimeMillis()
-                )
-            }
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.WEAR, "Failed to update graph data", e)
+    suspend fun updateGraphData(graphData: EventData.GraphData): Boolean =
+        updateIfChanged("graph") { current ->
+            if (current.graphData == graphData) current else current.copy(graphData = graphData)
         }
-    }
 
     /**
      * Update Treatment data from phone
+     *
+     * @return true when the stored data changed (and the [complicationData] flow emitted)
      */
-    suspend fun updateTreatmentData(treatmentData: EventData.TreatmentData) {
+    suspend fun updateTreatmentData(treatmentData: EventData.TreatmentData): Boolean =
+        updateIfChanged("treatment") { current ->
+            if (current.treatmentData == treatmentData) current else current.copy(treatmentData = treatmentData)
+        }
+
+    /**
+     * Apply [transform] to the stored data and persist the result only when it differs from what is stored.
+     *
+     * The phone resends its complete data set (BG, status, graph, treatments) on every loop run, and most
+     * of these resends carry the same graph and treatments as the one before. DataStore already skips the
+     * file write and the flow emission when the transformed value equals the current one, but a
+     * [ComplicationData.lastUpdateTimestamp] refreshed on every call made every value different: each of
+     * the ~8 messages per resend rewrote the whole file (graph + treatments + watchface) and woke every
+     * collector (watchfaces rebuilt their charts, complications were refreshed). Now [transform] returns
+     * `current` itself when nothing changed, and the timestamp is only refreshed with a real change or,
+     * for the staleness check of the complications, at most once per [HEARTBEAT_MS] otherwise.
+     *
+     * @param what name of the part, for the error log
+     * @param transform returns `current` (the same instance) when the incoming data equals the stored data
+     * @return true when the data (not only the heartbeat timestamp) changed
+     */
+    private suspend fun updateIfChanged(what: String, transform: (ComplicationData) -> ComplicationData): Boolean {
+        var changed = false
         try {
             dataStore.updateData { current ->
-                current.copy(
-                    treatmentData = treatmentData,
-                    lastUpdateTimestamp = System.currentTimeMillis()
-                )
+                val next = transform(current)
+                val now = System.currentTimeMillis()
+                if (next === current) {
+                    if (now - current.lastUpdateTimestamp >= HEARTBEAT_MS) current.copy(lastUpdateTimestamp = now) else current
+                } else {
+                    changed = true
+                    next.copy(lastUpdateTimestamp = now)
+                }
             }
         } catch (e: Exception) {
-            aapsLogger.error(LTag.WEAR, "Failed to update treatment data", e)
+            aapsLogger.error(LTag.WEAR, "Failed to update $what data", e)
         }
+        return changed
     }
 
     /**

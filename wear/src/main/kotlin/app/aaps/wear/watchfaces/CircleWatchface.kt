@@ -121,10 +121,16 @@ class CircleWatchface : WatchFace() {
 
         // Observe DataStore for automatic updates
         watchfaceScope.launch {
+            var previous: app.aaps.wear.data.ComplicationData? = null
             complicationDataRepository.complicationData.collect { data ->
+                // The BG history ring only needs rebuilding when the graph data changed (see BaseWatchFace);
+                // the repository also emits for BG and status updates, which happen every loop run.
+                val last = previous
+                val graphChanged = last == null || data.graphData != last.graphData
+                previous = data
                 complicationData = data
                 if (myLayout != null) {  // Only update if layout initialized
-                    addToWatchSet()
+                    if (graphChanged) addToWatchSet()
                     prepareLayout()
                     prepareDrawTime()
                     invalidate()

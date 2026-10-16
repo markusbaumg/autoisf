@@ -143,6 +143,12 @@ abstract class BaseWatchFace : WatchFace() {
     private var bolusColor = Color.MAGENTA
     private var lowResMode = false
     private var layoutSet = false
+
+    /**
+     * The chart data (graph, treatments), the resolution mode or the chart style changed since [setupCharts]
+     * last built the chart. Subclasses set it when their style (colours, point size) changed.
+     */
+    protected var chartDirty = true
     var bIsRound = false
     var dividerMatchesBg = false
     var pointSize = 2
@@ -204,11 +210,19 @@ abstract class BaseWatchFace : WatchFace() {
 
         // Observe DataStore for updates
         watchfaceScope.launch {
+            var previous: ComplicationData? = null
             complicationDataRepository.complicationData.collect { data ->
+                // The repository only emits when some part changed. A status or BG update (every loop run)
+                // must not rebuild the chart; that is only needed when the graph or the treatments changed
+                // (a new bucketed BG every 5 min, a new treatment or prediction). Comparing the lists is
+                // cheap next to building the chart from them.
+                val last = previous
+                if (last == null || data.graphData != last.graphData || data.treatmentData != last.treatmentData) chartDirty = true
+                previous = data
                 complicationData = data
                 // Only update if binding is initialized
                 if (::binding.isInitialized && (!simpleUi.isEnabled(currentWatchMode) || !needUpdate())) {
-                    setupCharts()
+                    rebuildChartIfDirty()
                     setDataFields()
                 }
                 invalidate()
@@ -308,8 +322,20 @@ abstract class BaseWatchFace : WatchFace() {
     private fun performViewSetup() {
         layoutSet = true
         setupCharts()
+        chartDirty = false
         setDataFields()
         missedReadingAlert()
+    }
+
+    /**
+     * Build the chart from the current graph and treatment data when they changed since it was last
+     * built, or when the resolution mode changed (the chart colours depend on it). Not while the simple
+     * UI is shown: [setupCharts] would draw nothing, and the flag keeps the rebuild for the return.
+     */
+    protected fun rebuildChartIfDirty() {
+        if (!chartDirty || simpleUi.isEnabled(currentWatchMode)) return
+        setupCharts()
+        chartDirty = false
     }
 
     fun ageLevel(id: Int = 0): Int =
@@ -630,10 +656,14 @@ abstract class BaseWatchFace : WatchFace() {
         if (!::binding.isInitialized) return
         updateSecondVisibility()    // will show second if enabledSecond and Interactive mode, hide in other situation
         setSecond()                 // will remove second from main date and time if not in Interactive mode
+        val wasLowRes = lowResMode
         lowResMode = isLowRes(watchMode)
+        if (lowResMode != wasLowRes) chartDirty = true
         if (simpleUi.isEnabled(currentWatchMode)) simpleUi.setAntiAlias(currentWatchMode)
-        else
+        else {
+            rebuildChartIfDirty()
             setDataFields()
+        }
         invalidate()
     }
 
