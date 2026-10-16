@@ -503,7 +503,9 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, ">>> Invoking determine_basal AutoISF <<<")
         aapsLogger.debug(LTag.APS, "Glucose status:     $glucoseStatus")
         aapsLogger.debug(LTag.APS, "Current temp:       $currentTemp")
-        aapsLogger.debug(LTag.APS, "IOB data:           ${gson.toJson(iobArray)}")
+        // iobArray[0] is the IOB the algorithm starts from; the rest is the IOB curve for the
+        // predictions (~21 KB as JSON per run, 1.3 MB/h, the largest line in the log).
+        aapsLogger.debug(LTag.APS, "IOB data:           ${iobArray.size} points, now ${gson.toJson(iobData)}")
         aapsLogger.debug(LTag.APS, "Profile:            $oapsProfile")
         aapsLogger.debug(LTag.APS, "Autosens data:      $autosensResult")
         aapsLogger.debug(LTag.APS, "Meal data:          $mealData")
