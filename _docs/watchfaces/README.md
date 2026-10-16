@@ -15,6 +15,26 @@ The code lives in the `wear` module (branch `feature/kusi/watchface-fancy`, merg
 - Phone side: bolus requests from the watch are refused when Wear control is off; a confirmation is
   only accepted if it matches the last pending request (same amount, within 60 s, once).
 
+## Gallery
+
+**AAPS Halo, live on the Galaxy Watch5 Pro (01:21)** and the rendered states:
+
+<img src="screenshots/halo_live_0121_interactive.png" width="300"> <img src="concepts/halo_rendered_sheet.png" width="600">
+
+**AAPS Glass** (final design, all states):
+
+<img src="designs/glass_final_sheet.png" width="900">
+
+**AAPS Orbit** (final design, all states):
+
+<img src="designs/orbit_final_sheet.png" width="700">
+
+**Previous face** (custom watchface, for comparison):
+
+<img src="screenshots/current_cwf_interactive.png" width="300">
+
+New screenshots from the watch are added to `screenshots/` after each build.
+
 ## Contents
 
 | Folder | What |
