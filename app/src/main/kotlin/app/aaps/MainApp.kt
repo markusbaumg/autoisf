@@ -4,9 +4,6 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.Context
-import android.hardware.Sensor
-import android.hardware.SensorManager
 import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -64,6 +61,7 @@ import app.aaps.receivers.KeepAliveWorker
 import app.aaps.receivers.TimeDateOrTZChangeReceiver
 import app.aaps.ui.activityMonitor.ActivityMonitor
 import app.aaps.ui.widget.Widget
+import app.aaps.utils.PhoneSensorRegistrar
 import app.aaps.utils.configureLeakCanary
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
@@ -111,6 +109,7 @@ class MainApp : DaggerApplication() {
     @Inject lateinit var loop: Loop
     @Inject lateinit var profileFunction: ProfileFunction
     @Inject lateinit var fabricPrivacy: FabricPrivacy
+    @Inject lateinit var phoneSensorRegistrar: PhoneSensorRegistrar
     lateinit var appComponent: AppComponent
 
     private var handler = Handler(HandlerThread(this::class.simpleName + "Handler").also { it.start() }.looper)
@@ -192,12 +191,8 @@ class MainApp : DaggerApplication() {
         // Activity Monitor
         // Save AAPS start time
         preferences.put(LongKey.AppStart, dateUtil.now())
-        // activate sensor
-        val sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-        val phoneMovementDetector = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        sensorManager.registerListener(app.aaps.plugins.aps.openAPSSMB.StepService, stepSensor, SensorManager.SENSOR_DELAY_NORMAL)
-        sensorManager.registerListener(app.aaps.plugins.aps.openAPSSMB.PhoneMovementDetector, phoneMovementDetector, SensorManager.SENSOR_DELAY_NORMAL)
+        // activate phone step counter / accelerometer only when steps graph from smartphone or activity detection uses them
+        phoneSensorRegistrar.start()
         //  schedule widget update
         refreshWidget = Runnable {
                 handler.postDelayed(refreshWidget, 60000)

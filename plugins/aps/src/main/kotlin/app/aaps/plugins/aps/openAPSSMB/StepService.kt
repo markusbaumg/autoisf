@@ -42,6 +42,15 @@ object StepService : SensorEventListener {
         }
     }
 
+    /**
+     * Forget the last cumulative step count. Call when the listener is unregistered, so the first
+     * event after re-registering sets a new baseline instead of booking all steps taken in between
+     * into the current 5 min block.
+     */
+    fun resetBaseline() {
+        previousStepCount = -1
+    }
+
     fun getRecentStepCount5Min(): Int {
         val now = currentTimeIn5Min() - 1
         return if(stepsMap.contains(now)) stepsMap.getValue(now) else 0
