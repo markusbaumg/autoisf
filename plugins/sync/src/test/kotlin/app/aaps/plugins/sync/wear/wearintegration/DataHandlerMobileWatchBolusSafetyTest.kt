@@ -1,5 +1,7 @@
 package app.aaps.plugins.sync.wear.wearintegration
 
+import app.aaps.core.data.iob.CobInfo
+import app.aaps.core.data.iob.InMemoryGlucoseValue
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.RM
 import app.aaps.core.interfaces.aps.AutosensDataStore
@@ -21,6 +23,7 @@ import app.aaps.core.interfaces.utils.TrendCalculator
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.objects.wizard.BolusWizard
 import app.aaps.core.objects.wizard.QuickWizard
+import app.aaps.core.objects.wizard.QuickWizardEntry
 import app.aaps.plugins.sync.R
 import app.aaps.shared.tests.TestBaseWithProfile
 import com.google.common.truth.Truth.assertThat
@@ -28,10 +31,12 @@ import io.reactivex.rxjava3.disposables.Disposable
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.Answers
 import org.mockito.Mock
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
@@ -65,6 +70,9 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
     private val toWatch = mutableListOf<EventData>()
     private lateinit var watchSubscription: Disposable
 
+    private val bolusWizard = mock<BolusWizard>(defaultAnswer = Answers.RETURNS_SELF)
+    private var monotonicNow = 5_000_000L
+
     private val wearControlOff = "WEAR_CONTROL_OFF"
     private val confirmRefused = "CONFIRM_REFUSED"
 
@@ -74,9 +82,10 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
             iobCobCalculator, processedTbrEbData, smbGlucoseStatusProvider, profileFunction, profileUtil,
             loop, processedDeviceStatusData, receiverStatusStore, quickWizard, trendCalculator, dateUtil,
             constraintsChecker, uel, activePlugin, commandQueue, fabricPrivacy, uiInteraction,
-            persistenceLayer, importExportPrefs, decimalFormatter, Provider<BolusWizard> { mock() }, pumpStatusProvider
+            persistenceLayer, importExportPrefs, decimalFormatter, Provider<BolusWizard> { bolusWizard }, pumpStatusProvider
         )
         sut.automation = automation
+        sut.monotonicClock = { monotonicNow }
         whenever(iobCobCalculator.ads).thenReturn(ads)
         whenever(profileFunction.getUnits()).thenReturn(GlucoseUnit.MGDL)
         whenever(loop.runningMode).thenReturn(RM.Mode.CLOSED_LOOP)
@@ -107,8 +116,43 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         return captor.allValues
     }
 
-    private fun advanceClockTo(time: Long) {
-        whenever(dateUtil.now()).thenReturn(time)
+    /** Moves both the wall clock and the monotonic clock forward. */
+    private fun advanceClockBy(ms: Long) {
+        monotonicNow += ms
+        val wallNow = dateUtil.now()
+        whenever(dateUtil.now()).thenReturn(wallNow + ms)
+    }
+
+    private fun verifySuperBolusStarted(times: Int) =
+        verify(loop, times(times)).handleRunningModeChange(eq(RM.Mode.SUPER_BOLUS), any(), any(), any(), any(), any())
+
+    /** Lets the wizard prechecks run through to the offer: profile, BG, COB and a calculated wizard. */
+    private fun prepareWizard(insulin: Double, carbs: Int) {
+        whenever(profileFunction.getProfile()).thenReturn(validProfile)
+        whenever(profileFunction.getProfileName()).thenReturn("Test")
+        whenever(ads.actualBg()).thenReturn(InMemoryGlucoseValue(timestamp = now, value = 120.0))
+        whenever(iobCobCalculator.getCobInfo(any())).thenReturn(CobInfo(now, 0.0, 0.0))
+        whenever(bolusWizard.timeStamp).thenReturn(now)
+        whenever(bolusWizard.calculatedTotalInsulin).thenReturn(insulin)
+        whenever(bolusWizard.insulinAfterConstraints).thenReturn(insulin)
+        whenever(bolusWizard.carbs).thenReturn(carbs)
+        whenever(bolusWizard.explainShort()).thenReturn("explain")
+    }
+
+    private fun quickWizardEntry(carbs: Int, superBolus: Boolean = false, eCarbs: Int = 0): QuickWizardEntry {
+        val entry = mock<QuickWizardEntry>()
+        whenever(entry.doCalc(any(), any(), any())).thenReturn(bolusWizard)
+        whenever(entry.carbs()).thenReturn(carbs)
+        whenever(entry.buttonText()).thenReturn("Meal")
+        whenever(entry.carbTime()).thenReturn(0)
+        whenever(entry.useAlarm()).thenReturn(QuickWizardEntry.NO)
+        whenever(entry.useSuperBolus()).thenReturn(if (superBolus) QuickWizardEntry.YES else QuickWizardEntry.NO)
+        whenever(entry.useEcarbs()).thenReturn(if (eCarbs > 0) QuickWizardEntry.YES else QuickWizardEntry.NO)
+        whenever(entry.carbs2()).thenReturn(eCarbs)
+        whenever(entry.time()).thenReturn(0)
+        whenever(entry.duration()).thenReturn(if (eCarbs > 0) 2 else 0)
+        whenever(quickWizard.get("guid")).thenReturn(entry)
+        return entry
     }
 
     // ---- CHECK 1: Controls from Watch off ----
@@ -143,6 +187,24 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
 
         assertThat(errorsToWatch()).containsExactly(wearControlOff, wearControlOff, wearControlOff, wearControlOff, wearControlOff)
         assertThat(confirmsOffered()).isEmpty()
+    }
+
+    @Test fun `profile switch, temp target and user action are refused while wear control is off`() {
+        whenever(preferences.get(BooleanKey.WearControl)).thenReturn(false)
+
+        rxBus.send(EventData.ActionProfileSwitchPreCheck(0, 150, 60))
+        rxBus.send(EventData.ActionProfileSwitchConfirmed(0, 150, 60))
+        rxBus.send(EventData.ActionTempTargetPreCheck(EventData.ActionTempTargetPreCheck.TempTargetCommand.MANUAL, true, 60, 80.0, 80.0))
+        rxBus.send(EventData.ActionTempTargetConfirmed(true, 60, 80.0, 80.0))
+        rxBus.send(EventData.ActionUserActionPreCheck(1, "action"))
+        rxBus.send(EventData.ActionUserActionConfirmed(1, "action"))
+
+        assertThat(errorsToWatch()).containsExactly(wearControlOff, wearControlOff, wearControlOff, wearControlOff, wearControlOff, wearControlOff)
+        assertThat(confirmsOffered()).isEmpty()
+        verify(profileFunction, never()).createProfileSwitch(any<Int>(), any(), any(), any(), any(), anyOrNull(), any())
+        verify(persistenceLayer, never()).insertAndCancelCurrentTemporaryTarget(any(), any(), any(), anyOrNull(), any())
+        verify(automation, never()).userEvents()
+        verify(automation, never()).processEvent(any())
     }
 
     @Test fun `ecarbs confirm is refused while wear control is off`() {
@@ -190,12 +252,21 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         // the watch confirms what the phone offered (2.0), not what was typed (5.0)
         assertThat(confirmsOffered()).containsExactly(EventData.ActionBolusConfirmed(2.0, 0))
         rxBus.send(EventData.ActionBolusConfirmed(5.0, 0))
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, never()).bolus(any(), anyOrNull())
+
+        // confirming the offered value after a fresh precheck delivers exactly that value
+        rxBus.send(EventData.ActionBolusPreCheck(5.0, 0))
+        rxBus.send(EventData.ActionBolusConfirmed(2.0, 0))
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        val delivered = deliveredBoluses()
+        assertThat(delivered).hasSize(1)
+        assertThat(delivered[0].insulin).isEqualTo(2.0)
     }
 
     @Test fun `bolus confirm after 61 s is refused`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
-        advanceClockTo(now + 61_000L)
+        advanceClockBy(61_000L)
 
         rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
 
@@ -205,7 +276,7 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
 
     @Test fun `bolus confirm at 60 s is still accepted`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
-        advanceClockTo(now + 60_000L)
+        advanceClockBy(60_000L)
 
         rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
 
@@ -213,11 +284,55 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         verify(commandQueue, times(1)).bolus(any(), anyOrNull())
     }
 
-    @Test fun `second bolus confirm is refused`() {
+    @Test fun `setting the wall clock back does not stretch the 60 s window`() {
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        monotonicNow += 61_000L
+        whenever(dateUtil.now()).thenReturn(now - 50_000L)
+
+        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `a wall clock jump forward does not expire a fresh confirm`() {
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        monotonicNow += 5_000L
+        whenever(dateUtil.now()).thenReturn(now + 2 * 3_600_000L)
+
+        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+
+        assertThat(errorsToWatch()).isEmpty()
+        verify(commandQueue, times(1)).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `second bolus confirm (double tap) is refused without an error on the watch`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
 
         rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
         rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+
+        // the duplicate is not delivered, and no "refused" screen follows the delivered bolus
+        assertThat(errorsToWatch()).isEmpty()
+        verify(commandQueue, times(1)).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `a late repeat of a delivered bolus confirm is refused with an error`() {
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        advanceClockBy(WEAR_DUPLICATE_CONFIRM_WINDOW_MS + 1)
+
+        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, times(1)).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `a different confirm right after a delivered bolus is refused with an error`() {
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+
+        rxBus.send(EventData.ActionBolusConfirmed(1.5, 10))
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, times(1)).bolus(any(), anyOrNull())
@@ -269,11 +384,136 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
 
         rxBus.send(EventData.ActionFillPreCheck(0.5))
         rxBus.send(EventData.ActionFillConfirmed(0.5))
-        rxBus.send(EventData.ActionFillConfirmed(0.5))
+        rxBus.send(EventData.ActionFillConfirmed(0.5)) // duplicate: silently ignored
 
-        assertThat(errorsToWatch()).containsExactly(confirmRefused, confirmRefused)
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
         val delivered = deliveredBoluses()
         assertThat(delivered).hasSize(1)
         assertThat(delivered[0].insulin).isEqualTo(0.5)
+    }
+
+    // ---- eCarbs ----
+
+    @Test fun `ecarbs confirm without precheck is refused`() {
+        rxBus.send(EventData.ActionECarbsConfirmed(20, now, 2))
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `ecarbs confirm with different carbs, time or duration is refused`() {
+        rxBus.send(EventData.ActionECarbsPreCheck(20, 0, 2))
+        val offered = confirmsOffered().single() as EventData.ActionECarbsConfirmed
+
+        rxBus.send(EventData.ActionECarbsConfirmed(offered.carbs + 10, offered.carbsTime, offered.duration))
+        rxBus.send(EventData.ActionECarbsPreCheck(20, 0, 2))
+        rxBus.send(EventData.ActionECarbsConfirmed(offered.carbs, offered.carbsTime - 3_600_000L, offered.duration))
+        rxBus.send(EventData.ActionECarbsPreCheck(20, 0, 2))
+        rxBus.send(EventData.ActionECarbsConfirmed(offered.carbs, offered.carbsTime, offered.duration + 1))
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused, confirmRefused, confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `ecarbs happy path delivers once, ecarbs confirm after 61 s is refused`() {
+        rxBus.send(EventData.ActionECarbsPreCheck(20, 0, 2))
+        val offered = confirmsOffered().single() as EventData.ActionECarbsConfirmed
+
+        rxBus.send(offered)
+        rxBus.send(offered)
+
+        assertThat(errorsToWatch()).isEmpty()
+        val delivered = deliveredBoluses()
+        assertThat(delivered).hasSize(1)
+        assertThat(delivered[0].insulin).isEqualTo(0.0)
+        assertThat(delivered[0].carbs).isEqualTo(20.0)
+
+        rxBus.send(EventData.ActionECarbsPreCheck(20, 0, 2))
+        val offered2 = confirmsOffered().last() as EventData.ActionECarbsConfirmed
+        advanceClockBy(61_000L)
+        rxBus.send(offered2)
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        assertThat(deliveredBoluses()).hasSize(1)
+    }
+
+    @Test fun `stray ecarbs confirm after a superbolus quick wizard precheck neither delivers nor starts a superbolus`() {
+        prepareWizard(insulin = 3.0, carbs = 30)
+        quickWizardEntry(carbs = 30, superBolus = true)
+        rxBus.send(EventData.ActionQuickWizardPreCheck("guid"))
+
+        rxBus.send(EventData.ActionECarbsConfirmed(30, now, 0))
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+        verifySuperBolusStarted(0)
+    }
+
+    // ---- wizard / quick wizard happy paths ----
+
+    @Test fun `wizard happy path delivers the calculated bolus once, second confirm and late confirm are refused`() {
+        prepareWizard(insulin = 2.5, carbs = 40)
+
+        rxBus.send(EventData.ActionWizardPreCheck(40, 100))
+        val result = toWatch.filterIsInstance<EventData.ActionWizardResult>().single()
+        assertThat(result.totalInsulin).isEqualTo(2.5)
+        rxBus.send(EventData.ActionWizardConfirmed(result.timestamp))
+        rxBus.send(EventData.ActionWizardConfirmed(result.timestamp))
+
+        assertThat(errorsToWatch()).isEmpty()
+        val delivered = deliveredBoluses()
+        assertThat(delivered).hasSize(1)
+        assertThat(delivered[0].insulin).isEqualTo(2.5)
+        assertThat(delivered[0].carbs).isEqualTo(40.0)
+        verifySuperBolusStarted(0)
+
+        rxBus.send(EventData.ActionWizardPreCheck(40, 100))
+        advanceClockBy(61_000L)
+        rxBus.send(EventData.ActionWizardConfirmed(result.timestamp))
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        assertThat(deliveredBoluses()).hasSize(1)
+    }
+
+    @Test fun `wizard confirm with a different timestamp is refused`() {
+        prepareWizard(insulin = 2.5, carbs = 40)
+
+        rxBus.send(EventData.ActionWizardPreCheck(40, 100))
+        rxBus.send(EventData.ActionWizardConfirmed(now - 1))
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `quick wizard happy path delivers once from its own entry, including ecarbs and superbolus`() {
+        prepareWizard(insulin = 3.0, carbs = 30)
+        quickWizardEntry(carbs = 30, superBolus = true, eCarbs = 20)
+
+        rxBus.send(EventData.ActionQuickWizardPreCheck("guid"))
+        val offered = confirmsOffered().single()
+        assertThat(offered).isEqualTo(EventData.ActionWizardConfirmed(now))
+        rxBus.send(offered)
+        rxBus.send(offered)
+
+        assertThat(errorsToWatch()).isEmpty()
+        val delivered = deliveredBoluses()
+        assertThat(delivered).hasSize(2)
+        assertThat(delivered[0].insulin).isEqualTo(3.0)
+        assertThat(delivered[0].carbs).isEqualTo(30.0)
+        assertThat(delivered[1].insulin).isEqualTo(0.0)
+        assertThat(delivered[1].carbs).isEqualTo(20.0)
+        // the superbolus belongs to the confirmed quick wizard bolus only, not to its eCarbs part
+        verifySuperBolusStarted(1)
+    }
+
+    @Test fun `quick wizard confirm after 61 s is refused`() {
+        prepareWizard(insulin = 3.0, carbs = 30)
+        quickWizardEntry(carbs = 30, superBolus = true)
+
+        rxBus.send(EventData.ActionQuickWizardPreCheck("guid"))
+        advanceClockBy(61_000L)
+        rxBus.send(EventData.ActionWizardConfirmed(now))
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+        verifySuperBolusStarted(0)
     }
 }
