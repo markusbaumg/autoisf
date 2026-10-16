@@ -86,7 +86,16 @@ internal object NetworkStackBuilder {
     ): OkHttpClient {
         if (logging) {
             addNetworkInterceptor(
-                HttpLoggingInterceptor(logger).also { it.level = HttpLoggingInterceptor.Level.BODY }
+                HttpLoggingInterceptor(logger).also {
+                    it.level = HttpLoggingInterceptor.Level.BODY
+                    // The HTTP log goes into the AAPS log files that get shared for support. The
+                    // access token (Authorization: Bearer <jwt>, on every request) and the legacy
+                    // api secret must not be in them.
+                    it.redactHeader("Authorization")
+                    it.redactHeader("api-secret")
+                    it.redactHeader("Cookie")
+                    it.redactHeader("Set-Cookie")
+                }
             )
         }
         cache(Cache(context.cacheDir, OK_HTTP_CACHE_SIZE))
