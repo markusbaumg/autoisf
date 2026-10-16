@@ -32,8 +32,10 @@ import app.aaps.core.objects.extensions.generateCOBString
 import app.aaps.core.objects.extensions.round
 import app.aaps.core.objects.extensions.toStringShort
 import app.aaps.plugins.main.R
+import io.reactivex.rxjava3.core.Observable
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -83,20 +85,22 @@ class PersistentNotificationPlugin @Inject constructor(
     override fun onStart() {
         super.onStart()
         notificationHolder.createNotificationChannel()
-        disposable += rxBus
-            .toObservable(EventRefreshOverview::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ triggerNotificationUpdate() }, fabricPrivacy::logException)
-        disposable += rxBus
-            .toObservable(EventInitializationChanged::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ triggerNotificationUpdate() }, fabricPrivacy::logException)
-        disposable += rxBus
-            .toObservable(EventAutosensCalculationFinished::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ triggerNotificationUpdate() }, fabricPrivacy::logException)
-        disposable += rxBus
-            .toObservable(EventPreferenceChange::class.java)
+        // Every rebuild reads the last BG, IOB (bolus and basal, from the DB) and COB and posts the
+        // notification. The four triggers come in bursts: after a BG the calculation, the loop and
+        // the overview each fire within seconds, and an open settings screen forwards every
+        // preference write (a NSClient full re-sync wrote ~20,000 of them in 23 s). One rebuild
+        // per [UPDATE_WINDOW_MS] is enough for an ongoing notification: the first event of a burst
+        // is handled at once, the rest of the burst once more when the window ends.
+        disposable += Observable
+            .merge(
+                listOf(
+                    rxBus.toObservable(EventRefreshOverview::class.java),
+                    rxBus.toObservable(EventInitializationChanged::class.java),
+                    rxBus.toObservable(EventAutosensCalculationFinished::class.java),
+                    rxBus.toObservable(EventPreferenceChange::class.java)
+                ).map { events -> events.map { } }
+            )
+            .throttleLatest(UPDATE_WINDOW_MS, TimeUnit.MILLISECONDS, aapsSchedulers.io, true)
             .observeOn(aapsSchedulers.io)
             .subscribe({ triggerNotificationUpdate() }, fabricPrivacy::logException)
     }
@@ -224,5 +228,11 @@ class PersistentNotificationPlugin @Inject constructor(
         val notification = builder.build()
         mNotificationManager.notify(notificationHolder.notificationID, notification)
         notificationHolder.notification = notification
+    }
+
+    companion object {
+
+        /** At most one notification rebuild per this many ms; the last event of a burst is never lost. */
+        const val UPDATE_WINDOW_MS = 2_000L
     }
 }
