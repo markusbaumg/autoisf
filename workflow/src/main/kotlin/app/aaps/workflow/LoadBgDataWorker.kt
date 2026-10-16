@@ -63,7 +63,9 @@ class LoadBgDataWorker(
         data.iobCobCalculator.ads.loadBgData(data.end, persistenceLayer, aapsLogger, dateUtil)
         data.iobCobCalculator.ads.smoothData(activePlugin)
         rxBus.send(EventBucketedDataCreated())
-        data.iobCobCalculator.clearCache()
+        // Not clearCache(): a new BG changes nothing in the IOB of the past, and without the cache the
+        // whole history was calculated again for every BG. History changes still invalidate from their time.
+        data.iobCobCalculator.bgDataReloaded()
         return Result.success()
     }
 }

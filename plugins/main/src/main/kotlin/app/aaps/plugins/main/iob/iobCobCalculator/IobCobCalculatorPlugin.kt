@@ -62,6 +62,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.TimeZone
 import kotlin.math.max
 import kotlin.math.min
 
@@ -94,6 +95,23 @@ class IobCobCalculatorPlugin @Inject constructor(
     private val disposable = CompositeDisposable()
 
     private var iobTable = LongSparseArray<IobTotal>() // oldest at index 0
+
+    /**
+     * What the values in [iobTable] were calculated with, apart from the history itself. Unlike upstream
+     * (where every bolus carries its own insulin configuration) the 3.4 bolus IOB uses the DIA of the
+     * current profile, and the basal profile of the past is read in the current time zone. When one of
+     * these differs at a BG reload, the whole cache is dropped - which is exactly what happened on every
+     * BG reload before.
+     */
+    private var iobTableKey: IobCacheKey? = null
+
+    private data class IobCacheKey(val dia: Double?, val bolusSnoozeDivisor: Double, val timeZoneId: String, val timeZoneRawOffset: Int)
+
+    /**
+     * True between onStart and onStop. Only the started (main) instance receives the history changes that
+     * invalidate [iobTable]; another instance (history browser) keeps clearing all on every BG reload.
+     */
+    @Volatile internal var receivesHistoryChanges = false
 
     override var ads: AutosensDataStore = AutosensDataStoreObject()
 
@@ -174,9 +192,11 @@ class IobCobCalculatorPlugin @Inject constructor(
                 fabricPrivacy::logException
             )
         historyScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        receivesHistoryChanges = true
     }
 
     override fun onStop() {
+        receivesHistoryChanges = false
         disposable.clear()
         // Cancels the pending debounce too - it is launched in this scope
         historyScope?.cancel()
@@ -209,6 +229,43 @@ class IobCobCalculatorPlugin @Inject constructor(
         synchronized(dataLock) {
             aapsLogger.debug(LTag.AUTOSENS, "Clearing cached data.")
             iobTable = LongSparseArray()
+            iobTableKey = null
+        }
+    }
+
+    private fun currentIobCacheKey(): IobCacheKey =
+        TimeZone.getDefault().let { tz ->
+            IobCacheKey(
+                dia = profileFunction.getProfile()?.dia,
+                bolusSnoozeDivisor = preferences.get(DoubleKey.ApsAmaBolusSnoozeDivisor),
+                timeZoneId = tz.id,
+                timeZoneRawOffset = tz.rawOffset
+            )
+        }
+
+    override fun bgDataReloaded() {
+        if (!receivesHistoryChanges) {
+            // Nothing invalidates this instance on history changes: behave as before
+            clearCache()
+            return
+        }
+        val key = currentIobCacheKey()
+        // The calculation reaches 24 h + DIA back (calculateDetectionStart); older entries are never asked for
+        val oldest = dateUtil.now() - T.hours(CACHED_IOB_HOURS).msecs()
+        synchronized(dataLock) {
+            if (key != iobTableKey) {
+                aapsLogger.debug(LTag.AUTOSENS, "BG data reloaded: IOB cache key changed ($iobTableKey -> $key), dropping all ${iobTable.size()} cached IOB values")
+                iobTable = LongSparseArray()
+                iobTableKey = key
+                return
+            }
+            // Oldest at index 0. A few per BG: one value every 5 minutes moves past the limit.
+            var count = 0
+            while (iobTable.size() > 0 && iobTable.keyAt(0) < oldest) {
+                iobTable.removeAt(0)
+                count++
+            }
+            aapsLogger.debug(LTag.AUTOSENS, "BG data reloaded: kept ${iobTable.size()} cached IOB values, dropped $count older than $CACHED_IOB_HOURS h")
         }
     }
 
@@ -647,5 +704,11 @@ class IobCobCalculatorPlugin @Inject constructor(
             total.plus(totalExt)
         }
         return total
+    }
+
+    internal companion object {
+
+        /** How long cached IOB values are kept: more than the 24 h + DIA the calculation looks back. */
+        const val CACHED_IOB_HOURS = 48L
     }
 }
