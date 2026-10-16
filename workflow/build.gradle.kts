@@ -23,6 +23,7 @@ dependencies {
     implementation(project(":core:utils"))
 
     testImplementation(project(":shared:tests"))
+    testImplementation(libs.kotlinx.coroutines.test)
 
     ksp(libs.com.google.dagger.compiler)
     ksp(libs.com.google.dagger.android.processor)

@@ -23,8 +23,11 @@ import app.aaps.core.utils.receivers.DataWorkerStorage
 import app.aaps.core.utils.worker.then
 import app.aaps.workflow.iob.IobCobOref1Worker
 import app.aaps.workflow.iob.IobCobOrefWorker
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.time.Duration
 
 @Singleton
 class CalculationWorkflowImpl @Inject constructor(
@@ -49,6 +52,18 @@ class CalculationWorkflowImpl @Inject constructor(
         while (workStatus.isNotEmpty() && workStatus[0].state == WorkInfo.State.RUNNING)
             SystemClock.sleep(100)
         aapsLogger.debug(LTag.WORKER, "Calculation thread stopped: $from")
+    }
+
+    override fun isCalculationRunning(job: String): Boolean =
+        // The whole unique work, so the loop worker at the end of the chain (still BLOCKED behind the
+        // preparation, or running the loop) counts as busy too. Finished works stay listed until
+        // WorkManager prunes them, so only unfinished states count.
+        WorkManager.getInstance(context).getWorkInfosForUniqueWork(job).get().any { !it.state.isFinished }
+
+    override suspend fun awaitCalculationIdle(job: String, timeout: Duration): Boolean {
+        if (!isCalculationRunning(job)) return true
+        aapsLogger.debug(LTag.WORKER, "Waiting for $job to finish")
+        return awaitIdle(timeout, IDLE_POLL_MS) { isCalculationRunning(job) }
     }
 
     override fun runCalculation(
@@ -210,5 +225,21 @@ class CalculationWorkflowImpl @Inject constructor(
                     .build()
             )
             .enqueue()
+    }
+
+    companion object {
+
+        /** awaitCalculationIdle waits for minutes, not seconds, so it asks WorkManager only twice a second. */
+        private const val IDLE_POLL_MS = 500L
+
+        /**
+         * Polls [busy] every [pollMs] until it answers false (true is returned) or [timeout] runs out
+         * (false is returned).
+         */
+        internal suspend fun awaitIdle(timeout: Duration, pollMs: Long, busy: () -> Boolean): Boolean =
+            withTimeoutOrNull(timeout) {
+                while (busy()) delay(pollMs)
+                true
+            } ?: false
     }
 }

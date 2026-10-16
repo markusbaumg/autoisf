@@ -28,6 +28,7 @@ dependencies {
     testImplementation(project(":plugins:aps"))
     testImplementation(project(":plugins:insulin"))
     testImplementation(project(":shared:tests"))
+    testImplementation(libs.kotlinx.coroutines.test)
 
     api(libs.androidx.appcompat)
     api(libs.com.google.android.material)

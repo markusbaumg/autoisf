@@ -55,10 +55,11 @@ import app.aaps.plugins.main.R
 import app.aaps.plugins.main.iob.iobCobCalculator.data.AutosensDataStoreObject
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.max
@@ -147,7 +148,7 @@ class IobCobCalculatorPlugin @Inject constructor(
         disposable += rxBus
             .toObservable(EventNewHistoryData::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ event -> scheduleHistoryDataChange(event) }, fabricPrivacy::logException)
+            .subscribe({ event -> scheduleHistoryDataChange(event.oldDataTimestamp, event.reloadBgData, event.newestGlucoseValueTimestamp) }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventTherapyEventChange::class.java)
             .observeOn(aapsSchedulers.io)
@@ -173,17 +174,24 @@ class IobCobCalculatorPlugin @Inject constructor(
                 },
                 fabricPrivacy::logException
             )
-        historyWorker = Executors.newSingleThreadScheduledExecutor()
+        historyScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     }
 
     override fun onStop() {
         disposable.clear()
-        historyWorker?.shutdown()
-        historyWorker = null
+        // Cancels the pending debounce too - it is launched in this scope
+        historyScope?.cancel()
+        historyScope = null
+        // The waiting change has to go too. A cancel during the debounce leaves it set, and the scheduler
+        // would then merge every later change into it and never schedule anything again.
+        runBlocking { historyScheduler.drop() }
         super.onStop()
     }
 
     private fun resetDataAndRunCalculation(reason: String, event: Event?) {
+        // The full recalculation below covers every change that is still waiting, so it is dropped.
+        // Otherwise it would wait for this run and then recalculate part of it again.
+        runBlocking { historyScheduler.drop() }
         calculationWorkflow.stopCalculation(CalculationWorkflow.MAIN_CALCULATION, reason)
         clearCache()
         ads.reset()
@@ -414,50 +422,36 @@ class IobCobCalculatorPlugin @Inject constructor(
         return sb.toString()
     }
 
-    // Limit rate of EventNewHistoryData
-    private var historyWorker: ScheduledExecutorService? = null
-    private var scheduledHistoryPost: ScheduledFuture<*>? = null
-    private var scheduledEvent: EventNewHistoryData? = null
+    // Debounce history data changes
+    @Volatile private var historyScope: CoroutineScope? = null
 
-    @Synchronized
-    private fun scheduleHistoryDataChange(event: EventNewHistoryData) {
-        // if there is nothing scheduled or asking reload deeper to the past
-        if (scheduledEvent == null || event.oldDataTimestamp < (scheduledEvent?.oldDataTimestamp ?: 0L)) {
-            // cancel waiting task to prevent sending multiple posts
-            scheduledHistoryPost?.cancel(false)
-            // prepare task for execution in 1 sec
-            scheduledEvent?.let {
-                // set reload bg data if was not set
-                event.reloadBgData = event.reloadBgData || it.reloadBgData
-            }
-            scheduledEvent = event
-            scheduledHistoryPost = historyWorker?.schedule(
-                {
-                    synchronized(this) {
-                        aapsLogger.debug(LTag.AUTOSENS, "Running newHistoryData")
-                        persistenceLayer.clearCachedTddData(MidnightTime.calc(event.oldDataTimestamp))
-                        newHistoryData(
-                            event.oldDataTimestamp,
-                            event.reloadBgData,
-                            if (event.newestGlucoseValueTimestamp != null) EventNewBG(event.newestGlucoseValueTimestamp) else event
-                        )
-                        scheduledEvent = null
-                        scheduledHistoryPost = null
-                    }
-                }, 5L, TimeUnit.SECONDS
-            )
-        } else {
-            // asked reload is newer -> adjust params only
-            scheduledEvent?.let {
-                // set reload bg data if was not set
-                if (!it.reloadBgData) it.reloadBgData = event.reloadBgData
-                // set Glucose value if newer
-                event.newestGlucoseValueTimestamp?.let { timestamp ->
-                    if (timestamp > (it.newestGlucoseValueTimestamp ?: 0L)) it.newestGlucoseValueTimestamp = timestamp
-                }
-            }
+    /**
+     * Debounces history changes and lets a running calculation finish before the next one starts.
+     * See [HistoryChangeScheduler] for why.
+     */
+    private val historyScheduler = HistoryChangeScheduler(
+        aapsLogger = aapsLogger,
+        scope = { historyScope },
+        awaitCalculationIdle = { timeout -> calculationWorkflow.awaitCalculationIdle(CalculationWorkflow.MAIN_CALCULATION, timeout) },
+        onRunFailed = {
+            clearCache()
+            ads.reset()
         }
+    ) { oldDataTimestamp, reloadBgData, newestGlucoseValueTimestamp ->
+        persistenceLayer.clearCachedTddData(MidnightTime.calc(oldDataTimestamp))
+        newHistoryData(
+            oldDataTimestamp,
+            reloadBgData,
+            if (newestGlucoseValueTimestamp != null) EventNewBG(newestGlucoseValueTimestamp) else EventNewHistoryData(oldDataTimestamp, reloadBgData)
+        )
     }
+
+    /**
+     * Called from the RxBus io thread. Blocks only while a recalculation is being started (the
+     * scheduler lock is held across stop + invalidate + enqueue), like the former @Synchronized version.
+     */
+    private fun scheduleHistoryDataChange(oldDataTimestamp: Long, reloadBgData: Boolean, newestGlucoseValueTimestamp: Long?) =
+        runBlocking { historyScheduler.schedule(oldDataTimestamp, reloadBgData, newestGlucoseValueTimestamp) }
 
     // When historical data is changed (coming from NS etc) finished calculations after this date must be invalidated
     private fun newHistoryData(oldDataTimestamp: Long, bgDataReload: Boolean, event: Event) {

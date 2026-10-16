@@ -5,6 +5,7 @@ import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.rx.events.Event
 import app.aaps.core.interfaces.workflow.CalculationWorkflow.Companion.HISTORY_CALCULATION
 import app.aaps.core.interfaces.workflow.CalculationWorkflow.Companion.MAIN_CALCULATION
+import kotlin.time.Duration
 
 interface CalculationWorkflow {
     companion object {
@@ -37,6 +38,26 @@ interface CalculationWorkflow {
     }
 
     fun stopCalculation(job: String, from: String)
+
+    /**
+     * True while any work of [job] is enqueued, blocked or running. For [MAIN_CALCULATION] this
+     * includes the final stage (InvokeLoopWorker, which runs the loop) of the chain.
+     */
+    fun isCalculationRunning(job: String): Boolean
+
+    /**
+     * Wait until no work of [job] is running or waiting to run, the loop stage included, or until [timeout].
+     *
+     * For a history change that arrives while a calculation runs: stopping that run throws away all
+     * of its work, and when a full recalculation takes longer than the time between two glucose values
+     * it then never finishes. Waiting for it and calculating the change afterwards always ends.
+     *
+     * Do not call it from a worker of [job] (e.g. the loop): it would wait for itself until [timeout].
+     *
+     * @param job [MAIN_CALCULATION] or [HISTORY_CALCULATION]
+     * @return true when nothing is running, false when [timeout] ran out first
+     */
+    suspend fun awaitCalculationIdle(job: String, timeout: Duration): Boolean
 
     /**
      * Start calculation of data needed for displaying graphs
