@@ -149,11 +149,18 @@ internal class HistoryChangeScheduler(
      * For a stopping plugin, and for a full recalculation, which covers every change anyway. It has to
      * clear [scheduled] and not only cancel [job]: a cancelled wait leaves the entry set, and the guard
      * in [schedule] would then merge every later change into an entry nobody runs.
+     *
+     * @return the newest glucose value timestamp the dropped change carried, null when nothing was
+     * waiting or the change was not triggered by a new BG. A full recalculation that drops such a change
+     * must pass it on as `EventNewBG`, or the loop does not run for that glucose value: `InvokeLoopWorker`
+     * runs the loop only for a calculation caused by a new BG.
      */
-    suspend fun drop(): Unit = lock.withLock {
+    suspend fun drop(): Long? = lock.withLock {
+        val dropped = scheduled?.newestGlucoseValueTimestamp
         job?.cancel()
         job = null
         scheduled = null
+        dropped
     }
 
     private fun newer(a: Long?, b: Long?): Long? =

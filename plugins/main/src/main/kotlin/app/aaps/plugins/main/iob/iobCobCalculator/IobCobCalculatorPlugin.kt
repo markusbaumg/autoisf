@@ -1,5 +1,6 @@
 package app.aaps.plugins.main.iob.iobCobCalculator
 
+import androidx.annotation.VisibleForTesting
 import androidx.collection.LongSparseArray
 import app.aaps.core.data.aps.BasalData
 import app.aaps.core.data.configuration.Constants
@@ -208,10 +209,15 @@ class IobCobCalculatorPlugin @Inject constructor(
         super.onStop()
     }
 
-    private fun resetDataAndRunCalculation(reason: String, event: Event?) {
+    @VisibleForTesting
+    internal fun resetDataAndRunCalculation(reason: String, event: Event?) {
         // The full recalculation below covers every change that is still waiting, so it is dropped.
         // Otherwise it would wait for this run and then recalculate part of it again.
-        runBlocking { historyScheduler.drop() }
+        val droppedGlucoseValueTimestamp = runBlocking { historyScheduler.drop() }
+        // A dropped change for a new BG would have run the loop for it (InvokeLoopWorker runs only for a
+        // calculation caused by EventNewBG). The full recalculation takes over that cause, otherwise the
+        // loop waits for the next BG. A double run is not possible: the loop skips a BG it already ran for.
+        val cause = if (droppedGlucoseValueTimestamp != null) EventNewBG(droppedGlucoseValueTimestamp) else event
         calculationWorkflow.stopCalculation(CalculationWorkflow.MAIN_CALCULATION, reason)
         clearCache()
         ads.reset()
@@ -222,7 +228,7 @@ class IobCobCalculatorPlugin @Inject constructor(
             reason = reason,
             end = System.currentTimeMillis(),
             bgDataReload = true,
-            cause = event
+            cause = cause
         )
     }
 
@@ -474,7 +480,7 @@ class IobCobCalculatorPlugin @Inject constructor(
     }
 
     // Debounce history data changes
-    @Volatile private var historyScope: CoroutineScope? = null
+    @Volatile @VisibleForTesting internal var historyScope: CoroutineScope? = null
 
     /**
      * Debounces history changes and lets a running calculation finish before the next one starts.
@@ -501,7 +507,8 @@ class IobCobCalculatorPlugin @Inject constructor(
      * Called from the RxBus io thread. Blocks only while a recalculation is being started (the
      * scheduler lock is held across stop + invalidate + enqueue), like the former @Synchronized version.
      */
-    private fun scheduleHistoryDataChange(oldDataTimestamp: Long, reloadBgData: Boolean, newestGlucoseValueTimestamp: Long?) =
+    @VisibleForTesting
+    internal fun scheduleHistoryDataChange(oldDataTimestamp: Long, reloadBgData: Boolean, newestGlucoseValueTimestamp: Long?) =
         runBlocking { historyScheduler.schedule(oldDataTimestamp, reloadBgData, newestGlucoseValueTimestamp) }
 
     // When historical data is changed (coming from NS etc) finished calculations after this date must be invalidated

@@ -193,6 +193,44 @@ class HistoryChangeSchedulerTest {
     }
 
     /**
+     * A full recalculation that drops a change for a new BG has to run the loop for that BG instead, so
+     * drop hands back the glucose value timestamp of what it dropped.
+     */
+    @Test
+    fun `drop returns the newest glucose value timestamp of the dropped change`() = runTest {
+        val sut = scheduler()
+        runningCalculation = CompletableDeferred()
+        sut.schedule(2_000, reloadBgData = false, newestGlucoseValueTimestamp = BG - 1)
+        sut.schedule(1_000, reloadBgData = false, newestGlucoseValueTimestamp = BG)
+        sut.schedule(3_000, reloadBgData = false, newestGlucoseValueTimestamp = null)
+        advanceTimeBy(1.minutes)
+
+        assertThat(sut.drop()).isEqualTo(BG)
+        // dropped means gone: a second drop finds nothing
+        assertThat(sut.drop()).isNull()
+    }
+
+    @Test
+    fun `drop returns null for a change without a new BG and with nothing waiting`() = runTest {
+        val sut = scheduler()
+        assertThat(sut.drop()).isNull()
+
+        sut.schedule(1_000, reloadBgData = true, newestGlucoseValueTimestamp = null)
+        assertThat(sut.drop()).isNull()
+    }
+
+    /** A change that has run is not waiting any more: a later drop must not report its BG again. */
+    @Test
+    fun `drop after the change has run returns null`() = runTest {
+        val sut = scheduler()
+        sut.schedule(1_000, reloadBgData = false, newestGlucoseValueTimestamp = BG)
+        settle()
+        assertThat(runs).hasSize(1)
+
+        assertThat(sut.drop()).isNull()
+    }
+
+    /**
      * A drop that gets in between the end of the wait and the lock. The waiting body cannot be
      * cancelled any more at that point, so it must see for itself that its change is gone - otherwise
      * it recalculates on top of the full recalculation that dropped it.
