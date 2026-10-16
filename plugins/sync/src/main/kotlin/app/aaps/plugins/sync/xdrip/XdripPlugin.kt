@@ -70,6 +70,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -124,6 +125,7 @@ class XdripPlugin @Inject constructor(
     override fun onStart() {
         super.onStart()
         handler = Handler(HandlerThread(this::class.simpleName + "Handler").also { it.start() }.looper)
+        eventWorker = Executors.newSingleThreadScheduledExecutor()
         disposable += rxBus
             .toObservable(EventAppExit::class.java)
             .observeOn(aapsSchedulers.io)
@@ -139,22 +141,21 @@ class XdripPlugin @Inject constructor(
             .toObservable(EventNewBG::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({
-                           sendStatusLine()
+                           requestStatusLine()
                            delayAndScheduleExecution("NEW_BG")
                        }, fabricPrivacy::logException)
         disposable += rxBus.toObservable(EventNewHistoryData::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({
-                           sendStatusLine()
+                           requestStatusLine()
                            delayAndScheduleExecution("NEW_DATA")
                        }, fabricPrivacy::logException)
         disposable += rxBus.toObservable(EventAutosensCalculationFinished::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ sendStatusLine() }, fabricPrivacy::logException)
+            .subscribe({ requestStatusLine() }, fabricPrivacy::logException)
         disposable += rxBus.toObservable(EventAppInitialized::class.java)
             .observeOn(aapsSchedulers.io)
-            .subscribe({ sendStatusLine() }, fabricPrivacy::logException)
-        eventWorker = Executors.newSingleThreadScheduledExecutor()
+            .subscribe({ requestStatusLine(force = true) }, fabricPrivacy::logException)
     }
 
     override fun onStop() {
@@ -162,6 +163,13 @@ class XdripPlugin @Inject constructor(
         handler?.looper?.quitSafely()
         handler?.removeCallbacksAndMessages(null)
         handler = null
+        synchronized(statusLineThrottle) {
+            scheduledStatusLine?.cancel(false)
+            scheduledStatusLine = null
+            forceStatusLine = false
+            statusLineThrottle.burstFinished()
+            statusLineThrottle.reset()
+        }
         eventWorker?.shutdown()
         eventWorker = null
         disposable.clear()
@@ -198,15 +206,51 @@ class XdripPlugin @Inject constructor(
         return HtmlHelper.fromHtml("")
     }
 
+    private val statusLineThrottle = StatusLineThrottle()
+    private var scheduledStatusLine: ScheduledFuture<*>? = null
+    private var forceStatusLine = false
+
+    /**
+     * Schedules a status line broadcast. Triggers that arrive close together (new BG, new history
+     * data and IOB/COB calculation finished all fire for one BG) are coalesced into one send, see
+     * [StatusLineThrottle]. [force] broadcasts even if the text did not change.
+     */
+    private fun requestStatusLine(force: Boolean = false) {
+        synchronized(statusLineThrottle) {
+            if (force) forceStatusLine = true
+            val worker = eventWorker ?: return
+            scheduledStatusLine?.cancel(false)
+            val delay = statusLineThrottle.delayForTrigger(dateUtil.now())
+            try {
+                scheduledStatusLine = worker.schedule({ sendStatusLine() }, delay, TimeUnit.MILLISECONDS)
+            } catch (e: RejectedExecutionException) {
+                aapsLogger.debug(LTag.XDRIP, "Status line not scheduled: ${e.message}")
+            }
+        }
+    }
+
     private fun sendStatusLine() {
-        if (preferences.get(BooleanKey.XdripSendStatus)) {
+        try {
+            val force = synchronized(statusLineThrottle) {
+                statusLineThrottle.burstFinished()
+                forceStatusLine.also { forceStatusLine = false }
+            }
+            if (!preferences.get(BooleanKey.XdripSendStatus)) {
+                // Re-enabling must send at once, even if the text equals the last one sent
+                synchronized(statusLineThrottle) { statusLineThrottle.reset() }
+                return
+            }
             val status = profileFunction.getProfile()?.let { buildStatusLine(it) } ?: ""
+            val send = synchronized(statusLineThrottle) { statusLineThrottle.shouldSend(status, dateUtil.now(), force) }
+            if (!send) return
             context.sendBroadcast(
                 Intent(Intents.ACTION_NEW_EXTERNAL_STATUSLINE).also {
                     it.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
                     it.putExtras(Bundle().apply { putString(Intents.EXTRA_STATUSLINE, status) })
                 }
             )
+        } catch (e: Exception) {
+            fabricPrivacy.logException(e)
         }
     }
 
