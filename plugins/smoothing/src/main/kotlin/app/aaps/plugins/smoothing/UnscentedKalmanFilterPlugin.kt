@@ -269,15 +269,20 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
      * Individual puts on purpose: SP.Editor.putDouble stores a String while SP.putDouble stores a Float,
      * so batching would change the stored type/precision of ukf_learned_r. Android coalesces the
      * back-to-back apply() calls into one disk write.
+     *
+     * [blocking] is for the save on app exit: apply() only writes to disk later, on another thread,
+     * and exitProcess() would drop that write. The last key is then written with commit(), which
+     * writes the whole in-memory file (the apply()d keys included) before it returns.
      * Q is never saved - it's always the fixed physiological value
      */
-    private fun savePersistedParameters() {
+    private fun savePersistedParameters(blocking: Boolean = false) {
         try {
-            sp.putLong("ukf_last_saved_timestamp", System.currentTimeMillis())
             sp.putLong("ukf_sensor_change_timestamp", lastSensorChangeTimestamp)
             sp.putLong("ukf_last_processed_timestamp", lastProcessedTimestamp)
             sp.putDouble("ukf_learned_r", learnedR)
             sp.putInt("ukf_session_id", sensorSessionId)
+            if (blocking) sp.edit(commit = true) { putLong("ukf_last_saved_timestamp", System.currentTimeMillis()) }
+            else sp.putLong("ukf_last_saved_timestamp", System.currentTimeMillis())
             measurementsSinceSave = 0
             aapsLogger.debug(LTag.GLUCOSE, "UKF: Saved learned R for session $sensorSessionId")
         } catch (e: Exception) {
@@ -294,11 +299,12 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
      * Listens for EventTherapyEventChange and checks if it's a sensor change
      */
     private fun subscribeToSensorChanges() {
-        // Parameters are saved only every SAVE_EVERY_MEASUREMENTS; persist the latest state on exit
+        // Parameters are saved only every SAVE_EVERY_MEASUREMENTS; persist the latest state on exit.
+        // No observeOn: ConfigBuilderPlugin.exitApp() calls exitProcess(0) right after sending EventAppExit,
+        // so the save must run inside rxBus.send() on the sender thread and be on disk before it returns.
         disposable += rxBus
             .toObservable(EventAppExit::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ if (measurementsSinceSave > 0) savePersistedParameters() }, { aapsLogger.error(LTag.GLUCOSE, "UKF: Error on app exit", it) })
+            .subscribe({ if (measurementsSinceSave > 0) savePersistedParameters(blocking = true) }, { aapsLogger.error(LTag.GLUCOSE, "UKF: Error on app exit", it) })
         disposable += rxBus
             .toObservable(EventTherapyEventChange::class.java)
             .observeOn(aapsSchedulers.io)

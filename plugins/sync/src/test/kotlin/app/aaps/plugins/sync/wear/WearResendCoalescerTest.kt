@@ -1,6 +1,8 @@
 package app.aaps.plugins.sync.wear
 
 import com.google.common.truth.Truth.assertThat
+import io.reactivex.rxjava3.core.Scheduler
+import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.schedulers.TestScheduler
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -64,5 +66,49 @@ class WearResendCoalescerTest {
         sut.request("B")
         advance(2_000)
         assertThat(sent).containsExactly(22_000L to "B")
+    }
+
+    @Test fun `a request made while a resend runs is sent once more afterwards with the latest reason`() {
+        var nested = true
+        sut = WearResendCoalescer(scheduler, quietMs = 2_000L, maxWaitMs = 10_000L) {
+            sent.add(scheduler.now(TimeUnit.MILLISECONDS) to it)
+            if (nested) {
+                nested = false
+                sut.request("B")
+                sut.request("C")
+            }
+        }
+        sut.request("A")
+        advance(20_000)
+        assertThat(sent).containsExactly(2_000L to "A", 4_000L to "C").inOrder()
+    }
+
+    @Test fun `a burst uses one timer and never disposes a scheduled task`() {
+        // Disposing an io task that has already started interrupts its thread; the coalescer must not do it.
+        var workers = 0
+        var disposed = 0
+        val counting = object : Scheduler() {
+            override fun now(unit: TimeUnit): Long = scheduler.now(unit)
+            override fun createWorker(): Worker {
+                workers++
+                val inner = scheduler.createWorker()
+                return object : Worker() {
+                    override fun schedule(run: Runnable, delay: Long, unit: TimeUnit): Disposable = inner.schedule(run, delay, unit)
+                    override fun dispose() {
+                        disposed++
+                        inner.dispose()
+                    }
+                    override fun isDisposed(): Boolean = inner.isDisposed
+                }
+            }
+        }
+        sut = WearResendCoalescer(counting, quietMs = 2_000L, maxWaitMs = 10_000L) { sent.add(scheduler.now(TimeUnit.MILLISECONDS) to it) }
+        repeat(100) { sut.request("R$it") }
+        advance(1_000)
+        repeat(100) { sut.request("S$it") }
+        advance(10_000)
+        assertThat(sent).containsExactly(3_000L to "S99")
+        assertThat(workers).isEqualTo(2)                  // the first timer and its one wait for the rest
+        assertThat(disposed).isEqualTo(workers)           // only disposed by the scheduler itself after running
     }
 }
