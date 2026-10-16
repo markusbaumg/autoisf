@@ -115,7 +115,8 @@ class WatchfaceViewAdapter(
             CUSTOM,
             DIGITAL,
             CIRCLE,
-            KUSI;
+            KUSI,
+            GLASS;
 
             companion object {
 

@@ -51,6 +51,27 @@
         </service>
 
         <service
+            android:name=".watchfaces.glass.GlassWatchface"
+            android:allowEmbedded="true"
+            android:exported="true"
+            android:label="@string/label_watchface_glass"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/watch_face" />
+            <meta-data
+                android:name="com.google.android.wearable.watchface.preview"
+                android:resource="@drawable/watchface_glass" />
+            <meta-data
+                android:name="com.google.android.wearable.watchface.wearableConfigurationAction"
+                android:value="androidx.wear.watchface.editor.action.WATCH_FACE_EDITOR" />
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+                <category android:name="com.google.android.wearable.watchface.category.WATCH_FACE" />
+            </intent-filter>
+        </service>
+
+        <service
             android:name=".watchfaces.CircleWatchface"
             android:allowEmbedded="true"
             android:exported="true"
