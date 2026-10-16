@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- AAPS Glass: same (watch-local, not CWF-settable) keys as the Kusi/Halo face. Default off. -->
+<!-- AAPS Glass: same (watch-local, not CWF-settable) keys as the Kusi/Halo face. Default off.
+     No summaryOn/summaryOff on the bolus switch: they would hide the safety summary. -->
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
@@ -7,8 +8,6 @@
         android:defaultValue="false"
         android:key="@string/key_kusi_bolus_double_tap"
         android:summary="@string/pref_glass_bolus_double_tap_summary"
-        android:summaryOn="@string/on"
-        android:summaryOff="@string/off"
         android:title="@string/pref_kusi_bolus_double_tap"
         app:wear_iconOff="@drawable/settings_off"
         app:wear_iconOn="@drawable/settings_on" />
@@ -21,5 +20,14 @@
         android:key="@string/key_kusi_bolus_amount"
         android:summary="%s"
         android:title="@string/pref_kusi_bolus_amount" />
+
+    <CheckBoxPreference
+        android:defaultValue="true"
+        android:key="@string/key_show_date"
+        android:summaryOff="@string/off"
+        android:summaryOn="@string/on"
+        android:title="@string/pref_show_date"
+        app:wear_iconOff="@drawable/settings_off"
+        app:wear_iconOn="@drawable/settings_on" />
 
 </PreferenceScreen>

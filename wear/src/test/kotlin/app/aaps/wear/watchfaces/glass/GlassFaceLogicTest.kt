@@ -8,7 +8,11 @@ import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Level
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.LoopHealth
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.LoopMode
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.LoopRun
+import app.aaps.wear.watchfaces.glass.GlassFaceLogic.AmbTone
+import app.aaps.wear.watchfaces.glass.GlassFaceLogic.OutlineStyle
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.PhoneLink
+import app.aaps.wear.watchfaces.glass.GlassFaceLogic.PhoneReach
+import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Pills
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Range
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Refusal
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.RunKind
@@ -143,14 +147,38 @@ class GlassFaceLogicTest {
 
     // ------------------------------------------------------------------ units: mmol / mg/dL
 
-    @Test fun bgSizeForMmolAndMgdl() {
-        assertThat(GlassFaceLogic.bgTextSize("9,4")).isEqualTo(84f)
-        assertThat(GlassFaceLogic.bgTextSize("11,8")).isEqualTo(74f)
-        assertThat(GlassFaceLogic.bgTextSize("22,2+")).isEqualTo(64f)
-        assertThat(GlassFaceLogic.bgTextSize("180")).isEqualTo(84f)
-        assertThat(GlassFaceLogic.bgTextSize("400+")).isEqualTo(74f)
-        assertThat(GlassFaceLogic.bgTextSize("39")).isEqualTo(84f)
-        assertThat(GlassFaceLogic.bgTextSize("---")).isEqualTo(84f)
+    /**
+     * Advance widths (em) of the DemiBold hero face approximating the mockup font, from which the spec's measured
+     * sizes follow: "9,4" 84, "11,8" 80, "400+" 68, "22,2+" 60, "254" 84.
+     */
+    private fun heroWidth(s: String, size: Float): Float = size * s.sumOf {
+        when (it) {
+            ',', '.' -> 0.36
+            '+'      -> 0.70
+            '-'      -> 0.40
+            else     -> 0.58
+        }
+    }.toFloat()
+
+    private fun bgFit(s: String, max: Float = GlassFaceLogic.BG_MAX_WIDTH) = GlassFaceLogic.bgFitSize({ heroWidth(s, it) }, max)
+
+    @Test fun bgSizeForMmolAndMgdlByMeasuredWidth() {
+        assertThat(bgFit("9,4")).isEqualTo(84f)
+        assertThat(bgFit("11,8")).isEqualTo(80f)
+        assertThat(bgFit("400+")).isEqualTo(68f)
+        assertThat(bgFit("22,2+")).isEqualTo(60f)
+        assertThat(bgFit("254")).isEqualTo(84f)
+        assertThat(bgFit("---")).isEqualTo(84f)
+        // the result always fits, in 2 px steps from 84
+        for (v in listOf("9,4", "11,8", "400+", "22,2+", "254", "39")) {
+            val size = bgFit(v)
+            assertThat(heroWidth(v, size)).isAtMost(GlassFaceLogic.BG_MAX_WIDTH)
+            assertThat((84f - size) % 2f).isEqualTo(0f)
+        }
+        // chip off: 230 px, "22,2+" keeps a larger size
+        assertThat(bgFit("22,2+", GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP)).isEqualTo(82f)
+        // floor 56 px, even when it still does not fit
+        assertThat(bgFit("888888888")).isEqualTo(GlassFaceLogic.BG_MIN_SIZE)
     }
 
     @Test fun valuesShownAsSentPlaceholdersDashed() {
@@ -358,30 +386,69 @@ class GlassFaceLogicTest {
     }
 
     @Test fun worstCaseFooterDropsLowPriorityFirst() {
-        // TT 4,4 - 5,0 · KH 20(30)g · 12,35 U/h · BGI -1,2 · Res 120U · Tel 64 % at 10 px/char is far wider than 300 px
-        val runs = footer(
+        // Reservoir 5U · TT 4,4 - 5,0 · KH 20(30)g · 12,35 U/h · BGI -1,2 · Res 120U · Tel 64 % is far wider than 257 px
+        fun runs(m: (String) -> Float) = footer(
             warnings = listOf(Warning.RES_CRITICAL), res = "5U", resLevel = 2, tt = "4,4 - 5,0", ttLevel = 2, cob = "20(30)g", basal = "12,35U/h",
-            showBgi = true, showRes = true, showBatt = true, m = measure
+            showBgi = true, showRes = true, showBatt = true, m = m
         )
-        assertThat(runs.first().kind).isEqualTo(RunKind.WARNING)          // warnings are never dropped
-        assertThat(runs.map { it.kind }).contains(RunKind.TT)
-        assertThat(runs.map { it.kind }).doesNotContain(RunKind.BGI)
-        assertThat(GlassFaceLogic.lineWidth(runs, sep, measure)).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
-        // a single over-long run is kept and scaled by the face
-        val width = GlassFaceLogic.lineWidth(runs, sep, measure)
-        val size = GlassFaceLogic.fitSize(18f, width, GlassFaceLogic.FOOTER_MAX_WIDTH)
-        assertThat(width * size / 18f).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH + 0.01f)
+        val roboto = runs(roboto)
+        assertThat(roboto.first().kind).isEqualTo(RunKind.WARNING)          // warnings are never dropped
+        assertThat(roboto.map { it.kind }).containsExactly(RunKind.WARNING, RunKind.TT).inOrder() // TT is the last to go
+        assertThat(GlassFaceLogic.lineWidth(roboto, sep, this.roboto)).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
+        // at a wider worst-case font even the TT goes, the warning stays
+        val wide = runs(measure)
+        assertThat(wide.map { it.kind }).containsExactly(RunKind.WARNING)
+        assertThat(GlassFaceLogic.lineWidth(wide, sep, measure)).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
+    }
+
+    @Test fun footerMaxWidthIsTheChordAt093R() {
+        assertThat(GlassFaceLogic.FOOTER_MAX_WIDTH).isEqualTo(257f)
+    }
+
+    /** Fits [text] as the single W1-W6 owner run and returns the size and the drawn width at that size. */
+    private fun fitOwner(text: String, m: (String) -> Float = measure): Triple<Float, String, Float> {
+        val fit = GlassFaceLogic.fitFooter(listOf(GlassFaceLogic.Run(text, RunKind.WARNING, Tone.ALERT, 100)), sep, m)
+        val drawn = fit.runs.single().text
+        return Triple(fit.size, drawn, m(drawn) * fit.size / GlassFaceLogic.FOOTER_SIZE)
+    }
+
+    @Test fun longOwnerTextShrinksTo16ThenEllipsises() {
+        // real German / French status texts at a worst-case 10 px per character (18 px Medium)
+        for (s in listOf("Telefon getrennt · 23 Std", "Keine Daten · 3 Std", "Téléphone déconnecté · 23 h", "Pas de données · 23 h", "Boucle désactivée")) {
+            val (size, drawn, width) = fitOwner(s)
+            assertThat(size).isAtLeast(GlassFaceLogic.FOOTER_MIN_SIZE)
+            assertThat(width).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH + 0.01f)
+            assertThat(drawn).isEqualTo(s) // these fit without cutting
+        }
+        // "Telefon getrennt · 23 Std" = 250 px: fits at 18 px
+        assertThat(fitOwner("Telefon getrennt · 23 Std").first).isEqualTo(18f)
+        // "Téléphone déconnecté · 23 h" = 270 px: shrinks, above the floor
+        assertThat(fitOwner("Téléphone déconnecté · 23 h").first).isWithin(0.01f).of(18f * 257f / 270f)
+        // a translation far too long: 16 px floor, then "…"
+        val long = "Téléphone déconnecté depuis longtemps · 23 h"
+        val (size, drawn, width) = fitOwner(long)
+        assertThat(size).isEqualTo(GlassFaceLogic.FOOTER_MIN_SIZE)
+        assertThat(drawn).endsWith("…")
+        assertThat(drawn.length).isLessThan(long.length)
+        assertThat(width).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
+        assertThat(GlassFaceLogic.fitFooter(emptyList(), sep, measure).runs).isEmpty()
+    }
+
+    @Test fun ellipsize() {
+        assertThat(GlassFaceLogic.ellipsize("Kein Profil", 200f, measure)).isEqualTo("Kein Profil")
+        assertThat(GlassFaceLogic.ellipsize("Telefon getrennt", 80f, measure)).isEqualTo("Telefon…")
+        assertThat(GlassFaceLogic.ellipsize("abc", 5f, measure)).isEqualTo("…")
     }
 
     @Test fun allOnFooterDropsInfoRunsFirst() {
         val runs = footer(cob = "24g", showRes = true, showBatt = true, battLevel = 1, batt = "64")
-        // "Res 120U" (keep 20) goes first, the rest fits
-        assertThat(runs.map { it.text }).containsExactly("KH 24g", "0,85 U/h", "Tel 64 %").inOrder()
+        // pref.all_on (spec §8): "Res 120U" (keep 20) goes first, then "Tel 64 %" (25); KH and basal stay
+        assertThat(runs.map { it.text }).containsExactly("KH 24g", "0,85 U/h").inOrder()
         assertThat(GlassFaceLogic.lineWidth(runs, sep, roboto)).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
     }
 
     @Test fun worstCaseStatusStringsFit() {
-        // German worst cases at 18 px (8.5 px/char) must fit the 300 px slot without scaling
+        // German worst cases at 18 px (8.5 px/char) must fit the 257 px slot without scaling
         for (s in listOf("Telefon getrennt · 59′", "Keine Daten · 3 Std", "Warte auf AAPS", "Reservoir 120U  ·  12,35 U/h"))
             assertThat(roboto(s)).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
     }
@@ -399,6 +466,14 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.dateText(LocalDate.of(2026, 10, 17), Locale.GERMANY)).isEqualTo("Sa 17. Okt")
         assertThat(GlassFaceLogic.dateText(LocalDate.of(2026, 5, 1), Locale.GERMANY)).isEqualTo("Fr 1. Mai")
         assertThat(GlassFaceLogic.dateText(LocalDate.of(2026, 3, 2), Locale.GERMANY)).isEqualTo("Mo 2. März")
+    }
+
+    @Test fun amPmSuffix() {
+        assertThat(GlassFaceLogic.amPm(14, true)).isNull()
+        assertThat(GlassFaceLogic.amPm(0, false)).isEqualTo("AM")
+        assertThat(GlassFaceLogic.amPm(11, false)).isEqualTo("AM")
+        assertThat(GlassFaceLogic.amPm(12, false)).isEqualTo("PM")
+        assertThat(GlassFaceLogic.amPm(23, false)).isEqualTo("PM")
     }
 
     @Test fun timeText() {
@@ -440,14 +515,30 @@ class GlassFaceLogicTest {
     // ------------------------------------------------------------------ bolus ball states
 
     @Test fun bolusRefusals() {
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 0.5, 3.0)).isEqualTo(Refusal.NONE)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.LOST_FRESH, BgAge.FRESH, 0.5, 3.0)).isEqualTo(Refusal.NO_PHONE)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.LOST_STALE, BgAge.STALE, 0.5, 3.0)).isEqualTo(Refusal.NO_PHONE)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.SILENT, BgAge.FRESH, 0.5, 3.0)).isEqualTo(Refusal.STALE_DATA)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.STALE, 0.5, 3.0)).isEqualTo(Refusal.STALE_DATA)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 1.0, 0.5)).isEqualTo(Refusal.MAX_BOLUS)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 0.5, 0.5)).isEqualTo(Refusal.NONE)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 0.5, 0.0)).isEqualTo(Refusal.MAX_BOLUS) // unknown max
+        val ok = PhoneReach.REACHABLE
+        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 0.5, 3.0, ok)).isEqualTo(Refusal.NONE)
+        assertThat(GlassFaceLogic.refusal(PhoneLink.LOST_FRESH, BgAge.FRESH, 0.5, 3.0, PhoneReach.UNREACHABLE)).isEqualTo(Refusal.NO_PHONE)
+        assertThat(GlassFaceLogic.refusal(PhoneLink.LOST_STALE, BgAge.STALE, 0.5, 3.0, PhoneReach.UNREACHABLE)).isEqualTo(Refusal.NO_PHONE)
+        assertThat(GlassFaceLogic.refusal(PhoneLink.SILENT, BgAge.FRESH, 0.5, 3.0, ok)).isEqualTo(Refusal.STALE_DATA)
+        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.STALE, 0.5, 3.0, ok)).isEqualTo(Refusal.STALE_DATA)
+        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 1.0, 0.5, ok)).isEqualTo(Refusal.MAX_BOLUS)
+        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 0.5, 0.5, ok)).isEqualTo(Refusal.NONE)
+        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 0.5, 0.0, ok)).isEqualTo(Refusal.MAX_BOLUS) // unknown max
+        // reachability not yet known (first lookup pending or never answered): no bolus, although the face does not warn
+        val unknownLink = GlassFaceLogic.phoneLink(PhoneReach.UNKNOWN, now - min, now)
+        assertThat(unknownLink).isEqualTo(PhoneLink.OK)
+        assertThat(GlassFaceLogic.refusal(unknownLink, BgAge.FRESH, 0.5, 3.0, PhoneReach.UNKNOWN)).isEqualTo(Refusal.NO_PHONE)
+        assertThat(GlassFaceLogic.phoneLink(PhoneReach.UNREACHABLE, now - min, now)).isEqualTo(PhoneLink.LOST_FRESH)
+    }
+
+    @Test fun sendNeedsARecentReachableAnswer() {
+        val fresh = GlassFaceLogic.REACH_ANSWER_FRESH_MS
+        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.REACHABLE, now - 2_000, now)).isTrue()
+        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.REACHABLE, now - fresh, now)).isTrue()
+        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.REACHABLE, now - fresh - 1, now)).isFalse() // minute-tick answer
+        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.REACHABLE, 0L, now)).isFalse()
+        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.UNKNOWN, now, now)).isFalse()
+        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.UNREACHABLE, now, now)).isFalse()
     }
 
     @Test fun ballStateMachine() {
@@ -506,5 +597,83 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.burnInOffset(0.0)).isEqualTo(-4f)
         assertThat(GlassFaceLogic.burnInOffset(1.0)).isEqualTo(4f)
         assertThat(GlassFaceLogic.burnInOffset(0.5)).isEqualTo(0f)
+    }
+
+    // ------------------------------------------------------------------ layout variants / prefs
+
+    @Test fun heroReflowsWithoutTheChip() {
+        val chip = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = false)
+        assertThat(chip.bgX).isEqualTo(184f)
+        assertThat(chip.bgY).isEqualTo(176f)
+        assertThat(chip.chipY).isEqualTo(152f)
+        assertThat(chip.metaCentreX).isEqualTo(312f)
+        assertThat(chip.metaY).isEqualTo(200f)
+        assertThat(chip.bgMaxWidth).isEqualTo(170f)
+        // empty meta line: the chip centres vertically
+        assertThat(GlassFaceLogic.heroLayout(showChip = true, metaEmpty = true).chipY).isEqualTo(175f)
+        // trend.hidden_pref: BG (225,166), meta (225,220), 230 px for the digits
+        val noChip = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = false)
+        assertThat(listOf(noChip.bgX, noChip.bgY, noChip.metaCentreX, noChip.metaY, noChip.bgMaxWidth)).containsExactly(225f, 166f, 225f, 220f, 230f).inOrder()
+        val noChipNoMeta = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = true)
+        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 175f)
+    }
+
+    @Test fun metaLineEmptyWithoutAReading() {
+        assertThat(GlassFaceLogic.metaVisible(BgAge.NONE, prefShowAgo = true, prefShowDelta = true)).isEqualTo(false to false)
+        assertThat(GlassFaceLogic.metaVisible(BgAge.FRESH, prefShowAgo = true, prefShowDelta = true)).isEqualTo(true to true)
+        assertThat(GlassFaceLogic.metaVisible(BgAge.FRESH, prefShowAgo = false, prefShowDelta = true)).isEqualTo(true to false)
+        assertThat(GlassFaceLogic.metaVisible(BgAge.AGING, prefShowAgo = false, prefShowDelta = false)).isEqualTo(false to true)
+        assertThat(GlassFaceLogic.metaVisible(BgAge.STALE, prefShowAgo = true, prefShowDelta = true)).isEqualTo(false to true)
+    }
+
+    @Test fun pillLayout() {
+        assertThat(GlassFaceLogic.pills(showIob = true, pumpControl = false)).isEqualTo(Pills.BOTH)
+        assertThat(GlassFaceLogic.pills(showIob = false, pumpControl = false)).isEqualTo(Pills.LOOP_ONLY)
+        assertThat(GlassFaceLogic.pills(showIob = true, pumpControl = true)).isEqualTo(Pills.IOB_ONLY)
+        assertThat(GlassFaceLogic.pills(showIob = false, pumpControl = true)).isEqualTo(Pills.IOB_ONLY)
+    }
+
+    @Test fun predictionsSuppressed() {
+        fun p(pref: Boolean = true, stale: Boolean = false, mode: LoopMode = LoopMode.CLOSED, client: Boolean = false, pc: Boolean = false) =
+            GlassFaceLogic.showPredictions(pref, stale, mode, client, pc)
+        assertThat(p()).isTrue()
+        assertThat(p(mode = LoopMode.UNKNOWN)).isTrue()
+        assertThat(p(pref = false)).isFalse()
+        assertThat(p(stale = true)).isFalse()
+        assertThat(p(mode = LoopMode.OPEN)).isFalse()
+        assertThat(p(client = true)).isFalse()
+        assertThat(p(pc = true)).isFalse()
+    }
+
+    @Test fun loopDotAndLabel() {
+        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.OK, null)).isTrue()
+        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.WARN, null)).isTrue()
+        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.WARN, Warning.RES_LOW)).isTrue()
+        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.WARN, Warning.PHONE_LOST)).isFalse() // W2 owns the slot
+        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.WARN, Warning.NO_DATA)).isFalse()    // W3 owns the slot
+        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.BAD, null)).isFalse()
+        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.OFF, null)).isFalse()
+        assertThat(GlassFaceLogic.loopLabelAllowed(LoopHealth.OFF)).isTrue() // loop.off keeps "LOOP"
+        assertThat(GlassFaceLogic.loopLabelAllowed(LoopHealth.OPEN)).isFalse()
+    }
+
+    // ------------------------------------------------------------------ ambient range shape
+
+    @Test fun ambientOutlineCarriesTheRange() {
+        fun o(r: Range, lowBit: Boolean = false) = GlassFaceLogic.ambientOutline(r, lowBit)
+        assertThat(o(Range.IN).style).isEqualTo(OutlineStyle.SOLID)
+        assertThat(o(Range.IN).tone).isEqualTo(AmbTone.LINE)
+        assertThat(o(Range.IN, lowBit = true).style).isEqualTo(OutlineStyle.NONE)
+        assertThat(o(Range.STALE).style).isEqualTo(OutlineStyle.SOLID)
+        assertThat(o(Range.STALE, lowBit = true).style).isEqualTo(OutlineStyle.NONE)
+        assertThat(o(Range.HIGH)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A2, false))
+        assertThat(o(Range.VERY_HIGH)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DASHED, 2f, 0f, AmbTone.A1, false))
+        assertThat(o(Range.LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.A2, false))
+        assertThat(o(Range.URGENT_LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DOUBLE, 1f, 2f, AmbTone.A1, true))
+        // low-bit keeps every non-in shape (drawn white, AA off)
+        for (r in listOf(Range.HIGH, Range.VERY_HIGH, Range.LOW, Range.URGENT_LOW))
+            assertThat(o(r, lowBit = true).style).isEqualTo(o(r).style)
+        // urgent low never looks like in range
+        assertThat(o(Range.URGENT_LOW)).isNotEqualTo(o(Range.IN))
     }
 }

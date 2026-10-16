@@ -44,8 +44,12 @@ object GlassFaceLogic {
     /** No Status/SingleBg from the phone for at least this long: data counts as not fresh (phoneLink). */
     const val DATA_FRESH_MS = 12 * MINUTE_MS
 
-    /** Status slot / footer: widest line before optional runs are dropped (chord at y=390 allows about 310 px). */
-    const val FOOTER_MAX_WIDTH = 300f
+    /** Status slot / footer: widest line (spec §4.8: the chord at 0.93 R, 257 px on the 450 grid). */
+    const val FOOTER_MAX_WIDTH = 257f
+
+    /** Footer text size and the floor a W1-W6 owner text may shrink to before it is ellipsised. */
+    const val FOOTER_SIZE = 18f
+    const val FOOTER_MIN_SIZE = 16f
 
     /** Fallback low/high marks when the phone did not send them. */
     const val DEFAULT_LOW_MGDL = 70.0
@@ -148,11 +152,22 @@ object GlassFaceLogic {
 
     const val PRIME = "′"
 
-    /** BG text size on the 450 grid: 84 px up to 3 characters ("9,4", "180"), 74 px for 4 ("11,8"), 64 px beyond ("400+"). */
-    fun bgTextSize(value: String): Float = when {
-        value.length <= 3 -> 84f
-        value.length == 4 -> 74f
-        else              -> 64f
+    /** BG digits: start size, step, floor and the widest allowed text with and without the trend chip (spec §4.1). */
+    const val BG_SIZE = 84f
+    const val BG_SIZE_STEP = 2f
+    const val BG_MIN_SIZE = 56f
+    const val BG_MAX_WIDTH = 170f
+    const val BG_MAX_WIDTH_NO_CHIP = 230f
+
+    /**
+     * BG text size on the 450 grid: 84 px, stepping down 2 px until the text measured at that size is at most
+     * [maxWidth], floor 56 px. Decided by measured width, never by character count. [measureAt] returns the
+     * width of the text at a given size.
+     */
+    fun bgFitSize(measureAt: (Float) -> Float, maxWidth: Float = BG_MAX_WIDTH): Float {
+        var size = BG_SIZE
+        while (size > BG_MIN_SIZE && measureAt(size) > maxWidth) size -= BG_SIZE_STEP
+        return max(size, BG_MIN_SIZE)
     }
 
     /** Scale [size] down so that a text measured as [width] at [size] fits [maxWidth]. */
@@ -269,6 +284,20 @@ object GlassFaceLogic {
     // ------------------------------------------------------------------------------------------- phone link
 
     enum class PhoneLink { OK, LOST_FRESH, LOST_STALE, SILENT }
+
+    /** Answer of the last CapabilityClient lookup. UNKNOWN until the first answer (no warning, but no bolus either). */
+    enum class PhoneReach { UNKNOWN, REACHABLE, UNREACHABLE }
+
+    /** A bolus request is sent only on a "reachable" answer at most this old (asked again when the ball arms). */
+    const val REACH_ANSWER_FRESH_MS = 10_000L
+
+    /** Display link: an UNKNOWN answer does not warn (the first lookup is still running). */
+    fun phoneLink(reach: PhoneReach, lastDataTimeStamp: Long, now: Long): PhoneLink =
+        phoneLink(reach != PhoneReach.UNREACHABLE, lastDataTimeStamp, now)
+
+    /** SEND gate: the phone answered "reachable" within [REACH_ANSWER_FRESH_MS]. */
+    fun reachConfirmed(reach: PhoneReach, answeredAt: Long, now: Long): Boolean =
+        reach == PhoneReach.REACHABLE && answeredAt > 0L && now - answeredAt in 0..REACH_ANSWER_FRESH_MS
 
     fun dataFresh(lastDataTimeStamp: Long, now: Long): Boolean = lastDataTimeStamp > 0L && now - lastDataTimeStamp < DATA_FRESH_MS
 
@@ -463,6 +492,34 @@ object GlassFaceLogic {
         return runs
     }
 
+    data class FooterFit(val size: Float, val runs: List<Run>)
+
+    /**
+     * Size of the footer line ([measure] works at [FOOTER_SIZE]): shrunk to fit [maxWidth], never below
+     * [FOOTER_MIN_SIZE]; if it still does not fit at the floor (a long W1-W6 owner or a long translation),
+     * the first run is ellipsised.
+     */
+    fun fitFooter(runs: List<Run>, separator: String, measure: (String) -> Float, maxWidth: Float = FOOTER_MAX_WIDTH): FooterFit {
+        if (runs.isEmpty()) return FooterFit(FOOTER_SIZE, runs)
+        val width = lineWidth(runs, separator, measure)
+        val size = max(FOOTER_MIN_SIZE, fitSize(FOOTER_SIZE, width, maxWidth))
+        val budget = maxWidth * FOOTER_SIZE / size // width available at FOOTER_SIZE
+        if (width <= budget + 0.01f) return FooterFit(size, runs)
+        val first = runs[0]
+        val cut = ellipsize(first.text, budget - (width - measure(first.text)), measure)
+        return FooterFit(size, listOf(first.copy(text = cut)) + runs.drop(1))
+    }
+
+    const val ELLIPSIS = "…"
+
+    /** [s] cut at the end with "…" so that it measures at most [maxWidth]; unchanged when it fits. */
+    fun ellipsize(s: String, maxWidth: Float, measure: (String) -> Float): String {
+        if (measure(s) <= maxWidth) return s
+        var n = s.length
+        while (n > 0 && measure(s.substring(0, n).trimEnd() + ELLIPSIS) > maxWidth) n--
+        return s.substring(0, n).trimEnd() + ELLIPSIS
+    }
+
     fun lineWidth(runs: List<Run>, separator: String, measure: (String) -> Float): Float {
         var w = 0f
         runs.forEachIndexed { i, r -> if (i > 0) w += measure(separator); w += measure(r.text) }
@@ -478,6 +535,9 @@ object GlassFaceLogic {
         val mm = if (minute < 10) "0$minute" else "$minute"
         return "$hh:$mm"
     }
+
+    /** 12 h suffix ("AM"/"PM", drawn smaller after the time), null in 24 h. */
+    fun amPm(hour: Int, is24Hour: Boolean): String? = if (is24Hour) null else if (hour < 12) "AM" else "PM"
 
     /** "Fr 17. Okt" (pattern "EE d. MMM" with the dots of the abbreviations stripped). */
     fun dateText(date: LocalDate, locale: Locale): String {
@@ -546,10 +606,11 @@ object GlassFaceLogic {
 
     /**
      * Why a bolus request must not be sent now: phone not reachable, data not fresh (no Status/SingleBg for
-     * 12', or the BG itself stale), or the amount above the phone's max bolus (key_treatments_safety_max_bolus;
+     * 12', or the BG itself stale), the reachability not yet known ([PhoneReach.UNKNOWN]), or the amount above the phone's max bolus (key_treatments_safety_max_bolus;
      * unknown max = refused).
      */
-    fun refusal(link: PhoneLink, bgAge: BgAge, amount: Double, maxBolus: Double): Refusal = when {
+    fun refusal(link: PhoneLink, bgAge: BgAge, amount: Double, maxBolus: Double, reach: PhoneReach): Refusal = when {
+        reach != PhoneReach.REACHABLE                  -> Refusal.NO_PHONE
         link != PhoneLink.OK                           -> if (link == PhoneLink.SILENT) Refusal.STALE_DATA else Refusal.NO_PHONE
         isStale(bgAge)                                 -> Refusal.STALE_DATA
         maxBolus <= 0.0 || amount > maxBolus + 1e-9    -> Refusal.MAX_BOLUS
@@ -596,6 +657,72 @@ object GlassFaceLogic {
     const val BALL_Y = 176f
     const val BALL_R = 30f
     const val BALL_HIT_R = 44f
+
+    // ------------------------------------------------------------------------------------------- layout variants
+
+    /** Hero card positions (spec §3, §4.3): chip on the right, or removed (key_show_direction off) with BG and meta centred. */
+    data class HeroLayout(val bgX: Float, val bgY: Float, val bgMaxWidth: Float, val chipY: Float, val metaCentreX: Float, val metaY: Float)
+
+    fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
+        showChip  -> HeroLayout(184f, 176f, BG_MAX_WIDTH, if (metaEmpty) 175f else 152f, 312f, 200f)
+        metaEmpty -> HeroLayout(225f, 175f, BG_MAX_WIDTH_NO_CHIP, 152f, 225f, 220f)
+        else      -> HeroLayout(225f, 166f, BG_MAX_WIDTH_NO_CHIP, 152f, 225f, 220f)
+    }
+
+    /** Which pills are drawn: both; LOOP alone, centred (key_show_iob off); IOB alone, centred (pumpcontrol: no APS). */
+    enum class Pills { BOTH, LOOP_ONLY, IOB_ONLY }
+
+    fun pills(showIob: Boolean, pumpControl: Boolean): Pills = when {
+        pumpControl -> Pills.IOB_ONLY
+        !showIob    -> Pills.LOOP_ONLY
+        else        -> Pills.BOTH
+    }
+
+    /** graph.no_predictions: pref off, stale data, open loop, client or pumpcontrol flavour. */
+    fun showPredictions(pref: Boolean, stale: Boolean, mode: LoopMode, client: Boolean, pumpControl: Boolean): Boolean =
+        pref && !stale && mode != LoopMode.OPEN && !client && !pumpControl
+
+    /** age.none / first start: no delta, no age, the meta line is empty (spec §4.4). */
+    fun metaVisible(age: BgAge, prefShowAgo: Boolean, prefShowDelta: Boolean): Pair<Boolean, Boolean> =
+        if (age == BgAge.NONE) false to false
+        else (!isStale(age) && prefShowDelta) to showAge(prefShowAgo, age)
+
+    /**
+     * Loop dot fill (spec §4.6): OK and WARN are filled, except that a filled warn dot turns into a hollow ring
+     * while W2/W3 own the status slot (red budget, the footer already names the connection problem).
+     */
+    fun loopDotFilled(health: LoopHealth, owner: Warning?): Boolean = when (health) {
+        LoopHealth.OK   -> true
+        LoopHealth.WARN -> owner != Warning.PHONE_LOST && owner != Warning.NO_DATA
+        else            -> false
+    }
+
+    /** The LOOP/LGS label is hidden only for an open loop ("Offen" fills the pill); width decides the rest. */
+    fun loopLabelAllowed(health: LoopHealth): Boolean = health != LoopHealth.OPEN
+
+    // ------------------------------------------------------------------------------------------- ambient range shape
+
+    enum class OutlineStyle { NONE, SOLID, DASHED, DOUBLE }
+
+    /** Ambient grey of an outline: ambLine, amb2, amb1 (white in low-bit). */
+    enum class AmbTone { LINE, A2, A1 }
+
+    /**
+     * Hero card outline in ambient (spec §9: the range as a shape, colour is never the only carrier).
+     * [innerWidth] is the inner line of a double outline (5 px inside). [boldBg]: BG digits weight 600.
+     */
+    data class AmbientOutline(val style: OutlineStyle, val width: Float, val innerWidth: Float, val tone: AmbTone, val boldBg: Boolean)
+
+    const val DOUBLE_OUTLINE_GAP = 5f
+
+    fun ambientOutline(range: Range, lowBit: Boolean): AmbientOutline = when (range) {
+        Range.IN, Range.STALE -> if (lowBit) AmbientOutline(OutlineStyle.NONE, 0f, 0f, AmbTone.LINE, false)
+                                 else AmbientOutline(OutlineStyle.SOLID, 1f, 0f, AmbTone.LINE, false)
+        Range.HIGH            -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A2, false)
+        Range.VERY_HIGH       -> AmbientOutline(OutlineStyle.DASHED, 2f, 0f, AmbTone.A1, false)
+        Range.LOW             -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.A2, false)
+        Range.URGENT_LOW      -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 2f, AmbTone.A1, true)
+    }
 
     /** Random burn-in offset in [-4, +4] px from a 0..1 source. */
     fun burnInOffset(random01: Double): Float = (min(1.0, max(0.0, random01)) * 8.0 - 4.0).toFloat()
