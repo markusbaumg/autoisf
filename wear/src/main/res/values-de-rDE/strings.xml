@@ -179,8 +179,22 @@
     <string name="pref_heartRateSampling">Herzfrequenz</string>
     <string name="kusi_bolus_again">nochmal</string>
     <string name="pref_glass_bolus_double_tap_summary">Glass-Zifferblatt: den +U-Ball zweimal innerhalb von 0,8 s antippen, um einen Bolus anzufordern. Das Telefon prüft ihn, du bestätigst auf der Uhr. Braucht die Wear-Steuerung am Telefon; nie über dem Max-Bolus des Telefons.</string>
-    <string name="glass_phone_disconnected">Telefon getrennt · %1$s</string>
-    <string name="glass_phone_battery">Tel %1$d%%</string>
     <string name="glass_waiting">Warte auf AAPS</string>
-    <string name="glass_cob">KH %1$d g</string>
+    <string name="glass_phone_disconnected">Telefon getrennt · %1$s</string>
+    <string name="glass_no_data">Keine Daten · %1$s</string>
+    <string name="glass_no_profile">Kein Profil</string>
+    <string name="glass_loop_off">Loop aus</string>
+    <string name="glass_loop_off_short">aus</string>
+    <string name="glass_loop_age">Loop %1$s</string>
+    <string name="glass_loop_open">Offen</string>
+    <string name="glass_reservoir">Reservoir %1$s</string>
+    <string name="glass_phone_battery">Tel %1$d %%</string>
+    <string name="glass_cob">KH %1$s</string>
+    <string name="glass_low_caption">TIEF</string>
+    <string name="glass_hours">%1$d Std</string>
+    <string name="glass_days">%1$d T</string>
+    <string name="glass_bolus_refused_no_phone">Telefon getrennt: keine Bolus-Anfrage</string>
+    <string name="glass_bolus_refused_stale">Daten zu alt: keine Bolus-Anfrage</string>
+    <string name="glass_bolus_refused_max">Über dem Max-Bolus des Telefons</string>
+    <string name="glass_bolus_pending">Eine Anfrage läuft bereits</string>
 </resources>
