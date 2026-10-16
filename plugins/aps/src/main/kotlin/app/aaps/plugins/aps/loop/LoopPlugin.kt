@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
+import app.aaps.core.data.aps.SmbInterval
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.DS
@@ -506,7 +507,7 @@ class LoopPlugin @Inject constructor(
 
             // safety check for multiple SMBs
             val lastBolusTime = persistenceLayer.getNewestBolus()?.timestamp ?: 0L
-            if (lastBolusTime != 0L && lastBolusTime + T.mins(preferences.get(IntKey.ApsMaxSmbFrequency).toLong()).msecs() > dateUtil.now()) {
+            if (SmbInterval.isTooSoon(lastBolusTime, dateUtil.now(), preferences.get(IntKey.ApsMaxSmbFrequency))) {
                 aapsLogger.debug(LTag.APS, "SMB requested but still in ${preferences.get(IntKey.ApsMaxSmbFrequency)} min interval")
                 resultAfterConstraints.smb = 0.0
             }
@@ -860,7 +861,7 @@ class LoopPlugin @Inject constructor(
     private fun applySMBRequest(request: APSResult, callback: Callback?) {
         val pump = activePlugin.activePump
         val lastBolusTime = persistenceLayer.getNewestBolus()?.timestamp ?: 0L
-        if (lastBolusTime != 0L && lastBolusTime + T.mins(preferences.get(IntKey.ApsMaxSmbFrequency).toLong()).msecs() > dateUtil.now()) {
+        if (SmbInterval.isTooSoon(lastBolusTime, dateUtil.now(), preferences.get(IntKey.ApsMaxSmbFrequency))) {
             aapsLogger.debug(LTag.APS, "SMB requested but still in ${preferences.get(IntKey.ApsMaxSmbFrequency)} min interval")
             callback?.result(
                 pumpEnactResultProvider.get()
