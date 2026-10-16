@@ -15,6 +15,7 @@ import app.aaps.core.interfaces.rx.events.EventIobCalculationProgress
 import app.aaps.core.interfaces.workflow.CalculationWorkflow
 import app.aaps.core.objects.extensions.target
 import app.aaps.core.objects.workflow.LoggingWorker
+import app.aaps.core.utils.RunningAt
 import app.aaps.core.utils.receivers.DataWorkerStorage
 import com.jjoe64.graphview.series.DataPoint
 import kotlinx.coroutines.Dispatchers
@@ -51,12 +52,18 @@ class PrepareTemporaryTargetDataWorker(
         val targetsSeriesArray: MutableList<DataPoint> = ArrayList()
         var lastTarget = -1.0
         loop.lastRun?.constraintsProcessed?.let { endTime = max(it.latestPredictionsTime, endTime) }
+        // Every temporary target running at some time of the graph, read once instead of one "active at"
+        // query per 5-minute step; at() picks per step what that query picks.
+        val temporaryTargets = RunningAt(
+            persistenceLayer.getTemporaryTargetsActiveBetweenTimeAndTime(fromTime, endTime).sortedWith(compareBy({ it.timestamp }, { it.id })),
+            { it.timestamp }, { it.duration }
+        )
         var time = fromTime
         while (time < endTime) {
             if (isStopped) return Result.failure(workDataOf("Error" to "stopped"))
             val progress = (time - fromTime).toDouble() / (endTime - fromTime) * 100.0
             rxBus.send(EventIobCalculationProgress(CalculationWorkflow.ProgressData.PREPARE_TEMPORARY_TARGET_DATA, progress.toInt(), null))
-            val tt = persistenceLayer.getTemporaryTargetActiveAt(time)
+            val tt = temporaryTargets.at(time)
             val value: Double = if (tt != null) {
                 profileUtil.fromMgdlToUnits(tt.target())
             } else {
