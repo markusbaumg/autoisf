@@ -1,8 +1,10 @@
-ADB := $(HOME)/dev/androidkey/adb/adb
+SDK := $(shell sed -n 's/^sdk.dir=//p' local.properties 2>/dev/null)
+ADB ?= $(or $(shell command -v adb),$(SDK)/platform-tools/adb)
+APKSIGNER ?= $(lastword $(sort $(wildcard $(SDK)/build-tools/*/apksigner)))
 DIST := dist
 WATCH := 192.168.1.16:45659
 
-.PHONY: build phone watch clean connect
+.PHONY: build verify phone watch clean connect
 
 build:
 	rm -rf $(DIST)
@@ -11,6 +13,10 @@ build:
 	cp app/build/outputs/apk/full/release/app-full-release.apk $(DIST)/
 	cp wear/build/outputs/apk/full/release/wear-full-release.apk $(DIST)/
 	ls -lh $(DIST)/
+
+verify:
+	$(APKSIGNER) verify --print-certs $(DIST)/app-full-release.apk | grep -i sha-256
+	$(APKSIGNER) verify --print-certs $(DIST)/wear-full-release.apk | grep -i sha-256
 
 phone:
 	$(ADB) -d install -r $(DIST)/app-full-release.apk
