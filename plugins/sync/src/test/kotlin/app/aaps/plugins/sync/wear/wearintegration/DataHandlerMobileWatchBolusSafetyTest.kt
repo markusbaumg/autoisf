@@ -504,6 +504,51 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         verifySuperBolusStarted(1)
     }
 
+    @Test fun `a newer wizard precheck replaces a superbolus quick wizard, only the newer snapshot is delivered`() {
+        prepareWizard(insulin = 3.0, carbs = 30)
+        quickWizardEntry(carbs = 30, superBolus = true, eCarbs = 20)
+        rxBus.send(EventData.ActionQuickWizardPreCheck("guid"))
+        val older = confirmsOffered().single() as EventData.ActionWizardConfirmed
+
+        // a newer plain wizard precheck arrives before the quick wizard is confirmed
+        prepareWizard(insulin = 1.0, carbs = 10)
+        whenever(bolusWizard.timeStamp).thenReturn(now + 1_000L)
+        rxBus.send(EventData.ActionWizardPreCheck(10, 100))
+        val newer = toWatch.filterIsInstance<EventData.ActionWizardResult>().last()
+        assertThat(newer.timestamp).isEqualTo(now + 1_000L)
+
+        rxBus.send(EventData.ActionWizardConfirmed(newer.timestamp))
+
+        assertThat(errorsToWatch()).isEmpty()
+        val delivered = deliveredBoluses()
+        assertThat(delivered).hasSize(1)
+        assertThat(delivered[0].insulin).isEqualTo(1.0)
+        assertThat(delivered[0].carbs).isEqualTo(10.0)
+        // nothing of the replaced quick wizard (eCarbs part, superbolus) is delivered
+        verifySuperBolusStarted(0)
+
+        rxBus.send(older)
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        assertThat(deliveredBoluses()).hasSize(1)
+        verifySuperBolusStarted(0)
+    }
+
+    @Test fun `ecarbs confirm matching a quick wizard ecarbs part never starts a superbolus`() {
+        prepareWizard(insulin = 3.0, carbs = 30)
+        quickWizardEntry(carbs = 30, superBolus = true)
+        rxBus.send(EventData.ActionQuickWizardPreCheck("guid"))
+        rxBus.send(EventData.ActionECarbsPreCheck(20, 0, 2))
+        val offered = confirmsOffered().last() as EventData.ActionECarbsConfirmed
+
+        rxBus.send(offered)
+
+        assertThat(errorsToWatch()).isEmpty()
+        val delivered = deliveredBoluses()
+        assertThat(delivered).hasSize(1)
+        assertThat(delivered[0].insulin).isEqualTo(0.0)
+        verifySuperBolusStarted(0)
+    }
+
     @Test fun `quick wizard confirm after 61 s is refused`() {
         prepareWizard(insulin = 3.0, carbs = 30)
         quickWizardEntry(carbs = 30, superBolus = true)
