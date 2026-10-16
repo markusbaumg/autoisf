@@ -1,6 +1,7 @@
 package app.aaps.database.persistence
 
 import android.content.Context
+import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.rx.bus.RxBus
@@ -31,6 +32,8 @@ import app.aaps.database.entities.RunningMode
 import app.aaps.database.entities.TemporaryBasal
 import app.aaps.database.entities.TemporaryTarget
 import app.aaps.database.entities.TherapyEvent
+import app.aaps.database.persistence.converters.fromDb
+import dagger.Lazy
 import io.reactivex.rxjava3.disposables.Disposable
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,8 +44,22 @@ class CompatDBHelper @Inject constructor(
     private val repository: AppRepository,
     private val rxBus: RxBus,
     private val context: Context,
-    private val uiInteraction: UiInteraction
+    private val uiInteraction: UiInteraction,
+    private val iobCobCalculator: Lazy<IobCobCalculator>
 ) {
+
+    /**
+     * True only when the calculation already holds [gv] with identical data.
+     * Any failure answers false (= recalculate), so an error here can never suppress a recalculation
+     * nor break this subscription.
+     */
+    private fun holdsSameData(gv: GlucoseValue): Boolean =
+        try {
+            iobCobCalculator.get().ads.holdsSameData(gv.fromDb())
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.DATABASE, "holdsSameData failed", e)
+            false
+        }
 
     fun dbChangeDisposable(): Disposable = repository
         .changeObservable()
@@ -63,7 +80,15 @@ class CompatDBHelper @Inject constructor(
                 rxBus.send(EventNewBG(gv.timestamp))
                 newestGlucoseValue = gv
             }
-            it.filterIsInstance<GlucoseValue>().minOfOrNull { gv -> gv.timestamp }?.let { timestamp ->
+            // Do not recalculate for a glucose change that carries no new data (e.g. Nightscout id write-back).
+            // Filter row by row, and before the reduction below. One change list can carry a new
+            // reading together with an id only update of an older row (CgmSourceTransaction does
+            // exactly that), and reducing first would hide the new reading behind the unchanged one.
+            val glucoseValues = it.filterIsInstance<GlucoseValue>()
+            val changedGlucoseValues = glucoseValues.filterNot { gv -> holdsSameData(gv) }
+            if (changedGlucoseValues.size < glucoseValues.size)
+                aapsLogger.debug(LTag.DATABASE) { "Ignoring ${glucoseValues.size - changedGlucoseValues.size} of ${glucoseValues.size} glucose changes, nothing the calculation reads is different" }
+            changedGlucoseValues.minOfOrNull { gv -> gv.timestamp }?.let { timestamp ->
                 aapsLogger.debug(LTag.DATABASE, "Firing EventNewHistoryData $timestamp $newestGlucoseValue")
                 rxBus.send(EventNewHistoryData(timestamp, true, newestGlucoseValue?.timestamp))
             }
