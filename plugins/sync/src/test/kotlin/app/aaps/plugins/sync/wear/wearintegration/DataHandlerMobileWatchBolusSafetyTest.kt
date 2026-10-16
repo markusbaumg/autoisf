@@ -33,22 +33,26 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.Mock
+import org.mockito.Mockito.mockingDetails
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
-import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import java.util.Collections
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.inject.Provider
 
 /**
  * Phone-side safety for treatments requested from the watch:
  *  1. nothing is offered or delivered while "Controls from Watch" is off on the phone,
- *  2. a confirm from the watch delivers only if it matches the last request the phone offered,
- *     within 60 s, and only once.
+ *  2. a confirm from the watch delivers only if it matches the last request the phone offered
+ *     (for bolus and fill including its requestId), within 60 s, and only once.
  */
 class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
 
@@ -67,7 +71,7 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
 
     private lateinit var sut: DataHandlerMobile
     private val ads = mock<AutosensDataStore>()
-    private val toWatch = mutableListOf<EventData>()
+    private val toWatch: MutableList<EventData> = Collections.synchronizedList(mutableListOf())
     private lateinit var watchSubscription: Disposable
 
     private val bolusWizard = mock<BolusWizard>(defaultAnswer = Answers.RETURNS_SELF)
@@ -105,16 +109,20 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
     }
 
     private fun errorsToWatch(): List<String> =
-        toWatch.filterIsInstance<EventData.ConfirmAction>().filter { it.returnCommand is EventData.Error }.map { it.message }
+        synchronized(toWatch) { toWatch.toList() }.filterIsInstance<EventData.ConfirmAction>().filter { it.returnCommand is EventData.Error }.map { it.message }
 
     private fun confirmsOffered(): List<EventData> =
-        toWatch.filterIsInstance<EventData.ConfirmAction>().mapNotNull { it.returnCommand }.filter { it !is EventData.Error }
+        synchronized(toWatch) { toWatch.toList() }.filterIsInstance<EventData.ConfirmAction>().mapNotNull { it.returnCommand }.filter { it !is EventData.Error }
 
-    private fun deliveredBoluses(): List<DetailedBolusInfo> {
-        val captor = argumentCaptor<DetailedBolusInfo>()
-        verify(commandQueue, org.mockito.kotlin.atLeast(0)).bolus(captor.capture(), anyOrNull())
-        return captor.allValues
-    }
+    /** Every bolus handed to the command queue so far, in order (reads the recorded calls, verifies nothing). */
+    private fun deliveredBoluses(): List<DetailedBolusInfo> =
+        mockingDetails(commandQueue).invocations.filter { it.method.name == "bolus" }.map { it.arguments[0] as DetailedBolusInfo }
+
+    /** The bolus confirm the phone offered last, carrying its requestId, as the watch would echo it back. */
+    private fun offeredBolus(): EventData.ActionBolusConfirmed = confirmsOffered().filterIsInstance<EventData.ActionBolusConfirmed>().last()
+
+    /** The fill confirm the phone offered last, carrying its requestId, as the watch would echo it back. */
+    private fun offeredFill(): EventData.ActionFillConfirmed = confirmsOffered().filterIsInstance<EventData.ActionFillConfirmed>().last()
 
     /** Moves both the wall clock and the monotonic clock forward. */
     private fun advanceClockBy(ms: Long) {
@@ -170,7 +178,7 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
         whenever(preferences.get(BooleanKey.WearControl)).thenReturn(false)
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offeredBolus())
 
         assertThat(errorsToWatch()).containsExactly(wearControlOff)
         verify(commandQueue, never()).bolus(any(), anyOrNull())
@@ -228,7 +236,7 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
     @Test fun `bolus confirm with a different insulin amount is refused`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.5, 10))
+        rxBus.send(offeredBolus().copy(insulin = 1.5))
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, never()).bolus(any(), anyOrNull())
@@ -237,7 +245,7 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
     @Test fun `bolus confirm with different carbs is refused`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 20))
+        rxBus.send(offeredBolus().copy(carbs = 20))
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, never()).bolus(any(), anyOrNull())
@@ -250,14 +258,16 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         rxBus.send(EventData.ActionBolusPreCheck(5.0, 0))
 
         // the watch confirms what the phone offered (2.0), not what was typed (5.0)
-        assertThat(confirmsOffered()).containsExactly(EventData.ActionBolusConfirmed(2.0, 0))
-        rxBus.send(EventData.ActionBolusConfirmed(5.0, 0))
+        val offered = offeredBolus()
+        assertThat(offered.insulin).isEqualTo(2.0)
+        assertThat(offered.carbs).isEqualTo(0)
+        rxBus.send(offered.copy(insulin = 5.0))
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, never()).bolus(any(), anyOrNull())
 
         // confirming the offered value after a fresh precheck delivers exactly that value
         rxBus.send(EventData.ActionBolusPreCheck(5.0, 0))
-        rxBus.send(EventData.ActionBolusConfirmed(2.0, 0))
+        rxBus.send(offeredBolus())
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         val delivered = deliveredBoluses()
         assertThat(delivered).hasSize(1)
@@ -268,7 +278,7 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
         advanceClockBy(61_000L)
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offeredBolus())
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, never()).bolus(any(), anyOrNull())
@@ -278,7 +288,7 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
         advanceClockBy(60_000L)
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offeredBolus())
 
         assertThat(errorsToWatch()).isEmpty()
         verify(commandQueue, times(1)).bolus(any(), anyOrNull())
@@ -289,7 +299,7 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         monotonicNow += 61_000L
         whenever(dateUtil.now()).thenReturn(now - 50_000L)
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offeredBolus())
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, never()).bolus(any(), anyOrNull())
@@ -300,17 +310,17 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         monotonicNow += 5_000L
         whenever(dateUtil.now()).thenReturn(now + 2 * 3_600_000L)
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offeredBolus())
 
         assertThat(errorsToWatch()).isEmpty()
         verify(commandQueue, times(1)).bolus(any(), anyOrNull())
     }
 
-    @Test fun `second bolus confirm (double tap) is refused without an error on the watch`() {
+    @Test fun `second bolus confirm (double tap) is ignored without an error on the watch`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offeredBolus())
+        rxBus.send(offeredBolus())
 
         // the duplicate is not delivered, and no "refused" screen follows the delivered bolus
         assertThat(errorsToWatch()).isEmpty()
@@ -319,10 +329,10 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
 
     @Test fun `a late repeat of a delivered bolus confirm is refused with an error`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offeredBolus())
         advanceClockBy(WEAR_DUPLICATE_CONFIRM_WINDOW_MS + 1)
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offeredBolus())
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, times(1)).bolus(any(), anyOrNull())
@@ -330,30 +340,158 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
 
     @Test fun `a different confirm right after a delivered bolus is refused with an error`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offeredBolus())
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.5, 10))
+        rxBus.send(offeredBolus().copy(insulin = 1.5))
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, times(1)).bolus(any(), anyOrNull())
     }
 
-    @Test fun `a newer precheck replaces the pending bolus`() {
+    @Test fun `a confirm of a replaced precheck is refused and also voids the newer pending bolus`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        val older = offeredBolus()
         rxBus.send(EventData.ActionBolusPreCheck(2.0, 0))
+        val newer = offeredBolus()
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
-        rxBus.send(EventData.ActionBolusConfirmed(2.0, 0))
+        // the older confirm does not match the newer pending request; it empties the slot anyway
+        rxBus.send(older)
+        rxBus.send(newer)
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused, confirmRefused)
         verify(commandQueue, never()).bolus(any(), anyOrNull())
     }
 
+    // ---- requestId: a confirm approves only the precheck it was offered for ----
+
+    @Test fun `each precheck offers a fresh non-zero requestId`() {
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        rxBus.send(EventData.ActionFillPreCheck(0.5))
+        rxBus.send(EventData.ActionFillPreCheck(0.5))
+
+        val ids = confirmsOffered().map {
+            when (it) {
+                is EventData.ActionBolusConfirmed -> it.requestId
+                is EventData.ActionFillConfirmed  -> it.requestId
+                else                              -> error("unexpected $it")
+            }
+        }
+        assertThat(ids).hasSize(4)
+        assertThat(ids).doesNotContain(0L)
+        assertThat(ids.toSet()).hasSize(4)
+    }
+
+    @Test fun `delayed duplicate of an identical earlier bolus request does not approve the newer precheck`() {
+        // request A is offered, confirmed and delivered
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        val requestA = offeredBolus()
+        rxBus.send(requestA)
+        assertThat(deliveredBoluses()).hasSize(1)
+
+        // the user requests the identical bolus again (B); then a delayed copy of A's confirm arrives
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        val requestB = offeredBolus()
+        assertThat(requestB.copy(requestId = requestA.requestId)).isEqualTo(requestA)
+        rxBus.send(requestA)
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        assertThat(deliveredBoluses()).hasSize(1)
+    }
+
+    @Test fun `delayed confirm of an identical earlier bolus request is refused before the newer one is confirmed`() {
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        val requestA = offeredBolus()
+        advanceClockBy(30_000L)
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+
+        rxBus.send(requestA)
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `bolus confirm with the correct requestId is delivered once`() {
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        val requestB = offeredBolus()
+
+        rxBus.send(requestB)
+        rxBus.send(requestB)
+
+        assertThat(errorsToWatch()).isEmpty()
+        assertThat(deliveredBoluses()).hasSize(1)
+    }
+
+    @Test fun `bolus confirm without requestId (old payload) is refused`() {
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        val legacy = EventData.deserialize("""{"type":"app.aaps.core.interfaces.rx.weardata.EventData.ActionBolusConfirmed","insulin":1.0,"carbs":10}""")
+        assertThat(legacy).isEqualTo(EventData.ActionBolusConfirmed(1.0, 10, 0L))
+
+        rxBus.send(legacy)
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `bolus confirm with a wrong requestId is refused`() {
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+
+        rxBus.send(offeredBolus().let { it.copy(requestId = it.requestId + 1) })
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `delayed duplicate of an identical earlier fill request does not approve the newer precheck`() {
+        rxBus.send(EventData.ActionFillPreCheck(0.5))
+        val requestA = offeredFill()
+        rxBus.send(requestA)
+        assertThat(deliveredBoluses()).hasSize(1)
+
+        rxBus.send(EventData.ActionFillPreCheck(0.5))
+        rxBus.send(requestA)
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        assertThat(deliveredBoluses()).hasSize(1)
+    }
+
+    @Test fun `fill confirm without requestId (old payload) or with a wrong one is refused`() {
+        rxBus.send(EventData.ActionFillPreCheck(0.5))
+        rxBus.send(EventData.ActionFillConfirmed(0.5))
+        rxBus.send(EventData.ActionFillPreCheck(0.5))
+        rxBus.send(offeredFill().let { it.copy(requestId = it.requestId + 1) })
+
+        assertThat(errorsToWatch()).containsExactly(confirmRefused, confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `two confirms arriving in parallel deliver once and the second stays silent`() {
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            repeat(200) { round ->
+                rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+                val offered = offeredBolus()
+                val barrier = CyclicBarrier(2)
+                val futures = List(2) { pool.submit { barrier.await(5, TimeUnit.SECONDS); rxBus.send(offered) } }
+                futures.forEach { it.get(10, TimeUnit.SECONDS) }
+
+                assertThat(deliveredBoluses()).hasSize(round + 1)
+                assertThat(errorsToWatch()).isEmpty()
+            }
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
     @Test fun `happy path delivers the confirmed bolus exactly once`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
-        assertThat(confirmsOffered()).containsExactly(EventData.ActionBolusConfirmed(1.0, 10))
+        val offered = offeredBolus()
+        assertThat(confirmsOffered()).containsExactly(offered)
+        assertThat(offered.insulin).isEqualTo(1.0)
+        assertThat(offered.carbs).isEqualTo(10)
 
-        rxBus.send(EventData.ActionBolusConfirmed(1.0, 10))
+        rxBus.send(offered)
 
         assertThat(errorsToWatch()).isEmpty()
         val delivered = deliveredBoluses()
@@ -372,7 +510,8 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
     @Test fun `bolus pending does not authorize a fill`() {
         rxBus.send(EventData.ActionBolusPreCheck(1.0, 0))
 
-        rxBus.send(EventData.ActionFillConfirmed(1.0))
+        // not even with the pending bolus's own requestId
+        rxBus.send(EventData.ActionFillConfirmed(1.0, offeredBolus().requestId))
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         verify(commandQueue, never()).bolus(any(), anyOrNull())
@@ -383,8 +522,8 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
 
         rxBus.send(EventData.ActionFillPreCheck(0.5))
-        rxBus.send(EventData.ActionFillConfirmed(0.5))
-        rxBus.send(EventData.ActionFillConfirmed(0.5)) // duplicate: silently ignored
+        rxBus.send(offeredFill())
+        rxBus.send(offeredFill()) // duplicate: silently ignored
 
         assertThat(errorsToWatch()).containsExactly(confirmRefused)
         val delivered = deliveredBoluses()
