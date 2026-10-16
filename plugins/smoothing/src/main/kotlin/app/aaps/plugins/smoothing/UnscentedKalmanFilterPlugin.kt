@@ -12,6 +12,7 @@ import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventAppExit
 import app.aaps.core.interfaces.rx.events.EventTherapyEventChange
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smoothing.Smoothing
@@ -148,6 +149,18 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
     // Processing limits
     private val MAX_FILTER_WINDOW = 8640  // 30 days at 5-min intervals
 
+    companion object {
+
+        /** Write the learned parameters every this many new measurements (was: every BG). */
+        internal const val SAVE_EVERY_MEASUREMENTS = 50
+
+        /** Early in a session (e.g. right after a sensor change reset) save on every new BG so a restart keeps the new session. */
+        internal const val SAVE_ALWAYS_BELOW_SESSION_COUNT = 5
+
+        internal fun shouldSave(measurementsSinceSave: Int, sessionMeasurementCount: Long): Boolean =
+            measurementsSinceSave >= SAVE_EVERY_MEASUREMENTS || sessionMeasurementCount <= SAVE_ALWAYS_BELOW_SESSION_COUNT
+    }
+
     // ============================================================
     // DATA STRUCTURES
     // ============================================================
@@ -180,6 +193,9 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
 
     // Consecutive outlier counter
     private var consecutiveOutliers = 0
+
+    // New measurements processed since the parameters were last written to SharedPreferences
+    private var measurementsSinceSave = 0
 
     // Event system
     private val resetRequested = AtomicBoolean(false)
@@ -248,17 +264,21 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
 
     /**
      * Save learned R parameter to SharedPreferences
-     * Called periodically during operation (every 50 measurements)
+     * Called periodically during operation (every [SAVE_EVERY_MEASUREMENTS] new measurements),
+     * after a learning reset, when the plugin stops and when the app exits.
+     * Individual puts on purpose: SP.Editor.putDouble stores a String while SP.putDouble stores a Float,
+     * so batching would change the stored type/precision of ukf_learned_r. Android coalesces the
+     * back-to-back apply() calls into one disk write.
      * Q is never saved - it's always the fixed physiological value
      */
-private fun savePersistedParameters() {
-    try {
-        sp.putLong("ukf_last_saved_timestamp", System.currentTimeMillis())
-        sp.putLong("ukf_sensor_change_timestamp", lastSensorChangeTimestamp)
-        sp.putLong("ukf_last_processed_timestamp", lastProcessedTimestamp)
-        sp.putDouble("ukf_learned_r", learnedR)
-        sp.putInt("ukf_session_id", sensorSessionId)
-
+    private fun savePersistedParameters() {
+        try {
+            sp.putLong("ukf_last_saved_timestamp", System.currentTimeMillis())
+            sp.putLong("ukf_sensor_change_timestamp", lastSensorChangeTimestamp)
+            sp.putLong("ukf_last_processed_timestamp", lastProcessedTimestamp)
+            sp.putDouble("ukf_learned_r", learnedR)
+            sp.putInt("ukf_session_id", sensorSessionId)
+            measurementsSinceSave = 0
             aapsLogger.debug(LTag.GLUCOSE, "UKF: Saved learned R for session $sensorSessionId")
         } catch (e: Exception) {
             aapsLogger.error(LTag.GLUCOSE, "UKF: Failed to save persisted parameters", e)
@@ -274,6 +294,11 @@ private fun savePersistedParameters() {
      * Listens for EventTherapyEventChange and checks if it's a sensor change
      */
     private fun subscribeToSensorChanges() {
+        // Parameters are saved only every SAVE_EVERY_MEASUREMENTS; persist the latest state on exit
+        disposable += rxBus
+            .toObservable(EventAppExit::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ if (measurementsSinceSave > 0) savePersistedParameters() }, { aapsLogger.error(LTag.GLUCOSE, "UKF: Error on app exit", it) })
         disposable += rxBus
             .toObservable(EventTherapyEventChange::class.java)
             .observeOn(aapsSchedulers.io)
@@ -350,6 +375,7 @@ private fun savePersistedParameters() {
     override fun onStop() {
         super.onStop()
         aapsLogger.info(LTag.GLUCOSE, "UKF: Cleaning up RxBus subscriptions")
+        if (measurementsSinceSave > 0) savePersistedParameters()
         disposable.clear()
         sensorChangeDisposables.clear()
     }
@@ -554,7 +580,8 @@ private fun savePersistedParameters() {
         }
 
         if (newDataProcessed) {
-            savePersistedParameters()
+            measurementsSinceSave += data.count { it.timestamp > previousTimestamp }
+            if (shouldSave(measurementsSinceSave, sessionMeasurementCount)) savePersistedParameters()
         }
 
         return data

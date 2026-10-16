@@ -29,9 +29,15 @@ class ActivityMonitor @Inject constructor(
     private val dateUtil: DateUtil
 ) : Application.ActivityLifecycleCallbacks {
 
+    /**
+     * Resume time per activity. Kept in memory: a resume timestamp from a previous process is never
+     * used (the activity is resumed again first), so persisting it only cost one preference write per resume.
+     */
+    private val resumedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     override fun onActivityPaused(activity: Activity) {
         val name = activity.javaClass.simpleName
-        val resumed = preferences.get(LongComposedKey.ActivityMonitorResumed, name)
+        val resumed = resumedAt.remove(name) ?: 0L
         if (resumed == 0L) {
             aapsLogger.debug(LTag.UI, "onActivityPaused: $name resumed == 0")
             return
@@ -48,7 +54,7 @@ class ActivityMonitor @Inject constructor(
     override fun onActivityResumed(activity: Activity) {
         val name = activity.javaClass.simpleName
         aapsLogger.debug(LTag.UI, "onActivityResumed: $name")
-        preferences.put(LongComposedKey.ActivityMonitorResumed, name, value = dateUtil.now())
+        resumedAt[name] = dateUtil.now()
     }
 
     override fun onActivityStarted(activity: Activity) {
@@ -107,6 +113,7 @@ class ActivityMonitor @Inject constructor(
         }
 
     fun reset() {
+        resumedAt.clear()
         preferences.allMatchingStrings(LongComposedKey.ActivityMonitorTotal).forEach { activityName ->
             preferences.remove(LongComposedKey.ActivityMonitorTotal, activityName)
             preferences.remove(LongComposedKey.ActivityMonitorStart, activityName)
