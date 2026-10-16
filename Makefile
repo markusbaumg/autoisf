@@ -2,7 +2,8 @@ SDK := $(shell sed -n 's/^sdk.dir=//p' local.properties 2>/dev/null)
 ADB ?= $(or $(shell command -v adb),$(SDK)/platform-tools/adb)
 APKSIGNER ?= $(lastword $(sort $(wildcard $(SDK)/build-tools/*/apksigner)))
 DIST := dist
-WATCH := 192.168.1.16:45659
+# Wireless-debugging port changes on every pairing: `make watch WATCH=<ip:port>` (see `adb devices`)
+WATCH ?= 192.168.1.16:44183
 
 .PHONY: build verify phone watch clean connect
 
