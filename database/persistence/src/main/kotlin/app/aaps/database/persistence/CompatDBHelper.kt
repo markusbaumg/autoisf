@@ -117,10 +117,13 @@ class CompatDBHelper @Inject constructor(
                 rxBus.send(EventExtendedBolusChange())
                 rxBus.send(EventNewHistoryData(timestamp, false))
             }
-            it.filterIsInstance<EffectiveProfileSwitch>().firstOrNull()?.let { eps ->
-                aapsLogger.debug(LTag.DATABASE, "Firing EventEffectiveProfileSwitchChanged $eps")
-                rxBus.send(EventEffectiveProfileSwitchChanged(eps.timestamp))
-                rxBus.send(EventNewHistoryData(eps.timestamp, false))
+            // The oldest one, as for the other types: invalidation must start at the earliest changed switch.
+            // With the first of a batch a newer one listed first left the calculation (kept across BGs)
+            // and the profile cache for the older one's time stale.
+            it.filterIsInstance<EffectiveProfileSwitch>().minOfOrNull { eps -> eps.timestamp }?.let { timestamp ->
+                aapsLogger.debug(LTag.DATABASE, "Firing EventEffectiveProfileSwitchChanged $timestamp")
+                rxBus.send(EventEffectiveProfileSwitchChanged(timestamp))
+                rxBus.send(EventNewHistoryData(timestamp, false))
             }
             it.filterIsInstance<TemporaryTarget>().firstOrNull()?.let { tt ->
                 aapsLogger.debug(LTag.DATABASE, "Firing EventTempTargetChange $tt")

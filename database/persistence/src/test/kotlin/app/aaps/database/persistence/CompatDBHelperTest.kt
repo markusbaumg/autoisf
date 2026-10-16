@@ -7,11 +7,15 @@ import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.Event
+import app.aaps.core.interfaces.rx.events.EventEffectiveProfileSwitchChanged
 import app.aaps.core.interfaces.rx.events.EventNewBG
 import app.aaps.core.interfaces.rx.events.EventNewHistoryData
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.database.AppRepository
+import app.aaps.database.entities.EffectiveProfileSwitch
 import app.aaps.database.entities.GlucoseValue
+import app.aaps.database.entities.data.GlucoseUnit
+import app.aaps.database.entities.embedments.InsulinConfiguration
 import app.aaps.database.entities.interfaces.DBEntry
 import com.google.common.truth.Truth.assertThat
 import io.reactivex.rxjava3.disposables.Disposable
@@ -104,5 +108,25 @@ class CompatDBHelperTest {
         sent.clear()
         changes.onNext(listOf(reading(2, now + 60_000)))
         assertThat(sent.filterIsInstance<EventNewHistoryData>()).hasSize(1)
+    }
+
+    private fun effectiveProfileSwitch(id: Long, timestamp: Long) =
+        EffectiveProfileSwitch(
+            id = id, timestamp = timestamp, utcOffset = 0,
+            basalBlocks = emptyList(), isfBlocks = emptyList(), icBlocks = emptyList(), targetBlocks = emptyList(),
+            glucoseUnit = GlucoseUnit.MGDL, originalProfileName = "", originalCustomizedName = "", originalTimeshift = 0,
+            originalPercentage = 100, originalDuration = 0, originalEnd = 0,
+            insulinConfiguration = InsulinConfiguration("", 0, 0)
+        )
+
+    @Test
+    fun effectiveProfileSwitchBatchInvalidatesFromTheOldest() {
+        // newer one listed first
+        changes.onNext(listOf(effectiveProfileSwitch(2, now), effectiveProfileSwitch(1, now - 3_600_000)))
+
+        assertThat(sent.filterIsInstance<EventEffectiveProfileSwitchChanged>().single().startDate).isEqualTo(now - 3_600_000)
+        val history = sent.filterIsInstance<EventNewHistoryData>().single()
+        assertThat(history.oldDataTimestamp).isEqualTo(now - 3_600_000)
+        assertThat(history.reloadBgData).isFalse()
     }
 }
