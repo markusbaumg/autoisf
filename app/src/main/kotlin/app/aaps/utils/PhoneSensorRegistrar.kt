@@ -67,10 +67,11 @@ class PhoneSensorRegistrar @Inject constructor(
         val wantAccelerometer = accelerometerNeeded(activityDetection)
 
         if (wantSteps != stepCounterRegistered) {
+            // The step counter reports steps since boot. Drop the old baseline before registering so steps
+            // taken while unregistered are not booked into the current 5 min block. Done here and not at
+            // unregistration: an event still delivered after unregisterListener() would set it again.
+            if (wantSteps) StepService.resetBaseline()
             stepCounterRegistered = update(StepService, Sensor.TYPE_STEP_COUNTER, wantSteps, "step counter")
-            // The step counter reports steps since boot. Drop the old baseline so steps taken while
-            // unregistered are not booked into the current 5 min block after re-registering.
-            if (!stepCounterRegistered) StepService.resetBaseline()
         }
         if (wantAccelerometer != accelerometerRegistered)
             accelerometerRegistered = update(PhoneMovementDetector, Sensor.TYPE_ACCELEROMETER, wantAccelerometer, "accelerometer")

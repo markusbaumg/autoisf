@@ -9,7 +9,7 @@ import kotlin.math.roundToLong
 object StepService : SensorEventListener {
 
     private const val TAG = "StepService"
-    private var previousStepCount = -1
+    @Volatile private var previousStepCount = -1
     private val stepsMap = LinkedHashMap<Long, Int>()
     private const val fiveMinutesInMs = 300000
     private const val numOf5MinBlocksToKeep = 20
@@ -43,9 +43,10 @@ object StepService : SensorEventListener {
     }
 
     /**
-     * Forget the last cumulative step count. Call when the listener is unregistered, so the first
-     * event after re-registering sets a new baseline instead of booking all steps taken in between
-     * into the current 5 min block.
+     * Forget the last cumulative step count. Call right before (re-)registering the listener, so the
+     * first event sets a new baseline instead of booking all steps taken while unregistered into the
+     * current 5 min block. Resetting at registration (not at unregistration) also covers a sensor
+     * event that is still delivered after unregisterListener() returned.
      */
     fun resetBaseline() {
         previousStepCount = -1

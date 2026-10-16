@@ -10,6 +10,7 @@ import app.aaps.core.interfaces.alerts.LocalAlertUtils
 import app.aaps.core.interfaces.aps.AutosensDataStore
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.core.interfaces.pump.Pump
 import app.aaps.core.interfaces.queue.Command
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.rx.bus.RxBus
@@ -200,10 +201,43 @@ class KeepAliveWorkerTest : TestBaseWithProfile() {
         whenever(loop.lastRun).thenReturn(lastRun)
         whenever(profileFunction.getProfile()).thenReturn(validProfile)
         whenever(persistenceLayer.getLastGlucoseValue()).thenReturn(gv)
+        val pump = readyPump()
 
         worker.checkLoopRunning()
 
         verify(localAlertUtils).checkLoopNotRunningAlert(12345L, true, 67890L)
+        verify(pump).isInitialized()
+    }
+
+    private fun readyPump(initialized: Boolean = true, basal: Double = 0.8): Pump =
+        org.mockito.kotlin.mock<Pump>().also {
+            whenever(it.isInitialized()).thenReturn(initialized)
+            whenever(it.baseBasalRate).thenReturn(basal)
+            whenever(activePlugin.activePump).thenReturn(it)
+        }
+
+    @Test
+    fun `checkLoopRunning reports loop inactive when pump is not initialized or has no basal`() {
+        worker = createWorker()
+        whenever(config.APS).thenReturn(true)
+        whenever(loop.isEnabled()).thenReturn(true)
+        whenever(loop.runningMode).thenReturn(RM.Mode.CLOSED_LOOP)
+        whenever(loop.lastRun).thenReturn(null)
+        whenever(profileFunction.getProfile()).thenReturn(validProfile)
+        whenever(persistenceLayer.getLastGlucoseValue()).thenReturn(null)
+
+        // Pump driver not ready (e.g. after a restart)
+        readyPump(initialized = false)
+        worker.checkLoopRunning()
+        // Dash pod change: no active pod -> no basal program -> baseBasalRate 0.0
+        readyPump(initialized = true, basal = 0.0)
+        worker.checkLoopRunning()
+
+        verify(localAlertUtils, org.mockito.kotlin.times(2)).checkLoopNotRunningAlert(0L, false, 0L)
+
+        readyPump()
+        worker.checkLoopRunning()
+        verify(localAlertUtils).checkLoopNotRunningAlert(0L, true, 0L)
     }
 
     @Test

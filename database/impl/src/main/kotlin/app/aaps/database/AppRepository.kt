@@ -93,9 +93,15 @@ class AppRepository @Inject internal constructor(
         removed.add(Pair("Carbs", database.carbsDao.deleteOlderThan(than)))
         removed.add(Pair("TemporaryTarget", database.temporaryTargetDao.deleteOlderThan(than)))
         removed.add(Pair("BolusCalculatorResult", database.bolusCalculatorResultDao.deleteOlderThan(than)))
-        // keep at least one EPS
-        if (database.effectiveProfileSwitchDao.getEffectiveProfileSwitchDataFromTime(than + 1).blockingGet().isNotEmpty())
-            removed.add(Pair("EffectiveProfileSwitch", database.effectiveProfileSwitchDao.deleteOlderThan(than)))
+        // keep at least one EPS, and keep the EPS in force at the cutoff: otherwise getProfile(t) is null
+        // between the cutoff and the next EPS, which can reach into the 7-day TDD window (DynISF/AutoISF).
+        if (database.effectiveProfileSwitchDao.getEffectiveProfileSwitchDataFromTime(than + 1).blockingGet().isNotEmpty()) {
+            val epsThan = listOfNotNull(
+                than,
+                database.effectiveProfileSwitchDao.getEffectiveProfileSwitchActiveAt(than).blockingGet()?.timestamp
+            ).min()
+            removed.add(Pair("EffectiveProfileSwitch", database.effectiveProfileSwitchDao.deleteOlderThan(epsThan)))
+        }
         // Never delete the ProfileSwitch / RunningMode that is in force now. A permanent one can be
         // older than keepDays (e.g. closed loop enabled weeks ago); deleting it would make the
         // requested profile disappear and fall back to the default running mode (DISABLED_LOOP).

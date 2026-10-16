@@ -208,7 +208,12 @@ class KeepAliveWorker(
     @VisibleForTesting
     fun checkLoopRunning() {
         if (!config.APS) return
-        val isLoopActive = loop.isEnabled() && loop.runningMode.isLoopRunning() && profileFunction.getProfile() != null
+        // Mirror LoopPlugin.invoke(): without an initialized pump with a basal rate (e.g. Dash pod change,
+        // driver not ready after a restart) the loop returns without a decision on purpose. Pump problems
+        // have their own (pump unreachable) alarm, and the grace period restarts once the pump is back.
+        val pump = activePlugin.activePump
+        val pumpReady = pump.isInitialized() && pump.baseBasalRate >= 0.01
+        val isLoopActive = loop.isEnabled() && loop.runningMode.isLoopRunning() && profileFunction.getProfile() != null && pumpReady
         localAlertUtils.checkLoopNotRunningAlert(
             lastLoopDecision = loop.lastRun?.lastAPSRun ?: 0L,
             isLoopActive = isLoopActive,
