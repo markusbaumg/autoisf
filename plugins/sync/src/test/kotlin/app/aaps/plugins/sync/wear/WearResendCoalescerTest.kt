@@ -22,6 +22,29 @@ class WearResendCoalescerTest {
 
     private fun advance(ms: Long) = scheduler.advanceTimeBy(ms, TimeUnit.MILLISECONDS)
 
+    @Test fun `defaults wait 8 s of quiet and at most 20 s`() {
+        val defaults = WearResendCoalescer(scheduler) { sent.add(scheduler.now(TimeUnit.MILLISECONDS) to it) }
+        // BG, autosens result 2 s later, loop GUI events 3 s and 6 s after that: one resend
+        defaults.request("BG")
+        advance(2_000)
+        defaults.request("EventAutosensCalculationFinished")
+        advance(3_000)
+        defaults.request("EventLoopUpdateGui")
+        advance(3_000)
+        defaults.request("EventLoopUpdateGui")
+        advance(7_999)
+        assertThat(sent).isEmpty()
+        advance(1)
+        assertThat(sent).containsExactly(16_000L to "EventLoopUpdateGui")
+        sent.clear()
+        // requests every 5 s never go quiet for 8 s: sent after 20 s anyway
+        repeat(9) {
+            defaults.request("R$it")
+            advance(5_000)
+        }
+        assertThat(sent.map { it.first }).containsExactly(16_000L + 20_000L, 16_000L + 40_000L).inOrder()
+    }
+
     @Test fun `one request is sent after the quiet time`() {
         sut.request("A")
         advance(1_999)

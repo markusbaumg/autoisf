@@ -15,8 +15,8 @@ import java.util.concurrent.TimeUnit
  * Unlike a plain debounce, a stream of requests that never pauses for [quietMs] cannot hold the
  * resend back for ever: [maxWaitMs] after the first request of a burst it is sent anyway.
  *
- * Port of the intent of nightscout/dev 8592b7fcbf and 3b9b3786d7 (one 2 s debounce for all resend
- * triggers, no request lost) to the RxJava based plugin of this branch.
+ * Port of the intent of nightscout/dev 8592b7fcbf and 3b9b3786d7 (one debounce for all resend
+ * triggers, no request lost) to the RxJava based plugin of this branch, with a longer window.
  */
 class WearResendCoalescer(
     private val scheduler: Scheduler,
@@ -84,10 +84,15 @@ class WearResendCoalescer(
 
     companion object {
 
-        /** The quiet time a burst of requests is waited out with, the same 2 s as upstream. */
-        const val QUIET_MS = 2_000L
+        /**
+         * The quiet time a burst of requests is waited out with. Upstream uses 2 s; measured on the
+         * owner's phone that still let the loop's own GUI events (a few seconds after the BG and
+         * the autosens result) start a second full resend per reading. 8 s covers the whole chain
+         * BG -> autosens -> loop run -> loop GUI events, so one reading gives one resend.
+         */
+        const val QUIET_MS = 8_000L
 
         /** The longest a request waits while requests keep coming. */
-        const val MAX_WAIT_MS = 10_000L
+        const val MAX_WAIT_MS = 20_000L
     }
 }

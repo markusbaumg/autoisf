@@ -127,12 +127,19 @@ class DataLayerListenerServiceMobile : WearableListenerService() {
             )
             aapsLogger.debug(LTag.WEAR, "Nodes: ${capabilityInfo.nodes.joinToString(", ") { it.displayName + "(" + it.id + ")" }}")
             val bestNode = pickBestNodeId(capabilityInfo.nodes)
+            val previousNodeId = transcriptionNodeId
             transcriptionNodeId = bestNode?.id
             wearPlugin.connectedDevice = bestNode?.displayName ?: rh.gs(R.string.no_watch_connected)
+            wearPlugin.watchReachable = bestNode != null
             rxBus.send(EventWearUpdateGui())
             aapsLogger.debug(LTag.WEAR, "Selected node: ${bestNode?.displayName} $transcriptionNodeId")
-            rxBus.send(EventMobileToWear(EventData.ActionPing(System.currentTimeMillis())))
-            rxBus.send(EventData.ActionResendData("WatchUpdaterService"))
+            // A full resend only when a watch (re)appears. Capability changes also come for a watch
+            // going away and while a flapping Bluetooth link reports the same node again and again;
+            // each used to build and send the whole data set (nowhere, in the first case).
+            if (bestNode != null && bestNode.id != previousNodeId) {
+                rxBus.send(EventMobileToWear(EventData.ActionPing(System.currentTimeMillis())))
+                wearPlugin.requestResend("WatchUpdaterService node ${bestNode.displayName}")
+            }
         } catch (_: Exception) {
             fabricPrivacy.logCustom("WearOS_unsupported")
         }
