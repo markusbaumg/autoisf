@@ -6,6 +6,7 @@ import android.os.Binder
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.annotation.OpenForTesting
+import androidx.annotation.VisibleForTesting
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -60,15 +61,31 @@ class NSClientV3Service : DaggerService() {
 
     private val disposable = CompositeDisposable()
 
-    private var wakeLock: PowerManager.WakeLock? = null
+    @VisibleForTesting internal var wakeLock: PowerManager.WakeLock? = null
     private val binder: IBinder = LocalBinder()
 
+    // The wake lock used to be held for the whole life of the service, which with websockets on is
+    // all the time: the CPU never suspended (hours of kernel suspend blocker, several % battery per
+    // hour). AAPS is woken anyway for every BG and loop run, and an incoming packet on the socket wakes
+    // the device, so it is now only held for a while around socket work: connecting, the subscribe
+    // answer, incoming data, alarms and disconnects (socket.io then reconnects by itself, and a new
+    // connection loads what was missed via REST). AAPSClient, whose whole job is following over the
+    // socket, keeps it for the life of the service as before.
     @SuppressLint("WakelockTimeout")
     override fun onCreate() {
         super.onCreate()
-        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AndroidAPS:NSClientService")
-        wakeLock?.acquire()
+        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AndroidAPS:NSClientService").also {
+            // Not counted: every acquire(timeout) restarts the timeout, one release ends it
+            it.setReferenceCounted(false)
+            if (config.AAPSCLIENT) it.acquire()
+        }
         initializeWebSockets("onCreate")
+    }
+
+    /** Keeps the CPU awake for [WAKE_LOCK_TIMEOUT] from now, for socket work that just started. */
+    @VisibleForTesting internal fun stayAwake() {
+        // AAPSClient holds it without timeout; an acquire with timeout would turn that into a timed one
+        if (!config.AAPSCLIENT) wakeLock?.acquire(WAKE_LOCK_TIMEOUT)
     }
 
     override fun onDestroy() {
@@ -115,6 +132,7 @@ class NSClientV3Service : DaggerService() {
     @Suppress("SameParameterValue")
     fun initializeWebSockets(reason: String) {
         if (preferences.get(StringKey.NsClientUrl).isEmpty()) return
+        stayAwake()
         val urlStorage = preferences.get(StringKey.NsClientUrl).lowercase().replace(Regex("/$"), "") + "/storage"
         val urlAlarm = preferences.get(StringKey.NsClientUrl).lowercase().replace(Regex("/$"), "") + "/alarm"
         if (!nsClientV3Plugin.isAllowed) {
@@ -155,6 +173,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onConnectStorage = Emitter.Listener {
+        stayAwake()
         val socketId = storageSocket?.id() ?: "NULL"
         rxBus.send(EventNSClientNewLog("◄ WS", "connected storage ID: $socketId"))
         if (storageSocket != null) {
@@ -164,6 +183,7 @@ class NSClientV3Service : DaggerService() {
             }
             rxBus.send(EventNSClientNewLog("► WS", "requesting auth for storage"))
             storageSocket?.emit("subscribe", authMessage, Ack { args ->
+                stayAwake()
                 val response = args[0] as JSONObject
                 wsConnected = if (response.optBoolean("success")) {
                     rxBus.send(EventNSClientNewLog("◄ WS", "Subscribed for: ${response.optString("collections")}"))
@@ -182,6 +202,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onConnectAlarms = Emitter.Listener {
+        stayAwake()
         val socket = alarmSocket
         val socketId = socket?.id() ?: "NULL"
         rxBus.send(EventNSClientNewLog("◄ WS", "connected alarms ID: $socketId"))
@@ -191,6 +212,7 @@ class NSClientV3Service : DaggerService() {
             }
             rxBus.send(EventNSClientNewLog("► WS", "requesting auth for alarms"))
             socket.emit("subscribe", authMessage, Ack { args ->
+                stayAwake()
                 val response = args[0] as JSONObject
                 if (response.optBoolean("success")) rxBus.send(EventNSClientNewLog("◄ WS", response.optString("message")))
                 else rxBus.send(EventNSClientNewLog("◄ WS", "Auth failed"))
@@ -199,6 +221,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onDisconnectStorage = Emitter.Listener { args ->
+        stayAwake()
         aapsLogger.debug(LTag.NSCLIENT, "disconnect storage reason: ${args[0]}")
         rxBus.send(EventNSClientNewLog("◄ WS", "disconnect storage event"))
         wsConnected = false
@@ -207,11 +230,13 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onDisconnectAlarm = Emitter.Listener { args ->
+        stayAwake()
         aapsLogger.debug(LTag.NSCLIENT, "disconnect alarm reason: ${args[0]}")
         rxBus.send(EventNSClientNewLog("◄ WS", "disconnect alarm event"))
     }
 
     private val onDataCreateUpdate = Emitter.Listener { args ->
+        stayAwake()
         val response = args[0] as JSONObject
         aapsLogger.debug(LTag.NSCLIENT, "onDataCreateUpdate: $response")
         val collection = response.getString("colName")
@@ -253,6 +278,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onDataDelete = Emitter.Listener { args ->
+        stayAwake()
         val response = args[0] as JSONObject
         aapsLogger.debug(LTag.NSCLIENT, "onDataDelete: $response")
         val collection = response.optString("colName") ?: return@Listener
@@ -269,6 +295,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onAnnouncement = Emitter.Listener { args ->
+        stayAwake()
 
         /*
         {
@@ -288,6 +315,7 @@ class NSClientV3Service : DaggerService() {
             uiInteraction.addNotificationWithAction(NSAlarmObject(data))
     }
     private val onAlarm = Emitter.Listener { args ->
+        stayAwake()
 
         /*
         {
@@ -313,6 +341,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onUrgentAlarm = Emitter.Listener { args: Array<Any> ->
+        stayAwake()
         val data = args[0] as JSONObject
         rxBus.send(EventNSClientNewLog("◄ URGENT ALARM", data.optString("message")))
         aapsLogger.debug(LTag.NSCLIENT, data.toString())
@@ -324,6 +353,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onClearAlarm = Emitter.Listener { args ->
+        stayAwake()
 
         /*
         {
@@ -343,5 +373,11 @@ class NSClientV3Service : DaggerService() {
     fun handleClearAlarm(originalAlarm: NSAlarm, silenceTimeInMilliseconds: Long) {
         alarmSocket?.emit("ack", originalAlarm.level, originalAlarm.group, silenceTimeInMilliseconds)
         rxBus.send(EventNSClientNewLog("► ALARMACK ", "${originalAlarm.level} ${originalAlarm.group} $silenceTimeInMilliseconds"))
+    }
+
+    companion object {
+
+        /** Long enough for a reconnect (socket.io backs off up to 5 s), the subscribe and storing a document. */
+        const val WAKE_LOCK_TIMEOUT = 30_000L
     }
 }

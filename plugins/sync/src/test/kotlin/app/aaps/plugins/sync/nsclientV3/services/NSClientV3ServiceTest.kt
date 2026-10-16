@@ -2,6 +2,7 @@ package app.aaps.plugins.sync.nsclientV3.services
 
 import android.content.Intent
 import android.os.IBinder
+import android.os.PowerManager
 import app.aaps.core.interfaces.nsclient.StoreDataForDb
 import app.aaps.core.interfaces.rx.events.EventNSClientNewLog
 import app.aaps.core.interfaces.ui.UiInteraction
@@ -16,6 +17,10 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mock
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.verify
+import org.mockito.kotlin.verifyNoInteractions
 import org.mockito.kotlin.whenever
 
 class NSClientV3ServiceTest : TestBaseWithProfile() {
@@ -220,5 +225,28 @@ class NSClientV3ServiceTest : TestBaseWithProfile() {
         assertThat(events.any { it.action == "► WS" && it.logText?.contains("do connect alarm TestReason") ?: false }).isTrue()
         subscription.dispose()
         sut.shutdownWebsockets()
+    }
+
+    @Test
+    fun `AAPS keeps the CPU awake only for a while around socket work`() {
+        val wakeLock = mock<PowerManager.WakeLock>()
+        whenever(config.AAPSCLIENT).thenReturn(false)
+        sut.wakeLock = wakeLock
+
+        sut.stayAwake()
+
+        verify(wakeLock).acquire(NSClientV3Service.WAKE_LOCK_TIMEOUT)
+        verify(wakeLock, never()).acquire()
+    }
+
+    @Test
+    fun `AAPSClient keeps its wake lock without timeout`() {
+        val wakeLock = mock<PowerManager.WakeLock>()
+        whenever(config.AAPSCLIENT).thenReturn(true)
+        sut.wakeLock = wakeLock
+
+        sut.stayAwake()
+
+        verifyNoInteractions(wakeLock)
     }
 }
