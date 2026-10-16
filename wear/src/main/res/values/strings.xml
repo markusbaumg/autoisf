@@ -5,7 +5,6 @@
     <string name="label_watchface_circle">AAPS(Circle)</string>
     <string name="label_watchface_digital_style">AAPS(DigitalStyle)</string>
     <string name="label_watchface_custom">AAPS(Custom)</string>
-    <string name="label_watchface_kusi">AAPS(Kusi)</string>
     <string name="label_actions_tile">AAPS(Actions)</string>
     <string name="label_temp_target_tile">AAPS(Temp Target)</string>
     <string name="label_quick_wizard_tile">AAPS(Quick Wizard)</string>
@@ -236,13 +235,6 @@
     <string name="key_include_external" translatable="false">include_external</string>
     <string name="key_switch_external" translatable="false">switch_external</string>
     <string name="key_last_selected_watchface" translatable="false">last_selected_watchface</string>
-    <string name="key_kusi_bolus_double_tap" translatable="false">kusi_bolus_double_tap</string>
-    <string name="key_kusi_bolus_amount" translatable="false">kusi_bolus_amount</string>
-    <string name="pref_kusi_bolus_double_tap">Double-tap bolus request</string>
-    <string name="pref_kusi_bolus_double_tap_summary">Kusi face: double-tap the +U button to request a bolus. The phone checks it and you confirm on the watch. Needs Wear control enabled on the phone.</string>
-    <string name="pref_kusi_bolus_amount">Bolus request amount</string>
-    <string name="kusi_bolus_sub">U 2×</string>
-    <string name="kusi_bolus_again">again</string>
     <string name="increment">increment</string>
     <string name="decrement">decrement</string>
     <string name="abbreviation_average">avg</string>

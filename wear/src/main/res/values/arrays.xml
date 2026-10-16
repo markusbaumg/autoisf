@@ -119,14 +119,4 @@
         <item>15</item>
     </string-array>
 
-    <string-array name="kusi_bolus_amount_names" translatable="false">
-        <item>0.5 U</item>
-        <item>1.0 U</item>
-    </string-array>
-
-    <string-array name="kusi_bolus_amount_values" translatable="false">
-        <item>0.5</item>
-        <item>1.0</item>
-    </string-array>
-
 </resources>

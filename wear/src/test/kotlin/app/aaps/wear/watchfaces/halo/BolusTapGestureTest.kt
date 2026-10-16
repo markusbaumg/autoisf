@@ -1,6 +1,6 @@
-package app.aaps.wear.watchfaces.kusi
+package app.aaps.wear.watchfaces.halo
 
-import app.aaps.wear.watchfaces.kusi.BolusTapGesture.Decision
+import app.aaps.wear.watchfaces.halo.BolusTapGesture.Decision
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -107,5 +107,38 @@ class BolusTapGestureTest {
         assertThat(BolusTapGesture.parseAmount("1,0")).isEqualTo(1.0)
         assertThat(BolusTapGesture.parseAmount("5")).isEqualTo(0.5)
         assertThat(BolusTapGesture.parseAmount("abc")).isEqualTo(0.5)
+    }
+
+    @Test fun windowIs800msAndCooldown5s() {
+        assertThat(BolusTapGesture.WINDOW_MS).isEqualTo(800L)
+        assertThat(BolusTapGesture.COOLDOWN_MS).isEqualTo(5_000L)
+    }
+
+    @Test fun secondTapAt800msSendsAt801msArmsAgain() {
+        gesture.onTap(true, true)
+        now += 800
+        assertThat(gesture.onTap(true, true)).isEqualTo(Decision.SEND)
+
+        now += 10_000
+        gesture.onTap(true, true)
+        now += 801
+        assertThat(gesture.isArmed).isFalse()
+        assertThat(gesture.onTap(true, true)).isEqualTo(Decision.ARM)
+    }
+
+    @Test fun cooldownBoundaryAt5s() {
+        gesture.onTap(true, true)
+        now += 100
+        assertThat(gesture.onTap(true, true)).isEqualTo(Decision.SEND)
+        now += 4_999
+        assertThat(gesture.onTap(true, true)).isEqualTo(Decision.IGNORE)
+        now += 1
+        assertThat(gesture.onTap(true, true)).isEqualTo(Decision.ARM)
+    }
+
+    @Test fun onlyHalfAndOneUnitAreAllowed() {
+        assertThat(BolusTapGesture.ALLOWED_AMOUNTS).containsExactly(0.5, 1.0)
+        assertThat(BolusTapGesture.parseAmount("2.0")).isEqualTo(0.5)
+        assertThat(BolusTapGesture.parseAmount("0.1")).isEqualTo(0.5)
     }
 }

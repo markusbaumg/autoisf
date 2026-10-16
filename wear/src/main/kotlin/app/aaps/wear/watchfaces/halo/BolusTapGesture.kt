@@ -1,7 +1,7 @@
-package app.aaps.wear.watchfaces.kusi
+package app.aaps.wear.watchfaces.halo
 
 /**
- * Double-tap gesture of the "+X U" bolus request button on the Kusi watch face.
+ * Double-tap gesture of the "+X U" bolus request ball on the Halo watch face.
  *
  * Pure logic (no Android types) so it can be unit tested with an injected clock.
  *
@@ -96,10 +96,11 @@ class BolusTapGesture(
 
     companion object {
 
-        const val WINDOW_MS = 1500L
-        const val COOLDOWN_MS = 3000L
+        const val WINDOW_MS = 800L
+        const val COOLDOWN_MS = 5000L
         const val DEFAULT_AMOUNT = 0.5
-        private val ALLOWED_AMOUNTS = listOf(0.5, 1.0)
+        /** The only amounts the ball can request (watch setting 0.5 / 1.0 U). */
+        val ALLOWED_AMOUNTS = listOf(0.5, 1.0)
 
         /** True when (x, y) lies inside the circle at (cx, cy) with radius r. */
         fun isInside(x: Float, y: Float, cx: Float, cy: Float, r: Float): Boolean {

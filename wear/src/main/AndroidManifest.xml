@@ -30,17 +30,17 @@
             android:value="@integer/google_play_services_version" />
 
         <service
-            android:name=".watchfaces.KusiWatchface"
+            android:name=".watchfaces.HaloWatchface"
             android:allowEmbedded="true"
             android:exported="true"
-            android:label="@string/label_watchface_kusi"
+            android:label="@string/label_watchface_halo"
             android:permission="android.permission.BIND_WALLPAPER">
             <meta-data
                 android:name="android.service.wallpaper"
                 android:resource="@xml/watch_face" />
             <meta-data
                 android:name="com.google.android.wearable.watchface.preview"
-                android:resource="@drawable/watchface_kusi" />
+                android:resource="@drawable/watchface_halo" />
             <meta-data
                 android:name="com.google.android.wearable.watchface.wearableConfigurationAction"
                 android:value="androidx.wear.watchface.editor.action.WATCH_FACE_EDITOR" />

@@ -11,6 +11,7 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.wear.R
 import app.aaps.wear.preference.WearPreferenceActivity
+import app.aaps.wear.watchfaces.HaloWatchface
 import dagger.android.AndroidInjection
 import javax.inject.Inject
 
@@ -67,7 +68,7 @@ class ConfigurationActivity : WearPreferenceActivity() {
             "app.aaps.wear.watchfaces.CustomWatchface" -> R.xml.watch_face_configuration_custom
             "app.aaps.wear.watchfaces.CircleWatchface" -> R.xml.watch_face_configuration_circle
             "app.aaps.wear.watchfaces.DigitalStyleWatchface" -> R.xml.watch_face_configuration_digitalstyle
-            "app.aaps.wear.watchfaces.KusiWatchface" -> R.xml.watch_face_configuration_kusi
+            HaloWatchface::class.java.name -> R.xml.watch_face_configuration_halo
             else -> {
                 // Fallback: try to use the old method with action
                 @Suppress("DiscouragedApi")
