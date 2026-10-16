@@ -96,14 +96,28 @@ class AppRepository @Inject internal constructor(
         // keep at least one EPS
         if (database.effectiveProfileSwitchDao.getEffectiveProfileSwitchDataFromTime(than + 1).blockingGet().isNotEmpty())
             removed.add(Pair("EffectiveProfileSwitch", database.effectiveProfileSwitchDao.deleteOlderThan(than)))
-        removed.add(Pair("ProfileSwitch", database.profileSwitchDao.deleteOlderThan(than)))
+        // Never delete the ProfileSwitch / RunningMode that is in force now. A permanent one can be
+        // older than keepDays (e.g. closed loop enabled weeks ago); deleting it would make the
+        // requested profile disappear and fall back to the default running mode (DISABLED_LOOP).
+        val now = System.currentTimeMillis()
+        val profileSwitchThan = listOfNotNull(
+            than,
+            database.profileSwitchDao.getPermanentProfileSwitchActiveAt(now).blockingGet()?.timestamp,
+            database.profileSwitchDao.getTemporaryProfileSwitchActiveAt(now).blockingGet()?.timestamp
+        ).min()
+        removed.add(Pair("ProfileSwitch", database.profileSwitchDao.deleteOlderThan(profileSwitchThan)))
         removed.add(Pair("ApsResult", database.apsResultDao.deleteOlderThan(than)))
         // keep version history database.versionChangeDao.deleteOlderThan(than)
         removed.add(Pair("UserEntry", database.userEntryDao.deleteOlderThan(than)))
         removed.add(Pair("PreferenceChange", database.preferenceChangeDao.deleteOlderThan(than)))
         // keep foods database.foodDao.deleteOlderThan(than)
         removed.add(Pair("DeviceStatus", database.deviceStatusDao.deleteOlderThan(than)))
-        removed.add(Pair("RunningMode", database.runningModeDao.deleteOlderThan(than)))
+        val runningModeThan = listOfNotNull(
+            than,
+            database.runningModeDao.getPermanentRunningModeActiveAt(now).blockingGet()?.timestamp,
+            database.runningModeDao.getTemporaryRunningModeActiveAt(now).blockingGet()?.timestamp
+        ).min()
+        removed.add(Pair("RunningMode", database.runningModeDao.deleteOlderThan(runningModeThan)))
         removed.add(Pair("HeartRate", database.heartRateDao.deleteOlderThan(than)))
         removed.add(Pair("StepsCount", database.stepsCountDao.deleteOlderThan(than)))
         removed.add(Pair("AutoIsfValues", database.autoIsfValuesDao.deleteOlderThan(than)))

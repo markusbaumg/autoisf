@@ -14,7 +14,9 @@ import app.aaps.core.interfaces.queue.Command
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventProfileSwitchChanged
+import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.LongNonKey
+import com.google.common.truth.Truth.assertThat
 import app.aaps.plugins.configuration.maintenance.MaintenancePlugin
 import app.aaps.plugins.constraints.dstHelper.DstHelperPlugin
 import app.aaps.shared.tests.TestBaseWithProfile
@@ -24,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mock
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
@@ -150,5 +153,38 @@ class KeepAliveWorkerTest : TestBaseWithProfile() {
         // Assert
         verify(persistenceLayer, never()).cleanupDatabase(any(), any())
         Unit
+    }
+
+    @Test
+    fun `databaseCleanup uses MaintenanceCleanupDays when above the lower bound`() {
+        worker = createWorker()
+        whenever(preferences.get(LongNonKey.LastCleanupRun)).thenReturn(now - T.days(2).msecs())
+        whenever(preferences.get(IntKey.MaintenanceCleanupDays)).thenReturn(14)
+        whenever(persistenceLayer.cleanupDatabase(any(), any())).thenReturn("")
+
+        worker.databaseCleanup()
+
+        verify(persistenceLayer).cleanupDatabase(eq(14L), eq(false))
+        verify(preferences).put(eq(LongNonKey.LastCleanupRun), any<Long>())
+    }
+
+    @Test
+    fun `databaseCleanup never keeps less than the dosing lookback`() {
+        worker = createWorker()
+        whenever(preferences.get(LongNonKey.LastCleanupRun)).thenReturn(0L)
+        whenever(preferences.get(IntKey.MaintenanceCleanupDays)).thenReturn(7)
+        whenever(persistenceLayer.cleanupDatabase(any(), any())).thenReturn("")
+
+        worker.databaseCleanup()
+
+        verify(persistenceLayer).cleanupDatabase(eq(KeepAliveWorker.MIN_AUTO_CLEANUP_KEEP_DAYS), eq(false))
+    }
+
+    @Test
+    fun `autoCleanupKeepDays is max of setting and lower bound`() {
+        assertThat(KeepAliveWorker.autoCleanupKeepDays(7)).isEqualTo(10L)
+        assertThat(KeepAliveWorker.autoCleanupKeepDays(10)).isEqualTo(10L)
+        assertThat(KeepAliveWorker.autoCleanupKeepDays(14)).isEqualTo(14L)
+        assertThat(KeepAliveWorker.autoCleanupKeepDays(93)).isEqualTo(93L)
     }
 }

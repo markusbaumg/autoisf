@@ -30,6 +30,7 @@ import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventProfileSwitchChanged
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.LongNonKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.profile.ProfileSealed
@@ -41,6 +42,7 @@ import kotlinx.coroutines.Dispatchers
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import kotlin.math.abs
+import kotlin.math.max
 
 class KeepAliveWorker(
     private val context: Context,
@@ -71,6 +73,16 @@ class KeepAliveWorker(
         private var lastReadStatus: Long = 0
         private var lastRun: Long = 0
         private var lastIobUpload: Long = 0
+
+        /**
+         * Lower bound for the automatic cleanup. Longest dosing-relevant lookback:
+         * TDD 7 days (DynISF/AutoISF tdd7D, TddCalculator.calculate(7) starts at midnight 7 days back,
+         * i.e. up to 8 days ago) plus autosens 24 h and DIA/carb tail before that window.
+         * 10 days covers that with a margin. The IntKey minimum (7) is too short for this.
+         */
+        const val MIN_AUTO_CLEANUP_KEEP_DAYS = 10L
+
+        fun autoCleanupKeepDays(settingDays: Int): Long = max(settingDays.toLong(), MIN_AUTO_CLEANUP_KEEP_DAYS)
 
         const val KA_0 = "KeepAlive"
         private const val KA_5 = "KeepAlive_5"
@@ -143,13 +155,19 @@ class KeepAliveWorker(
         return Result.success()
     }
 
-    // Perform history data cleanup every day
-    // Keep 6 months
-    private fun databaseCleanup() {
+    // Perform history data cleanup every day.
+    // Keep what the user set in Maintenance (maintenance_cleanup_days), never less than
+    // MIN_AUTO_CLEANUP_KEEP_DAYS so that dosing-relevant history stays complete.
+    // Tracked changes (history rows of edited records) are intentionally kept: NS/xDrip sync finds
+    // edits through these rows (id > last synced id), so deleting them daily could silently drop
+    // not-yet-uploaded changes, e.g. an invalidated bolus while Nightscout is unreachable.
+    @VisibleForTesting
+    fun databaseCleanup() {
         val lastRun = preferences.get(LongNonKey.LastCleanupRun)
         if (lastRun < dateUtil.now() - T.days(1).msecs()) {
-            val result = persistenceLayer.cleanupDatabase(6 * 31, deleteTrackedChanges = false)
-            aapsLogger.debug(LTag.CORE, "Cleanup result: $result")
+            val keepDays = autoCleanupKeepDays(preferences.get(IntKey.MaintenanceCleanupDays))
+            val result = persistenceLayer.cleanupDatabase(keepDays, deleteTrackedChanges = false)
+            aapsLogger.debug(LTag.CORE, "Cleanup (keep $keepDays days) result: $result")
             preferences.put(LongNonKey.LastCleanupRun, dateUtil.now())
         }
     }
