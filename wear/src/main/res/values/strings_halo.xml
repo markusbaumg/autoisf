@@ -8,7 +8,6 @@
     <string name="pref_halo_bolus_double_tap">Double-tap bolus request</string>
     <string name="pref_halo_bolus_double_tap_summary">Halo face: double-tap the +U ball to request a bolus. The phone checks it and you confirm on the watch. Needs Wear control enabled on the phone.</string>
     <string name="pref_halo_bolus_amount">Bolus request amount</string>
-    <string name="halo_cob">COB</string>
     <string name="halo_bolus_sub">U 2×</string>
     <string name="halo_bolus_again">again</string>
     <string name="halo_bolus_sent">Bolus request sent. Confirm on the watch.</string>

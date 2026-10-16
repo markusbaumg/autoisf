@@ -135,6 +135,18 @@ class HaloFaceLogicTest {
         assertThat(HaloFaceLogic.timeText(12, 30, false)).isEqualTo("12:30")
     }
 
+    @Test fun valueUnitSplitsNumberAndUnit() {
+        assertThat(HaloFaceLogic.valueUnit("1.44", "U")).isEqualTo("1.44" to "U")
+        assertThat(HaloFaceLogic.valueUnit("1.2U", "U")).isEqualTo("1.2" to "U")
+        assertThat(HaloFaceLogic.valueUnit("-0.10", "U")).isEqualTo("-0.10" to "U")
+        assertThat(HaloFaceLogic.valueUnit("0g", "g")).isEqualTo("0" to "g")
+        assertThat(HaloFaceLogic.valueUnit("12(5)g", "g")).isEqualTo("12(5)" to "g")
+        assertThat(HaloFaceLogic.valueUnit("--g", "g")).isEqualTo("--" to "")
+        assertThat(HaloFaceLogic.valueUnit("", "U")).isEqualTo("--" to "")
+        assertThat(HaloFaceLogic.valueUnit(null, "U")).isEqualTo("--" to "")
+        assertThat(HaloFaceLogic.valueUnit("---", "g")).isEqualTo("--" to "")
+    }
+
     @Test fun burnInOffsetIsSmallAndMoves() {
         val xs = (0 until 60).map { HaloFaceLogic.burnInOffsetX(it) }
         val ys = (0 until 60).map { HaloFaceLogic.burnInOffsetY(it) }

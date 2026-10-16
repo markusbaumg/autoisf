@@ -101,6 +101,15 @@ object HaloFaceLogic {
     fun orDash(value: String?): String =
         if (value == null || value.isBlank() || value.all { it == '-' }) NO_DATA else value
 
+    /**
+     * Splits a value into number and [unit] for the bottom row: "1.44" / "1.2U" with "U" -> ("1.44", "U"),
+     * "12(5)g" with "g" -> ("12(5)", "g"). Missing data ("", "---", "--g") -> ("--", ""), without a unit.
+     */
+    fun valueUnit(raw: String?, unit: String): Pair<String, String> {
+        val v = orDash(raw).trim().removeSuffix(unit).trim()
+        return if (v.isEmpty() || v.all { it == '-' }) NO_DATA to "" else v to unit
+    }
+
     /** Parse an IOB string like "2.53", "-0,10" or "1.2U"; null when unreadable. */
     fun parseIob(iob: String?): Double? {
         if (iob == null) return null

@@ -46,22 +46,36 @@ class HaloLayoutTest {
     @Test fun textNeverBelowTheFloorAndTapTargetIs48dp() {
         for (d in diameters) {
             val l = HaloLayout(d, density = 2f)
-            for (size in listOf(l.timeSize, l.dateSize, l.deltaSize, l.secondarySize, l.pillTextSize, l.sideLabelSize, l.sideValueSize)) {
+            for (size in listOf(l.timeSize, l.dateSize, l.deltaSize, l.secondarySize, l.pillTextSize, l.rowValueSize, l.rowUnitSize)) {
                 assertWithMessage("text size at d=$d").that(size).isAtLeast(HaloLayout.MIN_TEXT_PX)
             }
             assertWithMessage("hit radius at d=$d").that(l.ballHitR).isEqualTo(48f)
         }
     }
 
-    @Test fun bolusTargetIsClearOfTheRingAndTheHeroTapZone() {
+    @Test fun bottomRowStaysClearOfTheRingEnds() {
         for (d in diameters) {
             val l = HaloLayout(d)
-            // Ball (drawn) stays outside the ring's outer edge.
-            val ringOuterX = l.c - (l.ringR + l.ringW / 2f)
-            assertWithMessage("ball vs ring at d=$d").that(l.ballX + l.ballR).isAtMost(ringOuterX)
-            assertWithMessage("ball on the glass at d=$d").that(hypot(l.ballX - l.c, 0f) + l.ballR).isAtMost(l.c)
+            for (b in l.boxes().filter { it.name in setOf("secondary", "pill", "cob", "iob") }) {
+                assertWithMessage("${b.name} near a ring end at d=$d").that(l.nearRingEnds(b, gap = 0.02f * d)).isFalse()
+            }
+        }
+    }
+
+    @Test fun bolusBallTakesThePillsPlaceAndItsTargetIsClear() {
+        for (d in diameters) {
+            val l = HaloLayout(d)
+            val ball = l.ballBox()
+            // Drawn ball: off the ring (and its round ends), on the glass, clear of the COB / IOB values and the secondary line.
+            assertWithMessage("ball on the ring at d=$d").that(l.touchesRing(ball)).isFalse()
+            assertWithMessage("ball near a ring end at d=$d").that(l.nearRingEnds(ball)).isFalse()
+            assertWithMessage("ball bezel at d=$d").that(l.bezelMargin(ball)).isAtLeast(0.06f * d)
+            for (b in l.boxes().filter { it.name in setOf("secondary", "cob", "iob") }) {
+                assertWithMessage("ball / ${b.name} at d=$d").that(ball.overlaps(b)).isFalse()
+            }
             // Its tap circle never reaches the hero double-tap zone.
-            assertWithMessage("ball hit vs hero zone at d=$d").that(l.ballX + l.ballHitR).isLessThan(l.heroTapLeft)
+            assertWithMessage("ball hit vs hero zone at d=$d").that(l.ballY - l.ballHitR).isGreaterThan(l.heroTapBottom)
+            assertWithMessage("ball hit on the glass at d=$d").that(hypot(0f, l.ballY - l.c) + l.ballHitR).isAtMost(l.c)
         }
     }
 }

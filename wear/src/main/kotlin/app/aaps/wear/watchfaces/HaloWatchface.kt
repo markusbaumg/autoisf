@@ -70,7 +70,7 @@ import kotlin.math.sin
  * 2.2..16.7 mmol/L scale with the target band, a knob and a 30 min trend tail), time with a German date, arrow,
  * delta and BG age, an IOB arc with IOB and COB, a 3-state loop pill and one secondary line (temp target + basal).
  *
- * Optional "+X U" ball (left, off by default) sends a bolus REQUEST on double-tap, exactly like BolusActivity
+ * Optional "+X U" ball (bottom centre in place of the loop pill, off by default) sends a bolus REQUEST on double-tap, exactly like BolusActivity
  * (ActionBolusPreCheck). The phone checks everything and the watch shows the standard confirmation; nothing is
  * delivered without confirming there. Interactive mode only: never in ambient, never in a headless (picker)
  * instance and never in a non-live render (screenshot / highlight layer). An editor preview drawn through the live
@@ -152,8 +152,6 @@ class HaloWatchface : WatchFace() {
     private val vibRefused by lazy { VibrationEffect.createOneShot(350, VibrationEffect.DEFAULT_AMPLITUDE) }
 
     // Cached labels.
-    private val iobLabel by lazy { getString(R.string.activity_IOB) }
-    private val cobLabel by lazy { getString(R.string.halo_cob) }
     private val againLabel by lazy { getString(R.string.halo_bolus_again) }
     private val subLabel by lazy { getString(R.string.halo_bolus_sub) }
 
@@ -415,14 +413,14 @@ class HaloWatchface : WatchFace() {
         // 7. IOB arc, IOB and COB
         drawIobCob(canvas, ambient = false)
 
-        // 8. loop pill
-        drawLoopPill(canvas, now, ambient = false)
+        // 8. loop pill (the bolus ball takes its place when enabled)
+        buttonShown = bolusButtonEnabled()
+        if (!buttonShown) drawLoopPill(canvas, now, ambient = false)
 
         // 9. secondary line: temp target (when active) and basal
         drawFitText(canvas, secondaryLine(), cx, L.secondaryY, L.secondarySize, tf500, SECONDARY, maxWidth = L.secondaryMaxW)
 
         // 10. bolus ball (only when enabled; otherwise not drawn and not tappable)
-        buttonShown = bolusButtonEnabled()
         if (buttonShown) drawBolusButton(canvas, gesture.isArmed)
         else if (gesture.reset()) handler.removeCallbacks(disarmRunnable)
     }
@@ -605,11 +603,38 @@ class HaloWatchface : WatchFace() {
             }
             canvas.drawArc(r, half, sweep, false, p)
         }
-        val labelColour = if (ambient) amb(0xFF6E6E6E.toInt(), lowBit) else IOB_LABEL
-        drawFitText(canvas, iobLabel, L.sideX, L.iobLabelY, L.sideLabelSize, tf600, labelColour, aa)
-        drawFitText(canvas, HaloFaceLogic.orDash(st.iobSum), L.sideX, L.iobValueY, L.sideValueSize, tf500, if (ambient) amb(0xFFBEBEBE.toInt(), lowBit) else IOB_VALUE, aa)
-        drawFitText(canvas, cobLabel, L.sideX, L.cobLabelY, L.sideLabelSize, tf600, labelColour, aa)
-        drawFitText(canvas, HaloFaceLogic.orDash(st.cob), L.sideX, L.cobValueY, L.sideValueSize, tf500, if (ambient) amb(0xFFAAAAAA.toInt(), lowBit) else COB_VALUE, aa)
+        // Bottom row: COB left, IOB right (next to the arc end it fills from). Unit and colour say which is which.
+        val unitColour = if (ambient) amb(0xFF6E6E6E.toInt(), lowBit) else null
+        val (cobValue, cobUnit) = HaloFaceLogic.valueUnit(st.cob, "g")
+        drawValueUnit(canvas, cobValue, cobUnit, L.cobX, if (ambient) amb(0xFFAAAAAA.toInt(), lowBit) else COB_VALUE, unitColour ?: COB_UNIT, aa)
+        val (iobValue, iobUnit) = HaloFaceLogic.valueUnit(st.iobSum, "U")
+        drawValueUnit(canvas, iobValue, iobUnit, L.iobX, if (ambient) amb(0xFFBEBEBE.toInt(), lowBit) else IOB_VALUE, unitColour ?: IOB_UNIT, aa)
+    }
+
+    /** "1.44" + smaller "U", centred as one unit on [centreX] in the bottom row, shrunk to [HaloLayout.rowMaxW]. */
+    private fun drawValueUnit(canvas: Canvas, value: String, unit: String, centreX: Float, valueColour: Int, unitColour: Int, aa: Boolean) {
+        text.reset()
+        text.isAntiAlias = aa
+        text.textAlign = Paint.Align.LEFT
+        text.typeface = tf500
+        text.textSize = L.rowValueSize
+        val vw = text.measureText(value)
+        text.typeface = tf600
+        text.textSize = L.rowUnitSize
+        val uw = if (unit.isEmpty()) 0f else text.measureText(unit) + L.rowUnitGap
+        val scale = HaloFaceLogic.fitScale(vw + uw, L.rowMaxW)
+        var x = centreX - (vw + uw) * scale / 2f
+        text.typeface = tf500
+        text.textSize = L.rowValueSize * scale
+        text.color = valueColour
+        val baseline = baselineFor(L.rowY)
+        canvas.drawText(value, x, baseline, text)
+        if (unit.isEmpty()) return
+        x += vw * scale + L.rowUnitGap * scale
+        text.typeface = tf600
+        text.textSize = L.rowUnitSize * scale
+        text.color = unitColour
+        canvas.drawText(unit, x, baseline, text)
     }
 
     /**
@@ -818,7 +843,7 @@ class HaloWatchface : WatchFace() {
     }
 
     /** Like [drawText], shrunk to [maxWidth] if needed (e.g. "12(5)g" COB, long translations). */
-    private fun drawFitText(canvas: Canvas, s: String, cx: Float, cy: Float, size: Float, tf: Typeface, colour: Int, aa: Boolean = true, maxWidth: Float = L.sideMaxW) {
+    private fun drawFitText(canvas: Canvas, s: String, cx: Float, cy: Float, size: Float, tf: Typeface, colour: Int, aa: Boolean = true, maxWidth: Float) {
         text.reset()
         text.isAntiAlias = aa
         text.textAlign = Paint.Align.CENTER
@@ -963,7 +988,8 @@ class HaloWatchface : WatchFace() {
         private const val STALE = 0xFF6E7480.toInt()
         private const val SECONDARY = 0xFF6E7480.toInt()
         private const val IOB_TRACK = 0xFF1A1C24.toInt()
-        private const val IOB_LABEL = 0xFF5A606E.toInt()
+        private const val IOB_UNIT = 0xFF5AA0C8.toInt()
+        private const val COB_UNIT = 0xFFC8A06E.toInt()
         private const val IOB_VALUE = 0xFFD7F0FF.toInt()
         private const val COB_VALUE = 0xFFFFE0B2.toInt()
         private const val AMB_GREY = 0xFFAAAAAA.toInt()

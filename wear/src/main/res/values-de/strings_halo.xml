@@ -4,7 +4,6 @@
     <string name="pref_halo_bolus_double_tap">Bolus-Anfrage per Doppeltipp</string>
     <string name="pref_halo_bolus_double_tap_summary">Halo: Doppeltipp auf die +U-Kugel fordert einen Bolus an. Das Telefon prüft ihn, bestätigt wird auf der Uhr. Wear-Steuerung muss auf dem Telefon aktiv sein.</string>
     <string name="pref_halo_bolus_amount">Menge der Bolus-Anfrage</string>
-    <string name="halo_cob">COB</string>
     <string name="halo_bolus_sub">U 2×</string>
     <string name="halo_bolus_again">nochmal</string>
     <string name="halo_bolus_sent">Bolus-Anfrage gesendet. Auf der Uhr bestätigen.</string>
