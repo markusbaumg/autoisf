@@ -10,7 +10,12 @@ import app.aaps.core.interfaces.pump.Pump
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.smsCommunicator.SmsCommunicator
 import app.aaps.core.interfaces.utils.DateUtil
+import app.aaps.core.interfaces.rx.events.EventDismissNotification
+import app.aaps.core.interfaces.rx.events.EventNewNotification
+import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.IntKey
+import app.aaps.implementation.alerts.LocalAlertUtilsImpl.LoopAlertAction
+import com.google.common.truth.Truth.assertThat
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.implementation.alerts.keys.LocalAlertLongKey
 import app.aaps.shared.tests.TestBase
@@ -284,5 +289,118 @@ class LocalAlertUtilsImplTest : TestBase() {
 
         val expectedEarliestAlarm = lastDataTime + T.mins(thresholdMinutes.toLong()).msecs()
         verify(preferences).put(LocalAlertLongKey.NextPumpDisconnectedAlarm, expectedEarliestAlarm)
+    }
+
+    // ---- loop not running ----
+
+    private val threshold = T.mins(15).msecs()
+
+    private fun evaluate(
+        alertEnabled: Boolean = true,
+        isLoopActive: Boolean = true,
+        lastLoopDecision: Long = now - T.mins(20).msecs(),
+        referenceTime: Long = lastLoopDecision,
+        lastBgTimestamp: Long = now - T.mins(1).msecs(),
+        nextAlarm: Long = 0L
+    ) = LocalAlertUtilsImpl.evaluateLoopNotRunning(now, alertEnabled, isLoopActive, lastLoopDecision, referenceTime, lastBgTimestamp, threshold, nextAlarm)
+
+    @Test
+    fun `loop alarm raised when no decision for threshold and BG fresh`() {
+        assertThat(evaluate()).isEqualTo(LoopAlertAction.RAISE)
+        assertThat(evaluate(lastLoopDecision = now - threshold)).isEqualTo(LoopAlertAction.RAISE)
+    }
+
+    @Test
+    fun `loop alarm not raised before threshold`() {
+        assertThat(evaluate(lastLoopDecision = now - threshold + 1)).isEqualTo(LoopAlertAction.DISMISS)
+        assertThat(evaluate(lastLoopDecision = now - T.mins(1).msecs(), lastBgTimestamp = now)).isEqualTo(LoopAlertAction.DISMISS)
+    }
+
+    @Test
+    fun `loop alarm dismissed when disabled or loop not active`() {
+        assertThat(evaluate(alertEnabled = false)).isEqualTo(LoopAlertAction.DISMISS)
+        assertThat(evaluate(isLoopActive = false)).isEqualTo(LoopAlertAction.DISMISS)
+    }
+
+    @Test
+    fun `loop alarm not raised without fresh BG`() {
+        assertThat(evaluate(lastBgTimestamp = 0L)).isEqualTo(LoopAlertAction.NONE)
+        assertThat(evaluate(lastBgTimestamp = now - T.mins(10).msecs())).isEqualTo(LoopAlertAction.NONE)
+        assertThat(evaluate(lastBgTimestamp = now - T.mins(9).msecs())).isEqualTo(LoopAlertAction.RAISE)
+        // newest BG already handled by the last decision -> BG not arriving, missed-BG alarm territory
+        assertThat(evaluate(lastLoopDecision = now - T.mins(20).msecs(), lastBgTimestamp = now - T.mins(21).msecs())).isEqualTo(LoopAlertAction.NONE)
+    }
+
+    @Test
+    fun `loop alarm respects startup and resume grace via reference time`() {
+        // no decision since app start 10 min ago
+        assertThat(evaluate(lastLoopDecision = 0L, referenceTime = now - T.mins(10).msecs())).isEqualTo(LoopAlertAction.NONE)
+        // no decision since app start 15 min ago
+        assertThat(evaluate(lastLoopDecision = 0L, referenceTime = now - threshold)).isEqualTo(LoopAlertAction.RAISE)
+        // loop resumed (last seen inactive) 5 min ago, last decision 2 h ago
+        assertThat(evaluate(lastLoopDecision = now - T.hours(2).msecs(), referenceTime = now - T.mins(5).msecs())).isEqualTo(LoopAlertAction.NONE)
+    }
+
+    @Test
+    fun `loop alarm respects snooze`() {
+        assertThat(evaluate(nextAlarm = now + 1)).isEqualTo(LoopAlertAction.NONE)
+        assertThat(evaluate(nextAlarm = now)).isEqualTo(LoopAlertAction.RAISE)
+    }
+
+    private fun stubLoopAlertPrefs(next: Long = 0L) {
+        whenever(config.APS).thenReturn(true)
+        whenever(preferences.get(BooleanKey.AlertLoopNotRunning)).thenReturn(true)
+        whenever(preferences.get(IntKey.AlertsLoopNotRunningThreshold)).thenReturn(15)
+        whenever(preferences.get(LocalAlertLongKey.NextLoopNotRunningAlarm)).thenReturn(next)
+        whenever(rh.gs(any(), any())).thenReturn("Loop not running")
+    }
+
+    @Test
+    fun `checkLoopNotRunningAlert raises notification and snoozes for threshold`() {
+        stubLoopAlertPrefs()
+        val events = rxBus.toObservable(EventNewNotification::class.java).test()
+
+        localAlertUtils.checkLoopNotRunningAlert(now - T.mins(20).msecs(), true, now - T.mins(1).msecs())
+
+        verify(preferences).put(LocalAlertLongKey.NextLoopNotRunningAlarm, now + threshold)
+        events.assertValueCount(1)
+        assertThat(events.values()[0].notification.id).isEqualTo(app.aaps.core.interfaces.notifications.Notification.LOOP_NOT_RUNNING)
+    }
+
+    @Test
+    fun `checkLoopNotRunningAlert dismisses when loop runs`() {
+        stubLoopAlertPrefs()
+        val dismiss = rxBus.toObservable(EventDismissNotification::class.java).test()
+
+        localAlertUtils.checkLoopNotRunningAlert(now - T.mins(1).msecs(), true, now)
+
+        verify(preferences, never()).put(eq(LocalAlertLongKey.NextLoopNotRunningAlarm), any())
+        dismiss.assertValueCount(1)
+    }
+
+    @Test
+    fun `checkLoopNotRunningAlert does not fire right after resume from suspend`() {
+        stubLoopAlertPrefs()
+        val events = rxBus.toObservable(EventNewNotification::class.java).test()
+
+        // suspended: seen inactive now
+        localAlertUtils.checkLoopNotRunningAlert(now - T.hours(2).msecs(), false, now - T.mins(1).msecs())
+        // resumed, still at same time (no decision yet)
+        localAlertUtils.checkLoopNotRunningAlert(now - T.hours(2).msecs(), true, now - T.mins(1).msecs())
+
+        events.assertValueCount(0)
+    }
+
+    @Test
+    fun `checkLoopNotRunningAlert does not fire within startup grace`() {
+        stubLoopAlertPrefs()
+        whenever(preferences.get(LocalAlertLongKey.NextMissedReadingsAlarm)).thenReturn(now + 1000)
+        whenever(preferences.get(LocalAlertLongKey.NextPumpDisconnectedAlarm)).thenReturn(now + 1000)
+        val events = rxBus.toObservable(EventNewNotification::class.java).test()
+        localAlertUtils.preSnoozeAlarms()
+
+        localAlertUtils.checkLoopNotRunningAlert(0L, true, now - T.mins(1).msecs())
+
+        events.assertValueCount(0)
     }
 }

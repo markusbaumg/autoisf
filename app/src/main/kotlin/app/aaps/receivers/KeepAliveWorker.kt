@@ -148,6 +148,7 @@ class KeepAliveWorker(
         localAlertUtils.checkStaleBGAlert()
         checkPump()
         checkAPS()
+        checkLoopRunning()
         maintenancePlugin.deleteLogs(30*24)
         workerDbStatus()
         databaseCleanup()
@@ -201,6 +202,18 @@ class KeepAliveWorker(
             lastIobUpload = dateUtil.now()
             loop.scheduleBuildAndStoreDeviceStatus("KeepAliveWorker")
         }
+    }
+
+    // Alarm if the loop should run and BG is arriving, but no loop decision is made (read-only, no dosing impact)
+    @VisibleForTesting
+    fun checkLoopRunning() {
+        if (!config.APS) return
+        val isLoopActive = loop.isEnabled() && loop.runningMode.isLoopRunning() && profileFunction.getProfile() != null
+        localAlertUtils.checkLoopNotRunningAlert(
+            lastLoopDecision = loop.lastRun?.lastAPSRun ?: 0L,
+            isLoopActive = isLoopActive,
+            lastBgTimestamp = persistenceLayer.getLastGlucoseValue()?.timestamp ?: 0L
+        )
     }
 
     @VisibleForTesting

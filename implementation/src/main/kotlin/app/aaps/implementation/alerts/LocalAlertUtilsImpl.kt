@@ -54,6 +54,17 @@ class LocalAlertUtilsImpl @Inject constructor(
 
     private val disposable = CompositeDisposable()
 
+    // Loop-not-running alarm: the time to measure "no decision" from is never earlier than
+    // app start or the last check that saw the loop deliberately not running (suspended, disconnected, ...)
+    private var appStartTime = 0L
+    private var lastLoopInactiveSeen = 0L
+
+    enum class LoopAlertAction { RAISE, DISMISS, NONE }
+
+    private fun loopNotRunningThreshold(): Long {
+        return T.mins(preferences.get(IntKey.AlertsLoopNotRunningThreshold).toLong()).msecs()
+    }
+
     private fun missedReadingsThreshold(): Long {
         return T.mins(preferences.get(IntKey.AlertsStaleDataThreshold).toLong()).msecs()
     }
@@ -104,6 +115,10 @@ class LocalAlertUtilsImpl @Inject constructor(
         if (preferences.get(LocalAlertLongKey.NextPumpDisconnectedAlarm) < dateUtil.now()) {
             preferences.put(LocalAlertLongKey.NextPumpDisconnectedAlarm, dateUtil.now() + 5 * 60 * 1000)
         }
+        appStartTime = dateUtil.now()
+        if (preferences.get(LocalAlertLongKey.NextLoopNotRunningAlarm) < dateUtil.now()) {
+            preferences.put(LocalAlertLongKey.NextLoopNotRunningAlarm, dateUtil.now() + 5 * 60 * 1000)
+        }
     }
 
     override fun shortenSnoozeInterval() { //shortens alarm times in case of setting changes or future data
@@ -113,6 +128,9 @@ class LocalAlertUtilsImpl @Inject constructor(
         var nextPumpDisconnectedAlarm = preferences.get(LocalAlertLongKey.NextPumpDisconnectedAlarm)
         nextPumpDisconnectedAlarm = min(dateUtil.now() + pumpUnreachableThreshold(), nextPumpDisconnectedAlarm)
         preferences.put(LocalAlertLongKey.NextPumpDisconnectedAlarm, nextPumpDisconnectedAlarm)
+        var nextLoopNotRunningAlarm = preferences.get(LocalAlertLongKey.NextLoopNotRunningAlarm)
+        nextLoopNotRunningAlarm = min(dateUtil.now() + loopNotRunningThreshold(), nextLoopNotRunningAlarm)
+        preferences.put(LocalAlertLongKey.NextLoopNotRunningAlarm, nextLoopNotRunningAlarm)
     }
 
     override fun reportPumpStatusRead() {
@@ -149,6 +167,77 @@ class LocalAlertUtilsImpl @Inject constructor(
             }
         } else if (dateUtil.isOlderThan(bgReading.timestamp, 5).not()) {
             rxBus.send(EventDismissNotification(Notification.BG_READINGS_MISSED))
+        }
+    }
+
+    override fun checkLoopNotRunningAlert(lastLoopDecision: Long, isLoopActive: Boolean, lastBgTimestamp: Long) {
+        val now = dateUtil.now()
+        if (!isLoopActive) lastLoopInactiveSeen = now
+        val referenceTime = maxOf(lastLoopDecision, appStartTime, lastLoopInactiveSeen)
+        val action = evaluateLoopNotRunning(
+            now = now,
+            alertEnabled = config.APS && preferences.get(BooleanKey.AlertLoopNotRunning),
+            isLoopActive = isLoopActive,
+            lastLoopDecision = lastLoopDecision,
+            referenceTime = referenceTime,
+            lastBgTimestamp = lastBgTimestamp,
+            threshold = loopNotRunningThreshold(),
+            nextAlarm = preferences.get(LocalAlertLongKey.NextLoopNotRunningAlarm)
+        )
+        when (action) {
+            LoopAlertAction.RAISE   -> {
+                val minutes = T.msecs(now - referenceTime).mins().toInt()
+                val text = rh.gs(R.string.loop_not_running_alert, minutes)
+                aapsLogger.debug(
+                    LTag.CORE, "Generating loop not running alarm. lastLoopDecision: " + dateUtil.dateAndTimeString(lastLoopDecision) +
+                        " lastBg: " + dateUtil.dateAndTimeString(lastBgTimestamp)
+                )
+                preferences.put(LocalAlertLongKey.NextLoopNotRunningAlarm, now + loopNotRunningThreshold())
+                rxBus.send(EventNewNotification(Notification(Notification.LOOP_NOT_RUNNING, text, Notification.URGENT).also { it.soundId = R.raw.alarm }))
+                if (preferences.get(BooleanKey.NsClientCreateAnnouncementsFromErrors))
+                    disposable += persistenceLayer.insertPumpTherapyEventIfNewByTimestamp(
+                        therapyEvent = TE.asAnnouncement(text),
+                        timestamp = now,
+                        action = Action.CAREPORTAL,
+                        source = Sources.Aaps,
+                        note = text,
+                        listValues = listOf(ValueWithUnit.TEType(TE.Type.ANNOUNCEMENT))
+                    ).subscribe()
+            }
+
+            LoopAlertAction.DISMISS -> rxBus.send(EventDismissNotification(Notification.LOOP_NOT_RUNNING))
+            LoopAlertAction.NONE    -> Unit
+        }
+    }
+
+    companion object {
+
+        /** The loop only uses BG not older than this (AutosensDataStore.actualBg) */
+        val LOOP_BG_MAX_AGE = T.mins(9).msecs()
+
+        /**
+         * Pure decision for the loop-not-running alarm.
+         * Raise only if the loop should run, BG is fresh (and newer than the last decision, so the loop
+         * had something to act on), no decision for at least [threshold] since [referenceTime] and the snooze expired.
+         * Missing / stale BG is left to the missed-BG alarm.
+         */
+        fun evaluateLoopNotRunning(
+            now: Long,
+            alertEnabled: Boolean,
+            isLoopActive: Boolean,
+            lastLoopDecision: Long,
+            referenceTime: Long,
+            lastBgTimestamp: Long,
+            threshold: Long,
+            nextAlarm: Long
+        ): LoopAlertAction {
+            if (!alertEnabled || !isLoopActive) return LoopAlertAction.DISMISS
+            if (lastLoopDecision > 0 && now - lastLoopDecision < threshold) return LoopAlertAction.DISMISS
+            val bgFresh = lastBgTimestamp > 0 && now - lastBgTimestamp <= LOOP_BG_MAX_AGE && lastBgTimestamp > lastLoopDecision
+            if (!bgFresh) return LoopAlertAction.NONE
+            if (now - referenceTime < threshold) return LoopAlertAction.NONE
+            if (nextAlarm > now) return LoopAlertAction.NONE
+            return LoopAlertAction.RAISE
         }
     }
 }

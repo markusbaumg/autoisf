@@ -32,4 +32,15 @@ interface LocalAlertUtils {
      * Overview notification with sound, Therapy event
      */
     fun checkStaleBGAlert()
+
+    /**
+     * Check that the loop keeps making decisions while it is supposed to run.
+     * Raise alarm if needed. Does not influence dosing in any way.
+     * Overview notification with sound, Therapy event
+     *
+     * @param lastLoopDecision timestamp of the last loop decision (Loop.lastRun.lastAPSRun), 0 if none since app start
+     * @param isLoopActive loop plugin enabled, running mode open/closed/LGS (not suspended, disconnected, disabled) and a profile is set
+     * @param lastBgTimestamp timestamp of the newest BG reading, 0 if none
+     */
+    fun checkLoopNotRunningAlert(lastLoopDecision: Long, isLoopActive: Boolean, lastBgTimestamp: Long)
 }

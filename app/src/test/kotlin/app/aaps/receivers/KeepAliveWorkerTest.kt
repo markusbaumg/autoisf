@@ -187,4 +187,49 @@ class KeepAliveWorkerTest : TestBaseWithProfile() {
         assertThat(KeepAliveWorker.autoCleanupKeepDays(14)).isEqualTo(14L)
         assertThat(KeepAliveWorker.autoCleanupKeepDays(93)).isEqualTo(93L)
     }
+
+    @Test
+    fun `checkLoopRunning passes last decision, active loop and last BG to alert check`() {
+        worker = createWorker()
+        val lastRun = Loop.LastRun().also { it.lastAPSRun = 12345L }
+        val gv = org.mockito.kotlin.mock<app.aaps.core.data.model.GV>()
+        whenever(gv.timestamp).thenReturn(67890L)
+        whenever(config.APS).thenReturn(true)
+        whenever(loop.isEnabled()).thenReturn(true)
+        whenever(loop.runningMode).thenReturn(RM.Mode.CLOSED_LOOP)
+        whenever(loop.lastRun).thenReturn(lastRun)
+        whenever(profileFunction.getProfile()).thenReturn(validProfile)
+        whenever(persistenceLayer.getLastGlucoseValue()).thenReturn(gv)
+
+        worker.checkLoopRunning()
+
+        verify(localAlertUtils).checkLoopNotRunningAlert(12345L, true, 67890L)
+    }
+
+    @Test
+    fun `checkLoopRunning reports loop inactive when suspended or disconnected`() {
+        worker = createWorker()
+        whenever(config.APS).thenReturn(true)
+        whenever(loop.isEnabled()).thenReturn(true)
+        whenever(loop.lastRun).thenReturn(null)
+        whenever(profileFunction.getProfile()).thenReturn(validProfile)
+        whenever(persistenceLayer.getLastGlucoseValue()).thenReturn(null)
+
+        whenever(loop.runningMode).thenReturn(RM.Mode.SUSPENDED_BY_USER)
+        worker.checkLoopRunning()
+        whenever(loop.runningMode).thenReturn(RM.Mode.DISCONNECTED_PUMP)
+        worker.checkLoopRunning()
+
+        verify(localAlertUtils, org.mockito.kotlin.times(2)).checkLoopNotRunningAlert(0L, false, 0L)
+    }
+
+    @Test
+    fun `checkLoopRunning does nothing without APS`() {
+        worker = createWorker()
+        whenever(config.APS).thenReturn(false)
+
+        worker.checkLoopRunning()
+
+        verify(localAlertUtils, never()).checkLoopNotRunningAlert(any(), any(), any())
+    }
 }

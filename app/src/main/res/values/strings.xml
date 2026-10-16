@@ -15,6 +15,9 @@
     <string name="enable_missed_bg_readings_alert">Alert if no BG data is received</string>
     <string name="enable_pump_unreachable_alert">Alert if pump is unreachable</string>
     <string name="pump_unreachable_threshold">Pump unreachable threshold [min]</string>
+    <string name="enable_loop_not_running_alert">Alert if loop is not running</string>
+    <string name="enable_loop_not_running_alert_summary">Alarm when the loop is enabled and BG data is arriving, but no loop decision was made for the set time</string>
+    <string name="loop_not_running_threshold">Loop not running threshold [min]</string>
     <string name="enable_carbs_req_alert">Alert if carbs are required</string>
     <string name="open_navigation">Open navigation</string>
     <string name="close_navigation">Close navigation</string>

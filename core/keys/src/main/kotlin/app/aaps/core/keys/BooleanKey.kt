@@ -37,6 +37,7 @@ enum class BooleanKey(
 
     AlertMissedBgReading("enable_missed_bg_readings", false),
     AlertPumpUnreachable("enable_pump_unreachable_alert", true),
+    AlertLoopNotRunning("enable_loop_not_running_alert", true, showInNsClientMode = false, showInPumpControlMode = false),
     AlertCarbsRequired("enable_carbs_required_alert_local", true),
     AlertUrgentAsAndroidNotification("raise_urgent_alarms_as_android_notification", true),
     AlertIncreaseVolume("gradually_increase_notification_volume", true),
