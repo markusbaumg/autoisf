@@ -13,9 +13,9 @@ import kotlin.math.max
  * - text never goes below [MIN_TEXT_PX] (a 384 px screen would otherwise shrink a 17 px label to 14.5 px);
  * - the bolus tap target is a fixed 48 dp ([TAP_TARGET_DP]), not scaled.
  *
- * Current variant: "M" (between v1 and fit1): ring R 160 (71 % of the radius, top at y 58, clear of the system
- * status icon), hero 140 px (7.7 mm cap height), secondary line above the pill, and one bottom row COB - pill - IOB
- * (values with their unit, no labels; IOB on the right, next to the end where its arc fills from).
+ * Current variant: "L-" (a bit smaller than fit1): ring R 172 (76 % of the radius, top at y 46), hero 154 px
+ * (8.4 mm cap height), secondary line above the pill, and one bottom row COB - pill - IOB (values with their unit,
+ * no labels; IOB on the right, next to the end where its arc fills from).
  */
 class HaloLayout(val d: Float, density: Float = 2f) {
 
@@ -27,64 +27,64 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     private fun font(v: Float) = max(v * u, MIN_TEXT_PX)
 
     // Ring (BG scale, 270 deg with the gap at the bottom).
-    val ringR = g(160f)
+    val ringR = g(172f)
     val ringW = g(15f)
     val ringGlow = g(8f)
-    val cutIn = g(151f)                 // threshold cuts R +- 9
-    val cutOut = g(169f)
-    val ambCutIn = g(153f)
-    val ambCutOut = g(167f)
-    val backdropR = g(172f)
-    val tailR = g(145f)
+    val cutIn = g(163f)                 // threshold cuts R +- 9
+    val cutOut = g(181f)
+    val ambCutIn = g(165f)
+    val ambCutOut = g(179f)
+    val backdropR = g(182f)
+    val tailR = g(157f)
     val tailW = g(3f)
-    val knobR = g(13f)
+    val knobR = g(13.5f)
     val knobGlow = g(6f)
-    val dotR = g(6.5f)
-    val ambKnobR = g(7.5f)
+    val dotR = g(7f)
+    val ambKnobR = g(8f)
     val ambStroke = g(2f)
     val cutStroke = g(3f)
 
     // IOB arc at the right bezel, filling from its bottom end.
-    val iobR = g(210f)
+    val iobR = g(211f)
     val iobW = g(6f)
     val iobGlow = g(5f)
-    val iobHalfSweep = 45f
+    val iobHalfSweep = 42f
     val ambIobW = g(1f)
     val ambIobFillW = g(2f)
 
     // Time and German date.
-    val timeY = g(101f)
-    val timeSize = font(36f)
-    val dateY = g(132f)
-    val dateSize = font(21f)
+    val timeY = g(92f)
+    val timeSize = font(39f)
+    val dateY = g(124f)
+    val dateSize = font(22f)
 
     // Hero BG.
-    val heroY = g(214f)
-    val heroSize = g(140f)
-    val heroMaxW = g(236f)              // "10.4" shrinks to fit inside the trend tail
+    val heroY = g(211f)
+    val heroSize = g(154f)
+    val heroMaxW = g(252f)              // "10.4" shrinks to fit inside the trend tail
     val heroGlow = g(10f)
     val heroStrike = g(2f)
     val heroAmbStroke = g(2f)
     val heroAmbStrokeBurnIn = g(1.5f)
 
     // Arrow, delta and BG age.
-    val deltaY = g(291f)
-    val arrowSize = font(31f)
-    val deltaSize = font(25f)
+    val deltaY = g(294f)
+    val arrowSize = font(32f)
+    val deltaSize = font(26f)
     val arrowGap = g(10f)
 
     // Secondary line (temp target + basal), between the delta line and the pill.
-    val secondaryY = g(325f)
+    val secondaryY = g(330f)
     val secondarySize = font(22f)
-    val secondaryMaxW = g(180f)          // "TT 5.6 · 0.00U/h" is ~162; wider ones shrink, clear of the ring ends
+    val secondaryMaxW = g(210f)          // "TT 5.6 · 0.00U/h" is ~162; wider ones shrink, clear of the ring ends
 
     // Loop pill.
-    val pillY = g(369f)
-    val pillHalfW = g(38f)
-    val pillHalfH = g(17f)
-    val pillTextSize = font(22f)
-    val pillDotX = c - g(24f)
-    val pillDotR = g(5.5f)
+    val pillY = g(375f)
+    val pillHalfW = g(40f)
+    val pillHalfH = g(18f)
+    val pillTextSize = font(23f)
+    val pillDotX = c - g(25f)
+    val pillDotR = g(6f)
     val pillDotGlow = g(4f)
     val pillAmbDotR = g(4.5f)
     val pillTextX = c + g(8f)
@@ -92,18 +92,18 @@ class HaloLayout(val d: Float, density: Float = 2f) {
 
     // Bottom row: COB value (left) and IOB value (right) beside the pill, value + smaller unit, no labels.
     val rowY = pillY
-    val cobX = g(132f)
-    val iobX = g(316f)
-    val rowValueSize = font(27f)
-    val rowUnitSize = font(18f)
+    val cobX = g(138f)
+    val iobX = g(312f)
+    val rowValueSize = font(28f)
+    val rowUnitSize = font(19f)
     val rowUnitGap = g(2f)
     val rowMaxW = g(64f)                // "12(5)g" / "-0.25U" shrink to fit
 
-    // Bolus ball (optional): takes the pill's place in the ring gap; its 48 dp tap circle (y 323..419 at 450 px)
+    // Bolus ball (optional): takes the pill's place in the ring gap; its 48 dp tap circle (y 328..424 at 450 px)
     // stays below the hero double-tap zone and clear of the ring ends.
     val ballX = c
-    val ballY = g(371f)
-    val ballR = g(25f)
+    val ballY = g(376f)
+    val ballR = g(26f)
     val ballStroke = g(2.5f)
     val ballGlow = g(5f)
     val ballGlowArmed = g(9f)
@@ -115,9 +115,9 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val ballHitR = max(ballR, TAP_TARGET_DP / 2f * density)
 
     // Double-tap zone of the hero BG (opens the main menu).
-    val heroTapLeft = g(95f)
-    val heroTapRight = g(355f)
-    val heroTapTop = g(160f)
+    val heroTapLeft = g(90f)
+    val heroTapRight = g(360f)
+    val heroTapTop = g(152f)
     val heroTapBottom = g(275f)
 
     /** Ambient burn-in shift, scaled like the rest. */
