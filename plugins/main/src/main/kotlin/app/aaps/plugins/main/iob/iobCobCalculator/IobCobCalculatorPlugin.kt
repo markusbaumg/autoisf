@@ -115,7 +115,8 @@ class IobCobCalculatorPlugin @Inject constructor(
 
     override var ads: AutosensDataStore = AutosensDataStoreObject()
 
-    private val dataLock = Any()
+    // Guards iobTable, every read and every write. Internal only so a test can hold it.
+    internal val dataLock = Any()
     private var thread: Thread? = null
 
     override fun onStart() {
@@ -300,7 +301,10 @@ class IobCobCalculatorPlugin @Inject constructor(
     override fun calculateFromTreatmentsAndTemps(toTime: Long, profile: Profile): IobTotal {
         val now = System.currentTimeMillis()
         val time = ads.roundUpTime(toTime)
-        val cacheHit = iobTable[time]
+        // Under the same lock as every write. iobTable is a plain LongSparseArray, and the writers
+        // (new BG, history change, clearCache) run on other threads: a read without the lock could
+        // see the arrays half compacted and return the IOB of another time, or throw.
+        val cacheHit = synchronized(dataLock) { iobTable[time] }
         if (time < now && cacheHit != null) {
             //og.debug(">>> calculateFromTreatmentsAndTemps Cache hit " + new Date(time).toLocaleString());
             return cacheHit
