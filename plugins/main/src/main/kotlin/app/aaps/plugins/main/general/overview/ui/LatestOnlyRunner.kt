@@ -1,5 +1,6 @@
 package app.aaps.plugins.main.general.overview.ui
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -11,9 +12,13 @@ import kotlinx.coroutines.launch
  * coroutine that nothing cancelled, so slow runs piled up and competed for the database.
  * Cancelling the previous run would not help when its work is blocking and does not check for
  * cancellation; this never has more than one run going and never loses the latest request.
+ *
+ * A run that throws is handed to [onError] and the next pending value still runs: the failure neither
+ * reaches [scope] (an uncaught exception there ends the app) nor strands a value submitted meanwhile.
  */
 internal class LatestOnlyRunner<T : Any>(
     private val scope: CoroutineScope,
+    private val onError: (Throwable) -> Unit,
     private val block: suspend (T) -> Unit
 ) {
 
@@ -38,9 +43,16 @@ internal class LatestOnlyRunner<T : Any>(
                         if (next == null) running = false
                         next
                     } ?: return@launch
-                    block(next)
+                    try {
+                        block(next)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        onError(e)
+                    }
                 }
             } catch (e: Throwable) {
+                // Cancelled (or onError threw): nothing runs any more, so a later submit() must start anew.
                 // Not in a finally: after a normal end another run may already own the flag.
                 synchronized(lock) { running = false }
                 throw e

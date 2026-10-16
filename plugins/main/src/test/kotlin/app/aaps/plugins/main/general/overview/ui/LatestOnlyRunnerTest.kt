@@ -21,7 +21,7 @@ class LatestOnlyRunnerTest {
     fun `requests arriving during a run collapse into one run for the newest`() {
         val started = mutableListOf<Int>()
         val gate = CompletableDeferred<Unit>()
-        val runner = LatestOnlyRunner<Int>(scope) { value ->
+        val runner = LatestOnlyRunner<Int>(scope, onError = { throw AssertionError(it) }) { value ->
             started.add(value)
             if (value == 1) gate.await()
         }
@@ -45,7 +45,7 @@ class LatestOnlyRunnerTest {
     @Test
     fun `a request after a finished run starts a new run`() {
         val started = mutableListOf<Int>()
-        val runner = LatestOnlyRunner<Int>(scope) { started.add(it) }
+        val runner = LatestOnlyRunner<Int>(scope, onError = { throw AssertionError(it) }) { started.add(it) }
 
         runner.submit(1)
         scope.advanceUntilIdle()
@@ -56,12 +56,14 @@ class LatestOnlyRunnerTest {
     }
 
     @Test
-    fun `a failed run does not block later requests`() {
+    fun `a failed run does not block later requests and does not reach the scope`() {
         val started = mutableListOf<Int>()
+        val errors = mutableListOf<Throwable>()
+        val uncaught = mutableListOf<Throwable>()
         val dispatcher = StandardTestDispatcher()
-        // Like StatusLightHandler's scope: a SupervisorJob, so one failed run does not cancel the scope
-        val failingScope = CoroutineScope(dispatcher + SupervisorJob() + CoroutineExceptionHandler { _, _ -> })
-        val runner = LatestOnlyRunner<Int>(failingScope) { value ->
+        // Like StatusLightHandler's scope: a SupervisorJob; the handler only records what would end the app
+        val failingScope = CoroutineScope(dispatcher + SupervisorJob() + CoroutineExceptionHandler { _, e -> uncaught.add(e) })
+        val runner = LatestOnlyRunner<Int>(failingScope, onError = { errors.add(it) }) { value ->
             started.add(value)
             if (value == 1) error("boom")
         }
@@ -72,5 +74,32 @@ class LatestOnlyRunnerTest {
         dispatcher.scheduler.advanceUntilIdle()
 
         assertThat(started).containsExactly(1, 2).inOrder()
+        assertThat(errors.map { it.message }).containsExactly("boom")
+        assertThat(uncaught).isEmpty()
+    }
+
+    @Test
+    fun `a value submitted during a run that fails still runs`() {
+        val started = mutableListOf<Int>()
+        val errors = mutableListOf<Throwable>()
+        val gate = CompletableDeferred<Unit>()
+        val dispatcher = StandardTestDispatcher()
+        val failingScope = CoroutineScope(dispatcher + SupervisorJob() + CoroutineExceptionHandler { _, _ -> })
+        val runner = LatestOnlyRunner<Int>(failingScope, onError = { errors.add(it) }) { value ->
+            started.add(value)
+            if (value == 1) {
+                gate.await()
+                error("boom")
+            }
+        }
+
+        runner.submit(1)
+        dispatcher.scheduler.runCurrent()
+        runner.submit(2)          // run 1 is busy: 2 waits
+        gate.complete(Unit)       // run 1 now fails
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertThat(started).containsExactly(1, 2).inOrder()
+        assertThat(errors).hasSize(1)
     }
 }

@@ -6,6 +6,8 @@ import app.aaps.core.data.model.TE
 import app.aaps.core.data.pump.defs.PumpType
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.pump.WarnColors
 import app.aaps.core.interfaces.resources.ResourceHelper
@@ -32,7 +34,8 @@ class StatusLightHandler @Inject constructor(
     private val config: Config,
     private val persistenceLayer: PersistenceLayer,
     private val tddCalculator: TddCalculator,
-    private val decimalFormatter: DecimalFormatter
+    private val decimalFormatter: DecimalFormatter,
+    private val aapsLogger: AAPSLogger
 ) {
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -41,7 +44,11 @@ class StatusLightHandler @Inject constructor(
     // every refresh (about once a minute with a 1-minute loop), and each request used to start its own
     // coroutine that nothing cancelled, so slow runs piled up (#5101). Now one run at a time, and only
     // for the latest request.
-    private val usageRunner = LatestOnlyRunner<Pair<TextView, String>>(scope) { (view, units) -> handleUsage(view, units) }
+    // A failed run is logged and does not end the app; the next refresh tries again.
+    private val usageRunner = LatestOnlyRunner<Pair<TextView, String>>(
+        scope,
+        onError = { aapsLogger.error(LTag.UI, "Cannula usage calculation failed", it) }
+    ) { (view, units) -> handleUsage(view, units) }
 
     /**
      * applies the extended statusLight subview on the overview fragment
