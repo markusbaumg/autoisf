@@ -14,8 +14,10 @@
             <!-- hourly rollover. Make sure the path matches the one in the file element or else
              the rollover logs are placed in the working directory. -->
             <fileNamePattern>${EXT_FILES_DIR}/AndroidAPS._%d{yyyy-MM-dd_HH}.log.zip</fileNamePattern>
-            <!-- keep 30 days (hourly archives) worth of history -->
-            <maxHistory>720</maxHistory>
+            <!-- keep 7 days (hourly archives) worth of history, at most 500 MB, so the log folder
+             can not fill the phone's shared storage (30 days at DEBUG reached 1.7 GB) -->
+            <maxHistory>168</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
         </rollingPolicy>
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} [%thread] %.-1level/%logger: %msg%n</pattern>
