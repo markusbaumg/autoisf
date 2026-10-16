@@ -38,4 +38,27 @@ class ProcessedTbrEbDataImpl @Inject constructor(
         return tempBasals
     }
 
+    override fun getTempBasalsIncludingConvertedExtended(from: Long, to: Long): ProcessedTbrEbData.TempBasalsInRange {
+        // The one running at the start, and every one starting later: together every entry that can be
+        // running inside the range. latestRunningAt then picks as the "active at" query does. The only
+        // case that differs is two valid entries that overlap, which the database should not hold.
+        // The "active at" query for the start is still one index walk when nothing runs at the start,
+        // but it is one per range instead of one per step.
+        val temporaryBasals = (listOfNotNull(persistenceLayer.getTemporaryBasalActiveAt(from)) +
+            persistenceLayer.getTemporaryBasalsStartingFromTimeToTime(from, to, true)).distinctBy { it.id }
+        val extendedBoluses =
+            if (activePlugin.activePump.isFakingTempsByExtendedBoluses)
+                (listOfNotNull(persistenceLayer.getExtendedBolusActiveAt(from)) +
+                    persistenceLayer.getExtendedBolusesStartingFromTimeToTime(from, to, true)).distinctBy { it.id }
+            else emptyList()
+        return object : ProcessedTbrEbData.TempBasalsInRange {
+            override fun at(timestamp: Long): TB? =
+                temporaryBasals.latestRunningAt(timestamp, { it.timestamp }, { it.duration })
+                    ?: extendedBoluses.latestRunningAt(timestamp, { it.timestamp }, { it.duration })?.let { eb ->
+                        // Same as getConvertedExtended: no profile, no converted extended bolus
+                        profileFunction.getProfile(timestamp)?.let { eb.toTemporaryBasal(it) }
+                    }
+        }
+    }
+
 }

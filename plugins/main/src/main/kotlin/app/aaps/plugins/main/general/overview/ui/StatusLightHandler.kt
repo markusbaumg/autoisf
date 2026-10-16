@@ -17,7 +17,6 @@ import app.aaps.core.keys.interfaces.Preferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -37,6 +36,12 @@ class StatusLightHandler @Inject constructor(
 ) {
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    // The cannula usage sums the whole cannula life in 5-minute steps. The Actions screen asks for it on
+    // every refresh (about once a minute with a 1-minute loop), and each request used to start its own
+    // coroutine that nothing cancelled, so slow runs piled up (#5101). Now one run at a time, and only
+    // for the latest request.
+    private val usageRunner = LatestOnlyRunner<Pair<TextView, String>>(scope) { (view, units) -> handleUsage(view, units) }
 
     /**
      * applies the extended statusLight subview on the overview fragment
@@ -61,7 +66,7 @@ class StatusLightHandler @Inject constructor(
         }
 
         val insulinUnit = rh.gs(app.aaps.core.ui.R.string.insulin_unit_shortname)
-        if (cannulaUsage != null) scope.launch { handleUsage(cannulaUsage, insulinUnit) }
+        if (cannulaUsage != null) usageRunner.submit(cannulaUsage to insulinUnit)
         if (pump.pumpDescription.isPatchPump) {
             handlePatchReservoirLevel(
                 reservoirLevel,

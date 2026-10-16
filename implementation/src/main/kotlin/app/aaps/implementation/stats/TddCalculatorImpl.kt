@@ -14,7 +14,7 @@ import app.aaps.core.data.model.TDD
 import app.aaps.core.data.pump.defs.PumpType
 import app.aaps.core.data.time.T
 import app.aaps.core.interfaces.db.PersistenceLayer
-import app.aaps.core.interfaces.iob.IobCobCalculator
+import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
@@ -23,6 +23,8 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.MidnightTime
+import app.aaps.core.objects.extensions.convertedToAbsolute
+import app.aaps.implementation.db.latestRunningAt
 import dagger.Reusable
 import java.time.Instant
 import java.time.ZoneId
@@ -35,7 +37,7 @@ class TddCalculatorImpl @Inject constructor(
     private val activePlugin: ActivePlugin,
     private val profileFunction: ProfileFunction,
     private val dateUtil: DateUtil,
-    private val iobCobCalculator: IobCobCalculator,
+    private val processedTbrEbData: ProcessedTbrEbData,
     private val persistenceLayer: PersistenceLayer
 ) : TddCalculator {
 
@@ -113,20 +115,37 @@ class TddCalculatorImpl @Inject constructor(
         persistenceLayer.getCarbsFromTimeToTimeExpanded(startTime, endTime, true).forEach { t ->
             tdd.carbs += t.amount
         }
+        // The temporary basals and extended boluses of the whole interval are read once. This used to be
+        // one "active at" query per 5-minute step for each (getBasalData and getExtendedBolusActiveAt),
+        // and for a step that nothing covers such a query walks the whole timestamp index. The cannula
+        // usage on the Actions screen sums the whole cannula life (864 steps for 3 days) on every refresh,
+        // and dynamic ISF sums 24 h on every loop run.
+        //
+        // The two reads together give every entry that can be running in the interval: the one already
+        // running at the start, and every one that starts later. Each step then picks the latest started
+        // one that is still running, as the "active at" queries do, so every step gets the same entry and
+        // the sums are the same. The only case that differs is two valid entries that overlap, which the
+        // database should not hold.
+        val temporaryBasals = processedTbrEbData.getTempBasalsIncludingConvertedExtended(startTimeAligned, endTimeAligned)
+        val extendedBoluses =
+            if (activePlugin.activePump.isFakingTempsByExtendedBoluses) emptyList()
+            else (listOfNotNull(persistenceLayer.getExtendedBolusActiveAt(startTimeAligned)) +
+                persistenceLayer.getExtendedBolusesStartingFromTimeToTime(startTimeAligned, endTimeAligned, true))
+                .distinctBy { it.id }
         val calculationStep = T.mins(5).msecs()
         for (t in startTimeAligned until endTimeAligned step calculationStep) {
 
             val profile = profileFunction.getProfile(t) ?: if (allowMissingData) continue else return null
-            val tbr = iobCobCalculator.getBasalData(profile, t)
-            if (tbr.isTempBasalRunning) tbrFound = true
-            val absoluteRate = tbr.tempBasalAbsolute
+            // What getBasalData(profile, t) returned. t is on a 5-minute boundary, so the full minute
+            // getBasalData rounded it up to is t itself.
+            val tbr = temporaryBasals.at(t)
+            if (tbr != null) tbrFound = true
+            val absoluteRate = tbr?.convertedToAbsolute(t, profile) ?: profile.getBasal(t)
             tdd.basalAmount += absoluteRate / 60.0 * 5.0
 
-            if (!activePlugin.activePump.isFakingTempsByExtendedBoluses) {
-                val eb = persistenceLayer.getExtendedBolusActiveAt(t)
-                val absoluteEbRate = eb?.rate ?: 0.0
-                tdd.bolusAmount += absoluteEbRate / 60.0 * 5.0
-            }
+            val eb = extendedBoluses.latestRunningAt(t, { it.timestamp }, { it.duration })
+            val absoluteEbRate = eb?.rate ?: 0.0
+            tdd.bolusAmount += absoluteEbRate / 60.0 * 5.0
         }
         tdd.totalAmount = tdd.bolusAmount + tdd.basalAmount
         //aapsLogger.debug(LTag.CORE, tdd.toString())

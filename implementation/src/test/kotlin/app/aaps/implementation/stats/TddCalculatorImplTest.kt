@@ -2,12 +2,16 @@ package app.aaps.implementation.stats
 
 import androidx.collection.LongSparseArray
 import app.aaps.core.data.aps.AverageTDD
+import app.aaps.core.data.model.EB
+import app.aaps.core.data.model.TB
 import app.aaps.core.data.model.TDD
 import app.aaps.core.data.time.T
 import app.aaps.core.interfaces.db.PersistenceLayer
-import app.aaps.core.interfaces.iob.IobCobCalculator
+import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.interfaces.plugin.ActivePlugin
+import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.interfaces.profile.ProfileFunction
+import app.aaps.core.interfaces.pump.Pump
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.MidnightTime
@@ -16,6 +20,11 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mock
+import org.mockito.kotlin.any
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.times
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 class TddCalculatorImplTest : TestBase() {
@@ -24,7 +33,7 @@ class TddCalculatorImplTest : TestBase() {
     @Mock lateinit var activePlugin: ActivePlugin
     @Mock lateinit var profileFunction: ProfileFunction
     @Mock lateinit var dateUtil: DateUtil
-    @Mock lateinit var iobCobCalculator: IobCobCalculator
+    @Mock lateinit var processedTbrEbData: ProcessedTbrEbData
     @Mock lateinit var persistenceLayer: PersistenceLayer
 
     private lateinit var tddCalculator: TddCalculatorImpl
@@ -34,7 +43,7 @@ class TddCalculatorImplTest : TestBase() {
 
     @BeforeEach
     fun setup() {
-        tddCalculator = TddCalculatorImpl(aapsLogger, rh, activePlugin, profileFunction, dateUtil, iobCobCalculator, persistenceLayer)
+        tddCalculator = TddCalculatorImpl(aapsLogger, rh, activePlugin, profileFunction, dateUtil, processedTbrEbData, persistenceLayer)
         whenever(dateUtil.now()).thenReturn(now)
     }
 
@@ -376,5 +385,72 @@ class TddCalculatorImplTest : TestBase() {
         assertThat(result).isNotNull()
         assertThat(result?.data?.basalAmount).isWithin(0.0001).of(20.0015)
         assertThat(result?.data?.bolusAmount).isWithin(0.0001).of(10.0015)
+    }
+
+    // calculateInterval: one read of the temporary basals and extended boluses per interval
+
+    private val intervalStart = midnight
+    private val intervalEnd = midnight + T.hours(1).msecs()
+
+    private fun givenInterval(fakingTemps: Boolean, profile: Profile) {
+        val pump = mock<Pump>()
+        whenever(activePlugin.activePump).thenReturn(pump)
+        whenever(pump.isFakingTempsByExtendedBoluses).thenReturn(fakingTemps)
+        whenever(persistenceLayer.getBolusesFromTimeToTime(any(), any(), any())).thenReturn(emptyList())
+        whenever(persistenceLayer.getCarbsFromTimeToTimeExpanded(any(), any(), any())).thenReturn(emptyList())
+        whenever(profileFunction.getProfile(any())).thenReturn(profile)
+    }
+
+    private fun givenTemporaryBasals(at: (Long) -> TB?) {
+        whenever(processedTbrEbData.getTempBasalsIncludingConvertedExtended(any(), any())).thenReturn(
+            object : ProcessedTbrEbData.TempBasalsInRange {
+                override fun at(timestamp: Long): TB? = at(timestamp)
+            }
+        )
+    }
+
+    /** A percent temporary basal is converted with the profile of its step, other steps count the profile basal. */
+    @Test
+    fun `calculateInterval converts a percent temporary basal and counts the profile basal elsewhere`() {
+        val profile = mock<Profile>()
+        whenever(profile.getBasal(any())).thenReturn(2.0)
+        givenInterval(fakingTemps = true, profile = profile)
+        // 50 % in the first 30 minutes, nothing after
+        givenTemporaryBasals { t ->
+            if (t < intervalStart + T.mins(30).msecs())
+                TB(timestamp = intervalStart, duration = T.mins(30).msecs(), rate = 50.0, isAbsolute = false, type = TB.Type.NORMAL)
+            else null
+        }
+
+        val tdd = tddCalculator.calculateInterval(intervalStart, intervalEnd, allowMissingData = false)
+
+        // 6 steps at 1.0 U/h and 6 steps at 2.0 U/h, each step is 5 minutes
+        assertThat(tdd?.basalAmount).isWithin(0.0001).of(0.5 + 1.0)
+        verify(processedTbrEbData, times(1)).getTempBasalsIncludingConvertedExtended(intervalStart, intervalEnd)
+        // a pump that fakes temps: its extended boluses are inside the temporary basals already
+        verify(persistenceLayer, never()).getExtendedBolusActiveAt(any())
+        verify(persistenceLayer, never()).getExtendedBolusesStartingFromTimeToTime(any(), any(), any())
+    }
+
+    /** Extended boluses of a pump that does not fake temps are read once and counted as bolus per step. */
+    @Test
+    fun `calculateInterval reads extended boluses once and counts the running one per step`() {
+        val profile = mock<Profile>()
+        whenever(profile.getBasal(any())).thenReturn(1.0)
+        givenInterval(fakingTemps = false, profile = profile)
+        givenTemporaryBasals { null }
+        // 1.2 U/h running since before the interval for its first 20 min, then 2.4 U/h started inside for 10 min
+        val running = EB(id = 1, timestamp = intervalStart - T.mins(10).msecs(), duration = T.mins(30).msecs(), amount = 0.6)
+        val later = EB(id = 2, timestamp = intervalStart + T.mins(30).msecs(), duration = T.mins(10).msecs(), amount = 0.4)
+        whenever(persistenceLayer.getExtendedBolusActiveAt(intervalStart)).thenReturn(running)
+        whenever(persistenceLayer.getExtendedBolusesStartingFromTimeToTime(intervalStart, intervalEnd, true)).thenReturn(listOf(later))
+
+        val tdd = tddCalculator.calculateInterval(intervalStart, intervalEnd, allowMissingData = false)
+
+        // 4 steps at 1.2 U/h + 2 steps at 2.4 U/h, 5 minutes each
+        assertThat(tdd?.bolusAmount).isWithin(0.0001).of(4 * 1.2 / 12 + 2 * 2.4 / 12)
+        assertThat(tdd?.basalAmount).isWithin(0.0001).of(1.0)
+        verify(persistenceLayer, times(1)).getExtendedBolusActiveAt(any())
+        verify(persistenceLayer, times(1)).getExtendedBolusesStartingFromTimeToTime(any(), any(), any())
     }
 }

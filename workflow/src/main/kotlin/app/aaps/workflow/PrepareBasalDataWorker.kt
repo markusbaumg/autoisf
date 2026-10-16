@@ -7,6 +7,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.aaps.core.graph.data.LineGraphSeries
 import app.aaps.core.graph.data.ScaledDataPoint
+import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.profile.ProfileFunction
@@ -14,6 +15,7 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventIobCalculationProgress
 import app.aaps.core.interfaces.workflow.CalculationWorkflow
+import app.aaps.core.objects.extensions.convertedToAbsolute
 import app.aaps.core.objects.workflow.LoggingWorker
 import app.aaps.core.utils.receivers.DataWorkerStorage
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +28,7 @@ class PrepareBasalDataWorker(
 
     @Inject lateinit var dataWorkerStorage: DataWorkerStorage
     @Inject lateinit var profileFunction: ProfileFunction
+    @Inject lateinit var processedTbrEbData: ProcessedTbrEbData
     @Inject lateinit var rh: ResourceHelper
     @Inject lateinit var rxBus: RxBus
     private var ctx: Context = rh.getThemedCtx(context)
@@ -51,6 +54,13 @@ class PrepareBasalDataWorker(
         var lastTempBasal = 0.0
         val endTime = data.overviewData.endTime
         val fromTime = data.overviewData.fromTime
+        // One read of the temporary basals for the whole range instead of one "active at" query per
+        // minute (getBasalData). For a minute that no temporary basal covers, that query walks the whole
+        // timestamp index, so with months of history a pass took 7-60 s instead of well under a second,
+        // and it runs about twice per BG. Every minute below is looked up at the full minute
+        // getBasalData rounded it to, so the values drawn are the same.
+        val ads = data.iobCobCalculator.ads
+        val temporaryBasals = processedTbrEbData.getTempBasalsIncludingConvertedExtended(fromTime, ads.roundUpTime(endTime))
         var time = fromTime
         while (time < endTime) {
             if (isStopped) return Result.failure(workDataOf("Error" to "stopped"))
@@ -61,13 +71,15 @@ class PrepareBasalDataWorker(
                 time += 60 * 1000L
                 continue
             }
-            val basalData = data.iobCobCalculator.getBasalData(profile, time)
-            val baseBasalValue = basalData.basal
+            // What getBasalData returned, from the range read above
+            val minute = ads.roundUpTime(time)
+            val baseBasalValue = profile.getBasal(minute)
+            val tb = temporaryBasals.at(minute)
             var absoluteLineValue = baseBasalValue
             var tempBasalValue = 0.0
             var basal = 0.0
-            if (basalData.isTempBasalRunning) {
-                tempBasalValue = basalData.tempBasalAbsolute
+            if (tb != null) {
+                tempBasalValue = tb.convertedToAbsolute(minute, profile)
                 absoluteLineValue = tempBasalValue
                 if (tempBasalValue != lastTempBasal) {
                     tempBasalArray.add(ScaledDataPoint(time, lastTempBasal, data.overviewData.basalScale))
