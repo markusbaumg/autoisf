@@ -24,12 +24,41 @@ class HaloFaceLogicTest {
         assertThat(HaloFaceLogic.loopAgeMinutes(-1L, now)).isNull()
         assertThat(HaloFaceLogic.loopAgeMinutes(0L, now)).isNull()
         assertThat(HaloFaceLogic.loopAgeMinutes(now - 3 * 60_000L, now)).isEqualTo(3L)
-        assertThat(HaloFaceLogic.loopState(null)).isEqualTo(LoopState.STALE)
+        assertThat(HaloFaceLogic.loopState(null)).isEqualTo(LoopState.UNKNOWN)
         assertThat(HaloFaceLogic.loopState(0)).isEqualTo(LoopState.OK)
         assertThat(HaloFaceLogic.loopState(5)).isEqualTo(LoopState.OK)
         assertThat(HaloFaceLogic.loopState(6)).isEqualTo(LoopState.WARN)
         assertThat(HaloFaceLogic.loopState(14)).isEqualTo(LoopState.WARN)
         assertThat(HaloFaceLogic.loopState(15)).isEqualTo(LoopState.STALE)
+    }
+
+    @Test fun loopTimeMinusOneKeepsTheLastValidValue() {
+        val now = 10_000_000L
+        val valid = now - 2 * 60_000L
+        // -1 after a valid value ("no change needed" run, or phone restart): keep the remembered time, not red "--".
+        val kept = HaloFaceLogic.rememberedLoopTime(-1L, valid)
+        assertThat(kept).isEqualTo(valid)
+        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(kept, now))).isEqualTo(LoopState.OK)
+        assertThat(HaloFaceLogic.rememberedLoopTime(0L, valid)).isEqualTo(valid)
+    }
+
+    @Test fun loopTimeMinusOneWithoutHistoryIsUnknown() {
+        val now = 10_000_000L
+        val kept = HaloFaceLogic.rememberedLoopTime(-1L, 0L)
+        assertThat(kept).isEqualTo(0L)
+        assertThat(HaloFaceLogic.loopAgeMinutes(kept, now)).isNull()
+        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(kept, now))).isEqualTo(LoopState.UNKNOWN)
+        assertThat(HaloFaceLogic.rememberedLoopTime(-1L, -1L)).isEqualTo(0L)
+    }
+
+    @Test fun newerValidLoopTimeReplacesTheRememberedOne() {
+        val now = 10_000_000L
+        val old = now - 20 * 60_000L
+        val fresh = now - 60_000L
+        assertThat(HaloFaceLogic.rememberedLoopTime(fresh, old)).isEqualTo(fresh)
+        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(HaloFaceLogic.rememberedLoopTime(fresh, old), now))).isEqualTo(LoopState.OK)
+        // A valid value always wins, also an older one (e.g. after the phone's clock or data was reset).
+        assertThat(HaloFaceLogic.rememberedLoopTime(old, fresh)).isEqualTo(old)
     }
 
     @Test fun bgAgeLevels() {

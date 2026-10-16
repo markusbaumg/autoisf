@@ -39,7 +39,17 @@ object HaloFaceLogic {
 
     // ------------------------------------------------------------------ loop
 
-    enum class LoopState { OK, WARN, STALE }
+    /** UNKNOWN: no loop time was ever received (grey, not red: nothing is known to be wrong). */
+    enum class LoopState { OK, WARN, STALE, UNKNOWN }
+
+    /**
+     * Loop time to show: the received openApsStatus when it is valid (> 0), otherwise the remembered one.
+     *
+     * The phone sends -1 whenever loop.lastRun.lastTBREnact is 0, which happens on every loop run that enacts no new
+     * temp basal ("no change needed", the run resets it) and after a phone app restart until the first enact. The
+     * stock faces skip -1 and keep the last value; this does the same, and the caller persists the result.
+     */
+    fun rememberedLoopTime(received: Long, remembered: Long): Long = if (received > 0L) received else max(remembered, 0L)
 
     /**
      * Loop age in whole minutes, or null when there is no loop status (-1).
@@ -52,9 +62,9 @@ object HaloFaceLogic {
     fun loopAgeMinutes(openApsStatus: Long, now: Long): Long? =
         if (openApsStatus <= 0L) null else max(0L, (now - openApsStatus) / 60000L)
 
-    /** <= 5' OK, 6..14' WARN, > 14' or no data STALE (the stock faces turn red after 14'). */
+    /** <= 5' OK, 6..14' WARN, > 14' STALE (the stock faces turn red after 14'), never received UNKNOWN. */
     fun loopState(ageMinutes: Long?): LoopState = when {
-        ageMinutes == null -> LoopState.STALE
+        ageMinutes == null -> LoopState.UNKNOWN
         ageMinutes <= 5    -> LoopState.OK
         ageMinutes <= 14   -> LoopState.WARN
         else               -> LoopState.STALE
