@@ -218,6 +218,10 @@ class AppRepository @Inject internal constructor(
         database.temporaryTargetDao.getTemporaryTargetActiveAt(timestamp)
             .subscribeOn(Schedulers.io())
 
+    fun getTemporaryTargetsActiveBetweenTimeAndTime(from: Long, to: Long): Single<List<TemporaryTarget>> =
+        database.temporaryTargetDao.getTemporaryTargetActiveBetweenTimeAndTime(from, to)
+            .subscribeOn(Schedulers.io())
+
     fun getLastTempTargetId(): Long? =
         database.temporaryTargetDao.getLastId()
 
@@ -740,6 +744,10 @@ class AppRepository @Inject internal constructor(
 
     fun getExtendedBolusActiveAt(timestamp: Long): Maybe<ExtendedBolus> =
         database.extendedBolusDao.getExtendedBolusActiveAt(timestamp)
+            .subscribeOn(Schedulers.io())
+
+    fun getExtendedBolusesActiveBetweenTimeAndTime(from: Long, to: Long): Single<List<ExtendedBolus>> =
+        database.extendedBolusDao.getExtendedBolusActiveBetweenTimeAndTime(from, to)
             .subscribeOn(Schedulers.io())
 
     fun getExtendedBolusesStartingFromTime(timestamp: Long, ascending: Boolean): Single<List<ExtendedBolus>> =

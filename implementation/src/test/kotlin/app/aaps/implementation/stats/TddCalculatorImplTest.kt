@@ -429,7 +429,7 @@ class TddCalculatorImplTest : TestBase() {
         verify(processedTbrEbData, times(1)).getTempBasalsIncludingConvertedExtended(intervalStart, intervalEnd)
         // a pump that fakes temps: its extended boluses are inside the temporary basals already
         verify(persistenceLayer, never()).getExtendedBolusActiveAt(any())
-        verify(persistenceLayer, never()).getExtendedBolusesStartingFromTimeToTime(any(), any(), any())
+        verify(persistenceLayer, never()).getExtendedBolusesActiveBetweenTimeAndTime(any(), any())
     }
 
     /** Extended boluses of a pump that does not fake temps are read once and counted as bolus per step. */
@@ -442,15 +442,37 @@ class TddCalculatorImplTest : TestBase() {
         // 1.2 U/h running since before the interval for its first 20 min, then 2.4 U/h started inside for 10 min
         val running = EB(id = 1, timestamp = intervalStart - T.mins(10).msecs(), duration = T.mins(30).msecs(), amount = 0.6)
         val later = EB(id = 2, timestamp = intervalStart + T.mins(30).msecs(), duration = T.mins(10).msecs(), amount = 0.4)
-        whenever(persistenceLayer.getExtendedBolusActiveAt(intervalStart)).thenReturn(running)
-        whenever(persistenceLayer.getExtendedBolusesStartingFromTimeToTime(intervalStart, intervalEnd, true)).thenReturn(listOf(later))
+        // as the query returns them: latest started first
+        whenever(persistenceLayer.getExtendedBolusesActiveBetweenTimeAndTime(intervalStart, intervalEnd)).thenReturn(listOf(later, running))
 
         val tdd = tddCalculator.calculateInterval(intervalStart, intervalEnd, allowMissingData = false)
 
         // 4 steps at 1.2 U/h + 2 steps at 2.4 U/h, 5 minutes each
         assertThat(tdd?.bolusAmount).isWithin(0.0001).of(4 * 1.2 / 12 + 2 * 2.4 / 12)
         assertThat(tdd?.basalAmount).isWithin(0.0001).of(1.0)
-        verify(persistenceLayer, times(1)).getExtendedBolusActiveAt(any())
-        verify(persistenceLayer, times(1)).getExtendedBolusesStartingFromTimeToTime(any(), any(), any())
+        verify(persistenceLayer, never()).getExtendedBolusActiveAt(any())
+        verify(persistenceLayer, times(1)).getExtendedBolusesActiveBetweenTimeAndTime(any(), any())
+    }
+
+    /**
+     * Two valid extended boluses that overlap, a later started short one covering the start of the
+     * interval inside an older long one: after the short one ends the older one is still running and
+     * counts again, as the per-step "active at" query (latest started that is running) picks it.
+     */
+    @Test
+    fun `calculateInterval counts an older extended bolus again after a nested later one has ended`() {
+        val profile = mock<Profile>()
+        whenever(profile.getBasal(any())).thenReturn(1.0)
+        givenInterval(fakingTemps = false, profile = profile)
+        givenTemporaryBasals { null }
+        // 1.2 U/h from 20 min before the interval for 2 h; 2.4 U/h from 10 min before for 20 min
+        val outer = EB(id = 1, timestamp = intervalStart - T.mins(20).msecs(), duration = T.mins(120).msecs(), amount = 2.4)
+        val inner = EB(id = 2, timestamp = intervalStart - T.mins(10).msecs(), duration = T.mins(20).msecs(), amount = 0.8)
+        whenever(persistenceLayer.getExtendedBolusesActiveBetweenTimeAndTime(intervalStart, intervalEnd)).thenReturn(listOf(inner, outer))
+
+        val tdd = tddCalculator.calculateInterval(intervalStart, intervalEnd, allowMissingData = false)
+
+        // 2 steps at 2.4 U/h (inner), then 10 steps at 1.2 U/h (outer again), 5 minutes each
+        assertThat(tdd?.bolusAmount).isWithin(0.0001).of(2 * 2.4 / 12 + 10 * 1.2 / 12)
     }
 }

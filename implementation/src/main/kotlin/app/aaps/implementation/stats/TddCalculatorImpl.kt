@@ -24,7 +24,7 @@ import app.aaps.core.interfaces.stats.TddCalculator
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.MidnightTime
 import app.aaps.core.objects.extensions.convertedToAbsolute
-import app.aaps.implementation.db.latestRunningAt
+import app.aaps.core.utils.RunningAt
 import dagger.Reusable
 import java.time.Instant
 import java.time.ZoneId
@@ -121,17 +121,16 @@ class TddCalculatorImpl @Inject constructor(
         // usage on the Actions screen sums the whole cannula life (864 steps for 3 days) on every refresh,
         // and dynamic ISF sums 24 h on every loop run.
         //
-        // The two reads together give every entry that can be running in the interval: the one already
-        // running at the start, and every one that starts later. Each step then picks the latest started
-        // one that is still running, as the "active at" queries do, so every step gets the same entry and
-        // the sums are the same. The only case that differs is two valid entries that overlap, which the
-        // database should not hold.
+        // Every valid entry that runs at some time of the interval is read, including overlapping ones, and
+        // each step then picks the latest started one that is still running, as the "active at" queries
+        // do (ties: highest id), so every step gets the same entry and the sums are the same.
         val temporaryBasals = processedTbrEbData.getTempBasalsIncludingConvertedExtended(startTimeAligned, endTimeAligned)
         val extendedBoluses =
-            if (activePlugin.activePump.isFakingTempsByExtendedBoluses) emptyList()
-            else (listOfNotNull(persistenceLayer.getExtendedBolusActiveAt(startTimeAligned)) +
-                persistenceLayer.getExtendedBolusesStartingFromTimeToTime(startTimeAligned, endTimeAligned, true))
-                .distinctBy { it.id }
+            if (activePlugin.activePump.isFakingTempsByExtendedBoluses) null
+            else RunningAt(
+                persistenceLayer.getExtendedBolusesActiveBetweenTimeAndTime(startTimeAligned, endTimeAligned).sortedWith(compareBy({ it.timestamp }, { it.id })),
+                { it.timestamp }, { it.duration }
+            )
         val calculationStep = T.mins(5).msecs()
         for (t in startTimeAligned until endTimeAligned step calculationStep) {
 
@@ -143,7 +142,7 @@ class TddCalculatorImpl @Inject constructor(
             val absoluteRate = tbr?.convertedToAbsolute(t, profile) ?: profile.getBasal(t)
             tdd.basalAmount += absoluteRate / 60.0 * 5.0
 
-            val eb = extendedBoluses.latestRunningAt(t, { it.timestamp }, { it.duration })
+            val eb = extendedBoluses?.at(t)
             val absoluteEbRate = eb?.rate ?: 0.0
             tdd.bolusAmount += absoluteEbRate / 60.0 * 5.0
         }

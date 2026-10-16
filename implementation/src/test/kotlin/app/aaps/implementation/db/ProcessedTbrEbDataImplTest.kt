@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -21,7 +22,9 @@ import org.mockito.kotlin.whenever
  * per-time version does, which asks the database ("active at") every time.
  *
  * The fake database below answers like the real queries: "active at" is the latest started valid entry
- * with `timestamp <= t < timestamp + duration`, "starting from time to time" is `BETWEEN from AND to`.
+ * with `timestamp <= t < timestamp + duration` (of a tie the highest id, as a descending walk of the
+ * timestamp index gives it), "active between" is every entry with `timestamp <= to` and
+ * `timestamp + duration > from`, latest started first.
  */
 class ProcessedTbrEbDataImplTest {
 
@@ -48,17 +51,22 @@ class ProcessedTbrEbDataImplTest {
         whenever(profile.getBasal(any())).thenReturn(1.0)
         whenever(persistenceLayer.getTemporaryBasalActiveAt(any())).thenAnswer { invocation ->
             val t = invocation.getArgument<Long>(0)
-            temporaryBasals.filter { it.timestamp <= t && it.timestamp + it.duration > t }.maxByOrNull { it.timestamp }
+            temporaryBasals.filter { it.timestamp <= t && it.timestamp + it.duration > t }.maxWithOrNull(compareBy({ it.timestamp }, { it.id }))
         }
-        whenever(persistenceLayer.getTemporaryBasalsStartingFromTimeToTime(any(), any(), any())).thenAnswer { invocation ->
-            temporaryBasals.filter { it.timestamp in invocation.getArgument<Long>(0)..invocation.getArgument<Long>(1) }.sortedBy { it.timestamp }
+        whenever(persistenceLayer.getTemporaryBasalsActiveBetweenTimeAndTime(any(), any())).thenAnswer { invocation ->
+            val from = invocation.getArgument<Long>(0)
+            val to = invocation.getArgument<Long>(1)
+            // ORDER BY timestamp DESC, ties in no particular order (here: lowest id first)
+            temporaryBasals.filter { it.timestamp <= to && it.timestamp + it.duration > from }.sortedWith(compareByDescending<TB> { it.timestamp }.thenBy { it.id })
         }
         whenever(persistenceLayer.getExtendedBolusActiveAt(any())).thenAnswer { invocation ->
             val t = invocation.getArgument<Long>(0)
-            extendedBoluses.filter { it.timestamp <= t && it.timestamp + it.duration > t }.maxByOrNull { it.timestamp }
+            extendedBoluses.filter { it.timestamp <= t && it.timestamp + it.duration > t }.maxWithOrNull(compareBy({ it.timestamp }, { it.id }))
         }
-        whenever(persistenceLayer.getExtendedBolusesStartingFromTimeToTime(any(), any(), any())).thenAnswer { invocation ->
-            extendedBoluses.filter { it.timestamp in invocation.getArgument<Long>(0)..invocation.getArgument<Long>(1) }.sortedBy { it.timestamp }
+        whenever(persistenceLayer.getExtendedBolusesActiveBetweenTimeAndTime(any(), any())).thenAnswer { invocation ->
+            val from = invocation.getArgument<Long>(0)
+            val to = invocation.getArgument<Long>(1)
+            extendedBoluses.filter { it.timestamp <= to && it.timestamp + it.duration > from }.sortedWith(compareByDescending<EB> { it.timestamp }.thenBy { it.id })
         }
         sut = ProcessedTbrEbDataImpl(persistenceLayer, activePlugin, profileFunction)
     }
@@ -131,8 +139,50 @@ class ProcessedTbrEbDataImplTest {
         val range = sut.getTempBasalsIncludingConvertedExtended(0, 420 * MINUTE)
         for (minute in 0L..420L) range.at(minute * MINUTE)
 
-        verify(persistenceLayer, times(1)).getTemporaryBasalActiveAt(any())
-        verify(persistenceLayer, times(1)).getTemporaryBasalsStartingFromTimeToTime(any(), any(), any())
+        verify(persistenceLayer, never()).getTemporaryBasalActiveAt(any())
+        verify(persistenceLayer, times(1)).getTemporaryBasalsActiveBetweenTimeAndTime(any(), any())
+    }
+
+    /**
+     * Overlapping valid entries can be in the database (drivers that do not cut the running TBR, out of
+     * order pump history): a later started, shorter TBR covers the start of the range inside an older,
+     * longer one. After the short one ends the older one is still running and must be picked again.
+     */
+    @Test
+    fun `an older temporary basal still running after a nested later one covering the start has ended`() {
+        whenever(pump.isFakingTempsByExtendedBoluses).thenReturn(false)
+        temporaryBasals = listOf(
+            tb(1, startMinute = 0, minutes = 120, rate = 0.0),
+            tb(2, startMinute = 40, minutes = 30, rate = 200.0, absolute = false)
+        )
+
+        assertSameEveryMinute(50, 130)
+        assertThat(sut.getTempBasalsIncludingConvertedExtended(50 * MINUTE, 130 * MINUTE).at(80 * MINUTE)?.rate).isEqualTo(0.0)
+    }
+
+    @Test
+    fun `two temporary basals started at the same time as the range - the highest id wins, then the longer one`() {
+        whenever(pump.isFakingTempsByExtendedBoluses).thenReturn(false)
+        temporaryBasals = listOf(
+            tb(7, startMinute = 30, minutes = 20, rate = 2.0),
+            tb(3, startMinute = 30, minutes = 90, rate = 0.5)
+        )
+
+        assertSameEveryMinute(30, 130)
+        val range = sut.getTempBasalsIncludingConvertedExtended(30 * MINUTE, 130 * MINUTE)
+        assertThat(range.at(30 * MINUTE)?.rate).isEqualTo(2.0)
+        assertThat(range.at(60 * MINUTE)?.rate).isEqualTo(0.5)
+    }
+
+    @Test
+    fun `extended boluses nested and converted - the older one is picked again after the later one ends`() {
+        whenever(pump.isFakingTempsByExtendedBoluses).thenReturn(true)
+        extendedBoluses = listOf(
+            eb(5, startMinute = 0, minutes = 120, amount = 2.0),
+            eb(6, startMinute = 20, minutes = 30, amount = 1.0)
+        )
+
+        assertSameEveryMinute(30, 130)
     }
 
     private companion object {

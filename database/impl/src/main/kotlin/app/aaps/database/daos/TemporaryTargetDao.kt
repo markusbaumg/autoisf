@@ -34,6 +34,9 @@ internal interface TemporaryTargetDao : TraceableDao<TemporaryTarget> {
     @Query("SELECT * FROM $TABLE_TEMPORARY_TARGETS WHERE unlikely(timestamp <= :timestamp) AND unlikely((timestamp + duration) > :timestamp) AND likely(referenceId IS NULL) AND likely(isValid = 1) ORDER BY timestamp DESC LIMIT 1")
     fun getTemporaryTargetActiveAt(timestamp: Long): Maybe<TemporaryTarget>
 
+    @Query("SELECT * FROM $TABLE_TEMPORARY_TARGETS WHERE unlikely(timestamp <= :to) AND unlikely((timestamp + duration) > :from) AND likely(referenceId IS NULL) AND likely(isValid = 1) ORDER BY timestamp DESC")
+    fun getTemporaryTargetActiveBetweenTimeAndTime(from: Long, to: Long): Single<List<TemporaryTarget>>
+
     @Query("SELECT * FROM $TABLE_TEMPORARY_TARGETS WHERE unlikely(timestamp >= :timestamp) AND likely(isValid = 1) AND likely(referenceId IS NULL) ORDER BY timestamp ASC")
     fun getTemporaryTargetDataFromTime(timestamp: Long): Single<List<TemporaryTarget>>
 

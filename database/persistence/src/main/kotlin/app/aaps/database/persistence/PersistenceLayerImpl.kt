@@ -1297,6 +1297,9 @@ class PersistenceLayerImpl @Inject constructor(
     override fun getExtendedBolusActiveAt(timestamp: Long): EB? =
         repository.getExtendedBolusActiveAt(timestamp).blockingGet()?.fromDb()
 
+    override fun getExtendedBolusesActiveBetweenTimeAndTime(startTime: Long, endTime: Long): List<EB> =
+        repository.getExtendedBolusesActiveBetweenTimeAndTime(startTime, endTime).blockingGet().asSequence().map { it.fromDb() }.toList()
+
     override fun getOldestExtendedBolusRecord(): EB? =
         repository.getOldestExtendedBolusRecord().blockingGet()?.fromDb()
 
@@ -1410,6 +1413,9 @@ class PersistenceLayerImpl @Inject constructor(
     // TT
     override fun getTemporaryTargetActiveAt(timestamp: Long): TT? =
         repository.getTemporaryTargetActiveAt(timestamp).blockingGet()?.fromDb()
+
+    override fun getTemporaryTargetsActiveBetweenTimeAndTime(startTime: Long, endTime: Long): List<TT> =
+        repository.getTemporaryTargetsActiveBetweenTimeAndTime(startTime, endTime).blockingGet().asSequence().map { it.fromDb() }.toList()
 
     override fun getLastTemporaryTargetId(): Long? = repository.getLastTempTargetId()
     override fun getTemporaryTargetByNSId(nsId: String): TT? = repository.findTemporaryTargetByNSId(nsId)?.fromDb()

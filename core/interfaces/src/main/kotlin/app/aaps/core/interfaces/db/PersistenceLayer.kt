@@ -931,6 +931,16 @@ interface PersistenceLayer {
     fun getExtendedBolusActiveAt(timestamp: Long): EB?
 
     /**
+     * Get every extended bolus running at some time in the interval: `timestamp <= endTime` and
+     * `timestamp + duration > startTime`, valid ones only
+     *
+     * @param startTime from
+     * @param endTime to
+     * @return List of extended boluses, latest started first
+     */
+    fun getExtendedBolusesActiveBetweenTimeAndTime(startTime: Long, endTime: Long): List<EB>
+
+    /**
      * Get latest extended bolus
      *
      * @return extended bolus or null if none in db
@@ -1041,6 +1051,16 @@ interface PersistenceLayer {
      * @return running temporary target or null if none is running
      */
     fun getTemporaryTargetActiveAt(timestamp: Long): TT?
+
+    /**
+     * Get every temporary target running at some time in the interval: `timestamp <= endTime` and
+     * `timestamp + duration > startTime`, valid ones only
+     *
+     * @param startTime from
+     * @param endTime to
+     * @return List of temporary targets, latest started first
+     */
+    fun getTemporaryTargetsActiveBetweenTimeAndTime(startTime: Long, endTime: Long): List<TT>
 
     /**
      *  Get highest id in database
