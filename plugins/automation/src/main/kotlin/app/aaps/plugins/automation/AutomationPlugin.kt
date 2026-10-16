@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
+import androidx.annotation.VisibleForTesting
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
@@ -146,6 +147,10 @@ class AutomationPlugin @Inject constructor(
 
     companion object {
 
+        /** Network fields any automation trigger reads (TriggerWifiSsid) plus mobile connectivity. */
+        internal fun sameNetworkState(a: EventNetworkChange, b: EventNetworkChange): Boolean =
+            a.wifiConnected == b.wifiConnected && a.ssid == b.ssid && a.mobileConnected == b.mobileConnected
+
         const val EMPTY_EVENT =
             "{\"title\":\"Low\",\"enabled\":true,\"trigger\":\"{\\\"type\\\":\\\"TriggerConnector\\\",\\\"data\\\":{\\\"connectorType\\\":\\\"AND\\\",\\\"triggerList\\\":[\\\"{\\\\\\\"type\\\\\\\":\\\\\\\"TriggerBg\\\\\\\",\\\\\\\"data\\\\\\\":{\\\\\\\"bg\\\\\\\":4,\\\\\\\"comparator\\\\\\\":\\\\\\\"IS_LESSER\\\\\\\",\\\\\\\"units\\\\\\\":\\\\\\\"mmol\\\\\\\"}}\\\",\\\"{\\\\\\\"type\\\\\\\":\\\\\\\"TriggerDelta\\\\\\\",\\\\\\\"data\\\\\\\":{\\\\\\\"value\\\\\\\":-0.1,\\\\\\\"units\\\\\\\":\\\\\\\"mmol\\\\\\\",\\\\\\\"deltaType\\\\\\\":\\\\\\\"DELTA\\\\\\\",\\\\\\\"comparator\\\\\\\":\\\\\\\"IS_LESSER\\\\\\\"}}\\\"]}}\",\"actions\":[\"{\\\"type\\\":\\\"ActionStartTempTarget\\\",\\\"data\\\":{\\\"value\\\":8,\\\"units\\\":\\\"mmol\\\",\\\"durationInMinutes\\\":60}}\"]}"
     }
@@ -187,12 +192,19 @@ class AutomationPlugin @Inject constructor(
                            aapsLogger.debug(LTag.AUTOMATION, "Grabbed location: ${it.location.latitude} ${it.location.longitude} Provider: ${it.location.provider}")
                            processActions()
                        }, fabricPrivacy::logException)
+        // ACTION_BATTERY_CHANGED fires on every level/temperature/voltage change while charging,
+        // and ReceiverDelegate re-broadcasts the last state. No trigger reads the charging state,
+        // so run only when charging starts or stops (the first event always passes).
         disposable += rxBus
             .toObservable(EventChargingState::class.java)
+            .distinctUntilChanged { a, b -> a.isCharging == b.isCharging }
             .observeOn(aapsSchedulers.io)
             .subscribe({ processActions() }, fabricPrivacy::logException)
+        // Only TriggerWifiSsid reads the network state (wifiConnected + ssid). Duplicate broadcasts
+        // with the same state are dropped; any change of connection type or SSID still runs.
         disposable += rxBus
             .toObservable(EventNetworkChange::class.java)
+            .distinctUntilChanged { a, b -> sameNetworkState(a, b) }
             .observeOn(aapsSchedulers.io)
             .subscribe({ processActions() }, fabricPrivacy::logException)
         disposable += rxBus
@@ -214,7 +226,15 @@ class AutomationPlugin @Inject constructor(
         super.onStop()
     }
 
-    private fun storeToSP() {
+    /** Writes the rules only when their JSON differs from what is stored (reading is in-memory). */
+    @VisibleForTesting
+    internal fun storeToSP() {
+        val json = eventsToJson()
+        if (json == preferences.get(AutomationStringKey.AutomationEvents)) return
+        preferences.put(AutomationStringKey.AutomationEvents, json)
+    }
+
+    private fun eventsToJson(): String {
         val array = JSONArray()
         val iterator = synchronized(this) { automationEvents.toMutableList().iterator() }
         try {
@@ -225,8 +245,7 @@ class AutomationPlugin @Inject constructor(
         } catch (e: JSONException) {
             e.printStackTrace()
         }
-
-        preferences.put(AutomationStringKey.AutomationEvents, array.toString())
+        return array.toString()
     }
 
     @Synchronized
@@ -303,7 +322,8 @@ class AutomationPlugin @Inject constructor(
          */
         btConnects.clear()
 
-        storeToSP() // save last run time
+        // lastRun is not serialized; only persist when a run changed the stored rules (e.g. autoRemove)
+        storeToSP()
     }
 
     override fun processEvent(someEvent: AutomationEvent) {
