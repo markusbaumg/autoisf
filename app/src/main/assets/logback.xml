@@ -1,8 +1,15 @@
 <configuration>
     <!-- Create a file appender for a log in the application's data directory -->
     <property name="EXT_FILES_DIR" scope="context" value="/storage/emulated/0/Documents/aapsLogs" />
+    <!-- AndroidAPS.log, or AndroidAPS_1.log .. _9 when this process can not write the old one (it
+     belongs to an earlier install or to the app before its data was cleared), so file logging never
+     stops silently. See WritableLogFileDefiner. -->
+    <define name="ACTIVE_LOG_FILE" class="app.aaps.implementation.logging.WritableLogFileDefiner">
+        <directory>${EXT_FILES_DIR}</directory>
+        <fileName>AndroidAPS.log</fileName>
+    </define>
     <appender name="file" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>${EXT_FILES_DIR}/AndroidAPS.log</file>
+        <file>${ACTIVE_LOG_FILE}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <!-- hourly rollover. Make sure the path matches the one in the file element or else
              the rollover logs are placed in the working directory. -->
