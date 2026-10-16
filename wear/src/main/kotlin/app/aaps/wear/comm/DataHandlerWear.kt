@@ -285,15 +285,15 @@ class DataHandlerWear @Inject constructor(
             .subscribe {
                 aapsLogger.debug(LTag.WEAR, "Loop states received from ${it.sourceNodeId}")
                 val serialized = it.serialize()
-                val stored = sp.getString(R.string.key_loop_states_data, "")
-                if (serialized != stored) {
-                    // The list is stored whenever it differs: its timeStamp is the phone's authorization
-                    // token for the next loop state change and must be the latest one. The tile only
-                    // shows the states, so it is rebuilt only when those changed (the phone issues a new
-                    // token with every resend, i.e. several times per loop run).
+                if (serialized != sp.getString(R.string.key_loop_states_data, "")) {
+                    // Stored and the tile rebuilt whenever the list differs, timeStamp included: the
+                    // timeStamp is the phone's authorization token for the next loop state change and the
+                    // tile bakes it into its button actions when it is built (LoopStateSource), so a tile
+                    // built from an older list would be refused by the phone. The phone sends a new token
+                    // with every resend, now once per loop run; SysUI only rebuilds the tile if it is in
+                    // the carousel.
                     sp.putString(R.string.key_loop_states_data, serialized)
-                    if (loopStatesChanged(stored, it))
-                        TileService.getUpdater(context).requestUpdate(LoopStateTileService::class.java)
+                    TileService.getUpdater(context).requestUpdate(LoopStateTileService::class.java)
                 }
             }
         disposable += rxBus
@@ -343,24 +343,6 @@ class DataHandlerWear @Inject constructor(
                     }
                 }
             }
-    }
-
-    companion object {
-
-        /**
-         * Whether the loop states of [received] differ from those in the [stored] serialized
-         * [EventData.LoopStatesList], ignoring its timeStamp (the phone's authorization token, renewed
-         * with every send). Anything that is not a stored list counts as changed.
-         */
-        fun loopStatesChanged(stored: String, received: EventData.LoopStatesList): Boolean {
-            if (stored.isEmpty()) return true
-            val previous = try {
-                EventData.deserialize(stored) as? EventData.LoopStatesList
-            } catch (_: Exception) {
-                null
-            } ?: return true
-            return previous.states != received.states
-        }
     }
 
     private fun handleBolusProgress(bolusProgress: EventData.BolusProgress) {
