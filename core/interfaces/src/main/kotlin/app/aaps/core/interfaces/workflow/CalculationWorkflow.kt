@@ -17,14 +17,15 @@ interface CalculationWorkflow {
         const val PASS = "pass"
     }
 
+    /** In the order the calculation chain runs them: IOB/COB (and the loop) first, then the graph. */
     enum class ProgressData(val pass: Int, val percentOfTotal: Int) {
-        DRAW_BG(0, 1),
-        PREPARE_TREATMENTS_DATA(1, 2),
-        PREPARE_BASAL_DATA(2, 6),
-        PREPARE_TEMPORARY_TARGET_DATA(3, 5),
-        PREPARE_RUNNING_MODE_DATA(4, 1),
-        DRAW_TT(5, 1),
-        IOB_COB_OREF(6, 77),
+        IOB_COB_OREF(0, 77),
+        DRAW_BG(1, 1),
+        PREPARE_TREATMENTS_DATA(2, 2),
+        PREPARE_BASAL_DATA(3, 6),
+        PREPARE_TEMPORARY_TARGET_DATA(4, 5),
+        PREPARE_RUNNING_MODE_DATA(5, 1),
+        DRAW_TT(6, 1),
         PREPARE_IOB_AUTOSENS_DATA(7, 5),
         DRAW_IOB(8, 1),
         DRAW_FINAL(9, 1);
@@ -41,7 +42,7 @@ interface CalculationWorkflow {
 
     /**
      * True while any work of [job] is enqueued, blocked or running. For [MAIN_CALCULATION] this
-     * includes the final stage (InvokeLoopWorker, which runs the loop) of the chain.
+     * includes the loop stage (InvokeLoopWorker) and the graph workers after it.
      */
     fun isCalculationRunning(job: String): Boolean
 
