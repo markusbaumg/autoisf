@@ -26,6 +26,7 @@ import androidx.wear.watchface.WatchFace
 import androidx.wear.watchface.WatchFaceService
 import androidx.wear.watchface.WatchFaceType
 import androidx.wear.watchface.WatchState
+import androidx.wear.watchface.style.WatchFaceLayer
 import androidx.wear.watchface.style.CurrentUserStyleRepository
 import androidx.wear.watchface.TapEvent
 import androidx.wear.watchface.ComplicationSlot
@@ -51,6 +52,12 @@ abstract class WatchFace : WatchFaceService() {
     protected var isAmbient = false
     protected var lowBitAmbient = false
     protected var burnInProtection = false
+
+    /**
+     * False while the renderer draws for an editor / complication preview or screenshot
+     * (renderParameters other than the default interactive ones). Faces can skip interactive-only elements then.
+     */
+    protected var isLiveRender = true
     protected var watchShape = WatchShape.UNKNOWN
     protected var layoutComplete = false
 
@@ -292,6 +299,8 @@ abstract class WatchFace : WatchFaceService() {
                 onWatchModeChanged(currentWatchMode)
             }
 
+            isLiveRender = renderParameters.highlightLayer == null &&
+                renderParameters.watchFaceLayers == WatchFaceLayer.ALL_WATCH_FACE_LAYERS
             lowBitAmbient = wState.hasLowBitAmbient
             burnInProtection = wState.hasBurnInProtection
 

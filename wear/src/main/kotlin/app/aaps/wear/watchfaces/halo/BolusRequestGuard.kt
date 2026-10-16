@@ -11,21 +11,40 @@ package app.aaps.wear.watchfaces.halo
  * - the phone not reachable (the data layer silently drops messages without a node),
  * - no data from the phone for longer than [freshMs] (connection not really alive).
  *
+ * The time of the last sent request lives in [store]; the face backs it with SharedPreferences, so the pending
+ * window survives a recreated watch face service (re-selection, process restart, a new engine).
+ *
  * Pure logic with an injected clock, unit tested.
  */
 class BolusRequestGuard(
     private val clock: () -> Long,
     val pendingMs: Long = PENDING_MS,
-    val freshMs: Long = DATA_FRESH_MS
+    val freshMs: Long = DATA_FRESH_MS,
+    private val store: LastSentStore = MemoryStore()
 ) {
+
+    /** Where the time of the last sent request is kept (0 = never). */
+    interface LastSentStore {
+
+        var lastSentAt: Long
+    }
+
+    class MemoryStore : LastSentStore {
+
+        override var lastSentAt: Long = 0L
+    }
 
     enum class Verdict { SEND, REFUSED_WEAR_CONTROL, REFUSED_AMOUNT, REFUSED_MAX_BOLUS, REFUSED_PENDING, REFUSED_NO_PHONE, REFUSED_STALE_DATA }
 
-    private var lastSentAt: Long? = null
-
-    /** True while a sent request may still be waiting for its confirmation. */
+    /**
+     * True while a sent request may still be waiting for its confirmation. A stored time in the future
+     * (clock set back) also counts while it is within [pendingMs].
+     */
     val isPending: Boolean
-        get() = lastSentAt?.let { clock() - it in 0 until pendingMs } ?: false
+        get() {
+            val sentAt = store.lastSentAt
+            return sentAt > 0L && kotlin.math.abs(clock() - sentAt) < pendingMs
+        }
 
     /**
      * @param amount requested insulin (U)
@@ -49,7 +68,7 @@ class BolusRequestGuard(
 
     /** Evaluate and, when the verdict is SEND, record the request as pending. */
     fun checkAndRecord(amount: Double, maxBolus: Double, wearControl: Boolean, phoneReachable: Boolean, lastPhoneDataAt: Long): Verdict =
-        evaluate(amount, maxBolus, wearControl, phoneReachable, lastPhoneDataAt).also { if (it == Verdict.SEND) lastSentAt = clock() }
+        evaluate(amount, maxBolus, wearControl, phoneReachable, lastPhoneDataAt).also { if (it == Verdict.SEND) store.lastSentAt = clock() }
 
     companion object {
 

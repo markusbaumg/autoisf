@@ -66,15 +66,18 @@ import kotlin.math.sin
 
 /**
  * "AAPS Halo": a calm, Canvas-drawn watch face. Hero BG in its range colour, one gradient ring (BG on a
- * 2.2..16.7 mmol/L scale with the target band, a knob and a 3 h trend tail), time with a German date, arrow,
+ * 2.2..16.7 mmol/L scale with the target band, a knob and a 30 min trend tail), time with a German date, arrow,
  * delta and BG age, an IOB arc with IOB and COB, a 3-state loop pill and one secondary line (temp target + basal).
  *
  * Optional "+X U" ball (left, off by default) sends a bolus REQUEST on double-tap, exactly like BolusActivity
  * (ActionBolusPreCheck). The phone checks everything and the watch shows the standard confirmation; nothing is
- * delivered without confirming there. Interactive mode only, never in ambient or in the picker preview.
+ * delivered without confirming there. Interactive mode only: never in ambient, never in a headless (picker)
+ * instance and never in a non-live render (screenshot / highlight layer). An editor preview drawn through the live
+ * instance with default render parameters cannot be told apart; the face has no complications or styles, so the
+ * system has no reason to open its editor.
  *
- * Drawn on a 450x450 design grid scaled to the screen. Nothing is allocated per frame: strings, gradients and
- * vibration effects are cached and only rebuilt when their input changes.
+ * Drawn on a 450x450 design grid scaled to the screen. The draw path does not allocate: strings, parsed values,
+ * gradients, font metrics and vibration effects are cached and only rebuilt when their input changes.
  */
 @SuppressLint("Deprecated")
 class HaloWatchface : WatchFace() {
@@ -96,14 +99,29 @@ class HaloWatchface : WatchFace() {
     @Volatile private var headless = true
 
     private val gesture = BolusTapGesture(clock = { System.currentTimeMillis() })
-    private val guard = BolusRequestGuard(clock = { System.currentTimeMillis() })
+    private val guard = BolusRequestGuard(
+        clock = { System.currentTimeMillis() },
+        // Persisted, so a recreated service still knows about a request whose confirmation may be open.
+        store = object : BolusRequestGuard.LastSentStore {
+            override var lastSentAt: Long
+                get() = sp.getLong(KEY_LAST_SENT_AT, 0L)
+                set(value) = sp.putLong(KEY_LAST_SENT_AT, value)
+        }
+    )
     private val disarmRunnable = Runnable { if (gesture.expireIfDue()) invalidate() }
 
     // Phone reachability (the data layer drops messages silently without a reachable node).
     private val capabilityClient by lazy { Wearable.getCapabilityClient(this) }
     @Volatile private var phoneReachable = false
-    private val capabilityListener = CapabilityClient.OnCapabilityChangedListener { info -> phoneReachable = info.nodes.isNotEmpty() }
+    /** Time the last FILTER_REACHABLE query answered; a SEND needs an answer newer than its first tap. */
+    @Volatile private var phoneCheckedAt = 0L
+    private var armedAt = 0L
+    // info.nodes is not filtered by reachability: re-query with FILTER_REACHABLE instead of trusting it.
+    private val capabilityListener = CapabilityClient.OnCapabilityChangedListener { refreshPhoneReachable() }
     private var capabilityListening = false
+
+    /** Side effects of the active instance (last-selected pref, resend, phone tracking) run once per service. */
+    private var activeSetupDone = false
 
     // Design-grid scale (450 px) and the last drawn state, for tap handling.
     private var scale = 1f
@@ -145,6 +163,10 @@ class HaloWatchface : WatchFace() {
     private var secondaryStr = ""
     private var amountKey = Double.NaN
     private var amountStr = ""
+    private var drawnAmount = Double.NaN
+    private var iobSrc: EventData.Status? = null
+    private var iobFrac = 0f
+    private val fm = Paint.FontMetrics()
     private var backdropColour = 0
     private var backdropShader: RadialGradient? = null
     private var sweepKey = Int.MIN_VALUE
@@ -165,6 +187,7 @@ class HaloWatchface : WatchFace() {
             .toObservable(EventWearPreferenceChange::class.java)
             .observeOn(aapsSchedulers.main)
             .subscribe {
+                drawnAmount = Double.NaN
                 if (!bolusButtonEnabled() && gesture.reset()) handler.removeCallbacks(disarmRunnable)
                 invalidate()
             }
@@ -181,8 +204,13 @@ class HaloWatchface : WatchFace() {
         currentUserStyleRepository: CurrentUserStyleRepository
     ): androidx.wear.watchface.WatchFace {
         headless = watchState.isHeadless
-        if (!headless) {
-            // Only the real, active instance becomes the "last selected" face and asks the phone for data.
+        if (!headless && !activeSetupDone) {
+            // Only the real, active instance becomes the "last selected" face and asks the phone for data,
+            // once per service even if the system opens a second (non-headless) engine.
+            activeSetupDone = true
+            // Settings of the iteration-1 "Kusi" face; the Halo face uses halo_* keys (ball starts off again).
+            sp.remove(OLD_KEY_DOUBLE_TAP)
+            sp.remove(OLD_KEY_AMOUNT)
             sp.putInt(R.string.key_last_selected_watchface, SelectedWatchFace.HALO.ordinal)
             rxBus.send(EventUpdateSelectedWatchface())
             rxBus.send(EventWearToMobile(ActionResendData("HaloWatchface::createWatchFace")))
@@ -227,8 +255,14 @@ class HaloWatchface : WatchFace() {
     private fun refreshPhoneReachable() {
         try {
             capabilityClient.getCapability(DataLayerListenerServiceWear.PHONE_CAPABILITY, CapabilityClient.FILTER_REACHABLE)
-                .addOnSuccessListener { phoneReachable = it.nodes.isNotEmpty() }
-                .addOnFailureListener { phoneReachable = false }
+                .addOnSuccessListener {
+                    phoneReachable = it.nodes.isNotEmpty()
+                    phoneCheckedAt = System.currentTimeMillis()
+                }
+                .addOnFailureListener {
+                    phoneReachable = false
+                    phoneCheckedAt = System.currentTimeMillis()
+                }
         } catch (e: Exception) {
             phoneReachable = false
             aapsLogger.error(LTag.WEAR, "HaloWatchface getCapability failed", e)
@@ -243,7 +277,7 @@ class HaloWatchface : WatchFace() {
     private fun maxBolus(): Double = sp.getDouble(R.string.key_treatments_safety_max_bolus, 3.0)
 
     /** The ball exists only with the setting on, Wear control allowed, interactive, and not in a preview. */
-    private fun bolusButtonEnabled(): Boolean = !headless && !isAmbient && bolusButtonPref() && wearControl()
+    private fun bolusButtonEnabled(): Boolean = !headless && isLiveRender && !isAmbient && bolusButtonPref() && wearControl()
 
     // ---------------------------------------------------------------- drawing
 
@@ -383,8 +417,15 @@ class HaloWatchface : WatchFace() {
         val level = HaloFaceLogic.bgAgeLevel(ageMin)
 
         canvas.save()
-        if (burnInProtection) canvas.translate(HaloFaceLogic.burnInOffsetX(latestTime.minute), HaloFaceLogic.burnInOffsetY(latestTime.minute))
+        try {
+            if (burnInProtection) canvas.translate(HaloFaceLogic.burnInOffsetX(latestTime.minute), HaloFaceLogic.burnInOffsetY(latestTime.minute))
+            drawAmbientContent(canvas, now, lowBit, aa, ageMin, level)
+        } finally {
+            canvas.restore()
+        }
+    }
 
+    private fun drawAmbientContent(canvas: Canvas, now: Long, lowBit: Boolean, aa: Boolean, ageMin: Long?, level: AgeLevel) {
         val ring = arcRect(RING_R)
         resetPaint(aa).apply { style = Paint.Style.STROKE; strokeWidth = 2f; color = amb(0xFF464646.toInt(), lowBit) }
         canvas.drawArc(ring, HaloFaceLogic.RING_START, HaloFaceLogic.RING_SWEEP, false, p)
@@ -407,17 +448,22 @@ class HaloWatchface : WatchFace() {
         drawIobCob(canvas, ambient = true)
         drawLoopPill(canvas, now, ambient = true)
         if (st.tempTargetLevel == 2) drawText(canvas, secondaryLine(), CX, 407f, 14f, tf400, amb(0xFF6E6E6E.toInt(), lowBit), aa)
-        canvas.restore()
     }
 
     private fun amb(colour: Int, lowBit: Boolean): Int = if (lowBit) Color.WHITE else colour
 
+    /**
+     * Short trend tail: one arc from the oldest reading of the last [TAIL_WINDOW_MS] (30 min) to the current BG,
+     * fading in towards the knob. It shows the same recent direction as the arrow and delta; it is deliberately
+     * not a history trace (a 3 h start-to-now arc hid swings like 100 -> 220 -> 100).
+     */
     private fun drawTrendTail(canvas: Canvas, now: Long, bgAngle: Float) {
-        // Oldest reading of the last 3 h, without building a filtered list.
-        val from = now - 3 * 60 * 60 * 1000L
+        val from = now - TAIL_WINDOW_MS
         var firstTs = Long.MAX_VALUE
         var firstSgv = 0.0
-        for (e in data.graphData.entries) {
+        val entries = data.graphData.entries
+        for (i in 0 until entries.size) {
+            val e = entries[i]
             if (e.timeStamp >= from && e.sgv > 0 && e.timeStamp < firstTs) {
                 firstTs = e.timeStamp
                 firstSgv = e.sgv
@@ -514,7 +560,7 @@ class HaloWatchface : WatchFace() {
         val lowBit = ambient && lowBitAmbient
         val aa = !lowBit
         val r = arcRect(207f)
-        val fraction = HaloFaceLogic.iobFraction(HaloFaceLogic.parseIob(st.iobSum))
+        val fraction = iobFraction()
         resetPaint(aa).apply {
             style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
             strokeWidth = if (ambient) 1f else 5f
@@ -605,7 +651,7 @@ class HaloWatchface : WatchFace() {
         canvas.drawCircle(BTN_X, BTN_Y, BTN_R, p)
         resetPaint().apply { style = Paint.Style.STROKE; strokeWidth = 2.5f; color = if (armed) 0xFFFFC85A.toInt() else INDIGO }
         canvas.drawCircle(BTN_X, BTN_Y, BTN_R, p)
-        drawText(canvas, amountString(), BTN_X, BTN_Y - 5f, 14f, tf700, if (armed) 0xFFFFE6AA.toInt() else 0xFFF0F0FF.toInt())
+        drawText(canvas, amountString(drawnBolusAmount()), BTN_X, BTN_Y - 5f, 14f, tf700, if (armed) 0xFFFFE6AA.toInt() else 0xFFF0F0FF.toInt())
         if (armed) drawFitText(canvas, againLabel, BTN_X, BTN_Y + 11f, 10f, tf600, 0xFFFFC85A.toInt(), maxWidth = 42f)
         else drawFitText(canvas, subLabel, BTN_X, BTN_Y + 11f, 10f, tf600, 0xFF96A0DC.toInt(), maxWidth = 42f)
     }
@@ -697,8 +743,22 @@ class HaloWatchface : WatchFace() {
         return secondaryStr
     }
 
-    private fun amountString(): String {
-        val amount = bolusAmount()
+    private fun iobFraction(): Float {
+        val s = st
+        if (s !== iobSrc) {
+            iobSrc = s
+            iobFrac = HaloFaceLogic.iobFraction(HaloFaceLogic.parseIob(s.iobSum))
+        }
+        return iobFrac
+    }
+
+    /** Amount shown on the ball, re-read only after a preference change. A tap always reads the preference itself. */
+    private fun drawnBolusAmount(): Double {
+        if (drawnAmount.isNaN()) drawnAmount = bolusAmount()
+        return drawnAmount
+    }
+
+    private fun amountString(amount: Double): String {
         if (amount != amountKey) {
             amountKey = amount
             amountStr = String.format(Locale.US, "+%.1f", amount)
@@ -709,7 +769,7 @@ class HaloWatchface : WatchFace() {
     // ---------------------------------------------------------------- text helpers
 
     private fun baselineFor(centreY: Float): Float {
-        val fm = text.fontMetrics
+        text.getFontMetrics(fm)
         return centreY - (fm.ascent + fm.descent) / 2f
     }
 
@@ -751,6 +811,9 @@ class HaloWatchface : WatchFace() {
         when (gesture.onTap(inside, enabled)) {
             BolusTapGesture.Decision.ARM    -> {
                 handler.removeCallbacks(disarmRunnable)
+                // Fresh FILTER_REACHABLE query; its answer must arrive before the second tap (see SEND).
+                // The quick check below still uses the cached value, so an obviously lost phone refuses at once.
+                armedAt = System.currentTimeMillis()
                 refreshPhoneReachable()
                 val verdict = evaluateRequest()
                 if (verdict != BolusRequestGuard.Verdict.SEND) {
@@ -768,7 +831,9 @@ class HaloWatchface : WatchFace() {
             BolusTapGesture.Decision.SEND   -> {
                 handler.removeCallbacks(disarmRunnable)
                 val amount = bolusAmount()
-                val verdict = guard.checkAndRecord(amount, maxBolus(), wearControl(), phoneReachable, data.lastUpdateTimestamp)
+                // Only a reachability answer that arrived after the first tap counts (the query is asynchronous).
+                val phoneOk = phoneReachable && phoneCheckedAt >= armedAt
+                val verdict = guard.checkAndRecord(amount, maxBolus(), wearControl(), phoneOk, data.lastUpdateTimestamp)
                 if (verdict == BolusRequestGuard.Verdict.SEND) {
                     aapsLogger.info(LTag.WEAR, "HaloWatchface: double-tap bolus request $amount U")
                     // Exactly as BolusActivity: the phone checks and the watch shows the confirmation screen.
@@ -846,6 +911,10 @@ class HaloWatchface : WatchFace() {
         private const val CY = 225f
         private const val RING_R = 133.5f       // ring stroke 13: 127 .. 140
         private const val TAIL_R = 120f         // trend tail inside the ring
+        private const val TAIL_WINDOW_MS = 30 * 60 * 1000L
+        private const val KEY_LAST_SENT_AT = "halo_bolus_last_sent_at"
+        private const val OLD_KEY_DOUBLE_TAP = "kusi_bolus_double_tap"
+        private const val OLD_KEY_AMOUNT = "kusi_bolus_amount"
         private const val TIME_Y = 138f
         private const val DATE_Y = 168f
         private const val HERO_Y = 229f

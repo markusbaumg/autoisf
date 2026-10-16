@@ -66,4 +66,24 @@ class BolusRequestGuardTest {
         assertThat(guard.isPending).isFalse()
         assertThat(guard.evaluate(0.5, 3.0, true, true, now)).isEqualTo(Verdict.SEND)
     }
+
+    @Test fun pendingWindowSurvivesANewGuardWithTheSameStore() {
+        val store = BolusRequestGuard.MemoryStore()
+        val first = BolusRequestGuard(clock = { now }, store = store)
+        assertThat(first.checkAndRecord(0.5, 3.0, true, true, now)).isEqualTo(Verdict.SEND)
+        now += 5_000
+        // e.g. the watch face service was recreated while the confirmation is open
+        val second = BolusRequestGuard(clock = { now }, store = store)
+        assertThat(second.checkAndRecord(0.5, 3.0, true, true, now)).isEqualTo(Verdict.REFUSED_PENDING)
+        now += BolusRequestGuard.PENDING_MS
+        assertThat(second.checkAndRecord(0.5, 3.0, true, true, now)).isEqualTo(Verdict.SEND)
+    }
+
+    @Test fun clockSetBackKeepsThePendingWindow() {
+        assertThat(check()).isEqualTo(Verdict.SEND)
+        now -= 10_000
+        assertThat(check()).isEqualTo(Verdict.REFUSED_PENDING)
+        now -= BolusRequestGuard.PENDING_MS
+        assertThat(check()).isEqualTo(Verdict.SEND)
+    }
 }
