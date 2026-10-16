@@ -28,6 +28,7 @@ class PreferenceMenuActivity : MenuListActivity() {
                 SelectedWatchFace.DIGITAL -> add(MenuItem(R.drawable.watchface_digitalstyle, getString(R.string.label_watchface_digital_style)))
                 SelectedWatchFace.CIRCLE -> add(MenuItem(R.drawable.watchface_circle, getString(R.string.label_watchface_circle)))
                 SelectedWatchFace.KUSI -> add(MenuItem(R.drawable.watchface_kusi, getString(R.string.label_watchface_kusi)))
+                SelectedWatchFace.ORBIT -> add(MenuItem(R.drawable.watchface_orbit, getString(R.string.label_watchface_orbit)))
             }
         }
 
@@ -56,13 +57,15 @@ class PreferenceMenuActivity : MenuListActivity() {
             getString(R.string.label_watchface_custom),
             getString(R.string.label_watchface_digital_style),
             getString(R.string.label_watchface_circle),
-            getString(R.string.label_watchface_kusi)       -> startActivity(Intent(this, WatchfaceConfigurationActivity::class.java).apply {
+            getString(R.string.label_watchface_kusi),
+            getString(R.string.label_watchface_orbit)      -> startActivity(Intent(this, WatchfaceConfigurationActivity::class.java).apply {
                 when (lastWatchface) {
                     SelectedWatchFace.NONE    -> Unit
                     SelectedWatchFace.CUSTOM  -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_custom)
                     SelectedWatchFace.DIGITAL -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_digitalstyle)
                     SelectedWatchFace.CIRCLE  -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_circle)
                     SelectedWatchFace.KUSI    -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_kusi)
+                    SelectedWatchFace.ORBIT   -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_orbit)
                 }
             })
         }

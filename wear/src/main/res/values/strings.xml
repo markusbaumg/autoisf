@@ -6,6 +6,7 @@
     <string name="label_watchface_digital_style">AAPS(DigitalStyle)</string>
     <string name="label_watchface_custom">AAPS(Custom)</string>
     <string name="label_watchface_kusi">AAPS(Kusi)</string>
+    <string name="label_watchface_orbit" translatable="false">AAPS Orbit</string>
     <string name="label_actions_tile">AAPS(Actions)</string>
     <string name="label_temp_target_tile">AAPS(Temp Target)</string>
     <string name="label_quick_wizard_tile">AAPS(Quick Wizard)</string>
@@ -243,6 +244,23 @@
     <string name="pref_kusi_bolus_amount">Bolus request amount</string>
     <string name="kusi_bolus_sub">U 2×</string>
     <string name="kusi_bolus_again">again</string>
+    <string name="key_orbit_bolus_double_tap" translatable="false">orbit_bolus_double_tap</string>
+    <string name="key_orbit_bolus_amount" translatable="false">orbit_bolus_amount</string>
+    <string name="pref_orbit_bolus_double_tap">Bolus double tap</string>
+    <string name="pref_orbit_bolus_double_tap_summary">Orbit face: double-tap the button at 9 o\'clock to request a bolus. The phone checks it and you confirm on the watch. Needs Wear control on the phone, a connected phone and an amount within the max bolus.</string>
+    <string name="pref_orbit_bolus_amount">Bolus request amount</string>
+    <string name="orbit_bolus_again">again</string>
+    <string name="orbit_profile">Profile</string>
+    <string name="orbit_old_format">%1$d\' old</string>
+    <string name="orbit_no_data">no data</string>
+    <string name="orbit_phone_lost">Phone disconnected</string>
+    <string name="orbit_loop_off">OFF</string>
+    <string name="orbit_loop_suspended">PAUSE</string>
+    <string name="orbit_loop_disconnected">DISC.</string>
+    <string name="orbit_loop_open">OPEN</string>
+    <string name="orbit_warn_phone_battery">Batt %1$d%%</string>
+    <string name="orbit_warn_reservoir">Res %1$dU</string>
+    <string name="orbit_warn_pump_battery">Pump batt</string>
     <string name="increment">increment</string>
     <string name="decrement">decrement</string>
     <string name="abbreviation_average">avg</string>

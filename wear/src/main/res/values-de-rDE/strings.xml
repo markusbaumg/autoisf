@@ -177,4 +177,19 @@
     <string name="old_warning">!alt!</string>
     <string name="error">!err!</string>
     <string name="pref_heartRateSampling">Herzfrequenz</string>
+    <string name="pref_orbit_bolus_double_tap">Bolus Doppeltipp</string>
+    <string name="pref_orbit_bolus_double_tap_summary">Orbit-Zifferblatt: Knopf auf 9 Uhr doppelt tippen, um einen Bolus anzufordern. Das Telefon prüft ihn, du bestätigst auf der Uhr. Braucht Wear-Steuerung am Telefon, ein verbundenes Telefon und eine Menge innerhalb des Max-Bolus.</string>
+    <string name="pref_orbit_bolus_amount">Bolus-Menge</string>
+    <string name="orbit_bolus_again">nochmal</string>
+    <string name="orbit_profile">Profil</string>
+    <string name="orbit_old_format">%1$d\' alt</string>
+    <string name="orbit_no_data">keine Daten</string>
+    <string name="orbit_phone_lost">Telefon getrennt</string>
+    <string name="orbit_loop_off">AUS</string>
+    <string name="orbit_loop_suspended">PAUSE</string>
+    <string name="orbit_loop_disconnected">GETR.</string>
+    <string name="orbit_loop_open">OFFEN</string>
+    <string name="orbit_warn_phone_battery">Akku %1$d%%</string>
+    <string name="orbit_warn_reservoir">Res %1$dU</string>
+    <string name="orbit_warn_pump_battery">Pumpe Akku</string>
 </resources>

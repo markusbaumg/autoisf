@@ -68,6 +68,7 @@ class ConfigurationActivity : WearPreferenceActivity() {
             "app.aaps.wear.watchfaces.CircleWatchface" -> R.xml.watch_face_configuration_circle
             "app.aaps.wear.watchfaces.DigitalStyleWatchface" -> R.xml.watch_face_configuration_digitalstyle
             "app.aaps.wear.watchfaces.KusiWatchface" -> R.xml.watch_face_configuration_kusi
+            "app.aaps.wear.watchfaces.orbit.OrbitWatchface" -> R.xml.watch_face_configuration_orbit
             else -> {
                 // Fallback: try to use the old method with action
                 @Suppress("DiscouragedApi")

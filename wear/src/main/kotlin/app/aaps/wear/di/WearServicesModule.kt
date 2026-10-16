@@ -29,6 +29,7 @@ import app.aaps.wear.watchfaces.CircleWatchface
 import app.aaps.wear.watchfaces.CustomWatchface
 import app.aaps.wear.watchfaces.KusiWatchface
 import app.aaps.wear.watchfaces.DigitalStyleWatchface
+import app.aaps.wear.watchfaces.orbit.OrbitWatchface
 import app.aaps.wear.watchfaces.utils.BaseWatchFace
 import app.aaps.wear.wearStepCount.StepCountListener
 import dagger.Module
@@ -64,6 +65,7 @@ abstract class WearServicesModule {
     @ContributesAndroidInjector abstract fun contributesCircleWatchface(): CircleWatchface
     @ContributesAndroidInjector abstract fun contributesCustomWatchface(): CustomWatchface
     @ContributesAndroidInjector abstract fun contributesKusiWatchface(): KusiWatchface
+    @ContributesAndroidInjector abstract fun contributesOrbitWatchface(): OrbitWatchface
 
     @ContributesAndroidInjector abstract fun contributesTileBase(): TileBase
     @ContributesAndroidInjector abstract fun contributesQuickWizardTileService(): QuickWizardTileService
