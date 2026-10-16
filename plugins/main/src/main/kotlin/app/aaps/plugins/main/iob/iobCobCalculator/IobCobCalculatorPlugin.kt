@@ -94,7 +94,6 @@ class IobCobCalculatorPlugin @Inject constructor(
     private val disposable = CompositeDisposable()
 
     private var iobTable = LongSparseArray<IobTotal>() // oldest at index 0
-    private var basalDataTable = LongSparseArray<BasalData>() // oldest at index 0
 
     override var ads: AutosensDataStore = AutosensDataStoreObject()
 
@@ -210,7 +209,6 @@ class IobCobCalculatorPlugin @Inject constructor(
         synchronized(dataLock) {
             aapsLogger.debug(LTag.AUTOSENS, "Clearing cached data.")
             iobTable = LongSparseArray()
-            basalDataTable = LongSparseArray()
         }
     }
 
@@ -301,28 +299,20 @@ class IobCobCalculatorPlugin @Inject constructor(
         return IobTotal.combine(bolusIob, basalIob).round()
     }
 
+    // Not cached. A cache keyed by time held a value made with the profile of whichever caller came
+    // first, and it was cleared on every BG reload anyway.
     override fun getBasalData(profile: Profile, fromTime: Long): BasalData {
-        val now = System.currentTimeMillis()
         val time = ads.roundUpTime(fromTime)
-        var retVal = basalDataTable[time]
-        if (retVal == null) {
-            //log.debug(">>> getBasalData Cache miss " + new Date(time).toLocaleString());
-            retVal = BasalData()
-            val tb = processedTbrEbData.getTempBasalIncludingConvertedExtended(time)
-            retVal.basal = profile.getBasal(time)
-            if (tb != null) {
-                retVal.isTempBasalRunning = true
-                retVal.tempBasalAbsolute = tb.convertedToAbsolute(time, profile)
-            } else {
-                retVal.isTempBasalRunning = false
-                retVal.tempBasalAbsolute = retVal.basal
-            }
-            if (time < now) {
-                synchronized(dataLock) {
-                    basalDataTable.append(time, retVal)
-                }
-            }
-        } //else log.debug(">>> getBasalData Cache hit " +  new Date(time).toLocaleString());
+        val retVal = BasalData()
+        val tb = processedTbrEbData.getTempBasalIncludingConvertedExtended(time)
+        retVal.basal = profile.getBasal(time)
+        if (tb != null) {
+            retVal.isTempBasalRunning = true
+            retVal.tempBasalAbsolute = tb.convertedToAbsolute(time, profile)
+        } else {
+            retVal.isTempBasalRunning = false
+            retVal.tempBasalAbsolute = retVal.basal
+        }
         return retVal
     }
 
@@ -466,14 +456,6 @@ class IobCobCalculatorPlugin @Inject constructor(
                 if (iobTable.keyAt(index) > time) {
                     aapsLogger.debug(LTag.AUTOSENS, "Removing from iobTable: " + dateUtil.dateAndTimeAndSecondsString(iobTable.keyAt(index)))
                     iobTable.removeAt(index)
-                } else {
-                    break
-                }
-            }
-            for (index in basalDataTable.size() - 1 downTo 0) {
-                if (basalDataTable.keyAt(index) > time) {
-                    aapsLogger.debug(LTag.AUTOSENS, "Removing from basalDataTable: " + dateUtil.dateAndTimeAndSecondsString(basalDataTable.keyAt(index)))
-                    basalDataTable.removeAt(index)
                 } else {
                     break
                 }
