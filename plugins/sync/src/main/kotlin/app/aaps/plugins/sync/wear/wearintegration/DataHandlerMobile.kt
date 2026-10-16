@@ -92,6 +92,7 @@ import java.util.Date
 import java.util.LinkedList
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -105,6 +106,9 @@ import kotlin.math.min
  * margin. Raise it together with those settings, never on its own.
  */
 internal const val WEAR_GRAPH_HOURS = 6L
+
+/** How long a confirmation offered to the watch for an insulin-delivering action stays valid on the phone. */
+internal const val WEAR_CONFIRM_TIMEOUT_MS = 60_000L
 
 @Singleton
 class DataHandlerMobile @Inject constructor(
@@ -144,6 +148,25 @@ class DataHandlerMobile @Inject constructor(
 
     private var lastBolusWizard: BolusWizard? = null
     private var lastQuickWizardEntry: QuickWizardEntry? = null
+
+    /**
+     * The last insulin-delivering confirmation this phone itself offered to the watch (bolus, wizard,
+     * quick wizard, prime/fill). A confirm coming back from the watch is honoured only when it matches
+     * this record, arrives within [WEAR_CONFIRM_TIMEOUT_MS] and is the first one to take it: the slot is
+     * emptied atomically on every confirm, matching or not, so nothing is delivered twice.
+     */
+    internal data class PendingWearConfirm(
+        val kind: Kind,
+        val insulin: Double,
+        val carbs: Int,
+        val wizardTimeStamp: Long,
+        val createdAt: Long
+    ) {
+
+        enum class Kind { BOLUS, WIZARD, FILL }
+    }
+
+    private val pendingWearConfirm = AtomicReference<PendingWearConfirm?>(null)
 
     init {
         // From Wear
@@ -297,7 +320,9 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionBolusConfirmed received $it from ${it.sourceNodeId}")
-                           doBolus(it.insulin, it.carbs, null, 0, null)
+                           val confirmed = it
+                           if (acceptPendingConfirm(PendingWearConfirm.Kind.BOLUS) { p -> p.insulin == confirmed.insulin && p.carbs == confirmed.carbs })
+                               doBolus(it.insulin, it.carbs, null, 0, null)
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.ActionECarbsPreCheck::class.java)
@@ -311,7 +336,8 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionECarbsConfirmed received $it from ${it.sourceNodeId}")
-                           doECarbs(it.carbs, it.carbsTime, it.duration)
+                           if (wearControlEnabled())
+                               doECarbs(it.carbs, it.carbsTime, it.duration)
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.ActionFillPresetPreCheck::class.java)
@@ -332,6 +358,9 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionFillConfirmed received $it from ${it.sourceNodeId}")
+                           val confirmed = it
+                           if (!acceptPendingConfirm(PendingWearConfirm.Kind.FILL) { p -> p.insulin == confirmed.insulin })
+                               return@subscribe
                            if (constraintChecker.applyBolusConstraints(ConstraintObject(it.insulin, aapsLogger)).value() - it.insulin != 0.0) {
                                ToastUtils.showToastInUiThread(context, "aborting: previously applied constraint changed")
                                sendError("aborting: previously applied constraint changed")
@@ -357,6 +386,16 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionWizardConfirmed received $it from ${it.sourceNodeId}")
+                           val confirmed = it
+                           val wizardToConfirm = lastBolusWizard
+                           if (!acceptPendingConfirm(PendingWearConfirm.Kind.WIZARD) { p ->
+                                   wizardToConfirm != null && p.wizardTimeStamp == confirmed.timeStamp && wizardToConfirm.timeStamp == confirmed.timeStamp &&
+                                       p.insulin == wizardToConfirm.calculatedTotalInsulin && p.carbs == wizardToConfirm.carbs
+                               }) {
+                               lastBolusWizard = null
+                               lastQuickWizardEntry = null
+                               return@subscribe
+                           }
 
                            var carbTime: Long? = null
                            var carbTimeOffset: Long = 0
@@ -659,6 +698,8 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private fun handleWizardPreCheck(command: EventData.ActionWizardPreCheck) {
+        pendingWearConfirm.set(null)
+        if (!wearControlEnabled()) return
         val pump = activePlugin.activePump
         if (!pump.isInitialized() || loop.runningMode.isSuspended()) {
             sendError(rh.gs(app.aaps.core.ui.R.string.wizard_pump_not_available))
@@ -752,6 +793,7 @@ class DataHandlerMobile @Inject constructor(
         )
         lastBolusWizard = bolusWizard
         lastQuickWizardEntry = null
+        offerPendingConfirm(PendingWearConfirm.Kind.WIZARD, bolusWizard.calculatedTotalInsulin, bolusWizard.carbs, bolusWizard.timeStamp)
         rxBus.send(EventMobileToWear(wizardResult))
     }
 
@@ -797,6 +839,8 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private fun handleQuickWizardPreCheck(command: EventData.ActionQuickWizardPreCheck) {
+        pendingWearConfirm.set(null)
+        if (!wearControlEnabled()) return
         val actualBg = iobCobCalculator.ads.actualBg()
         val profile = profileFunction.getProfile()
         val profileName = profileFunction.getProfileName()
@@ -862,6 +906,7 @@ class DataHandlerMobile @Inject constructor(
 
         lastBolusWizard = wizard
         lastQuickWizardEntry = quickWizardEntry
+        offerPendingConfirm(PendingWearConfirm.Kind.WIZARD, wizard.calculatedTotalInsulin, wizard.carbs, wizard.timeStamp)
         rxBus.send(
             EventMobileToWear(
                 EventData.ConfirmAction(
@@ -873,6 +918,8 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private fun handleBolusPreCheck(command: EventData.ActionBolusPreCheck) {
+        pendingWearConfirm.set(null)
+        if (!wearControlEnabled()) return
         val insulinAfterConstraints = constraintChecker.applyBolusConstraints(ConstraintObject(command.insulin, aapsLogger)).value()
         val cob = iobCobCalculator.ads.getLastAutosensData("carbsDialog", aapsLogger, dateUtil)?.cob ?: 0.0
         var carbsAfterConstraints = constraintChecker.applyCarbsConstraints(ConstraintObject(command.carbs, aapsLogger)).value()
@@ -892,6 +939,7 @@ class DataHandlerMobile @Inject constructor(
             message += "\n" + rh.gs(app.aaps.core.ui.R.string.constraint_applied)
         lastBolusWizard = null
         lastQuickWizardEntry = null
+        offerPendingConfirm(PendingWearConfirm.Kind.BOLUS, insulinAfterConstraints, carbsAfterConstraints)
         rxBus.send(
             EventMobileToWear(
                 EventData.ConfirmAction(
@@ -903,6 +951,8 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private fun handleECarbsPreCheck(command: EventData.ActionECarbsPreCheck) {
+        pendingWearConfirm.set(null)
+        if (!wearControlEnabled()) return
         val startTimeStamp = System.currentTimeMillis() + T.mins(command.carbsTimeShift.toLong()).msecs()
         val cob = iobCobCalculator.ads.getLastAutosensData("carbsDialog", aapsLogger, dateUtil)?.cob ?: 0.0
         var carbsAfterConstraints = constraintChecker.applyCarbsConstraints(ConstraintObject(command.carbs, aapsLogger)).value()
@@ -933,6 +983,8 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private fun handleFillPresetPreCheck(command: EventData.ActionFillPresetPreCheck) {
+        pendingWearConfirm.set(null)
+        if (!wearControlEnabled()) return
         val amount: Double = when (command.button) {
             1    -> preferences.get(DoubleKey.ActionsFillButton1)
             2    -> preferences.get(DoubleKey.ActionsFillButton2)
@@ -942,6 +994,7 @@ class DataHandlerMobile @Inject constructor(
         val insulinAfterConstraints = constraintChecker.applyBolusConstraints(ConstraintObject(amount, aapsLogger)).value()
         var message = rh.gs(app.aaps.core.ui.R.string.prime_fill) + ": " + insulinAfterConstraints + rh.gs(R.string.units_short)
         if (insulinAfterConstraints - amount != 0.0) message += "\n" + rh.gs(app.aaps.core.ui.R.string.constraint_applied)
+        offerPendingConfirm(PendingWearConfirm.Kind.FILL, insulinAfterConstraints, 0)
         rxBus.send(
             EventMobileToWear(
                 EventData.ConfirmAction(
@@ -953,9 +1006,12 @@ class DataHandlerMobile @Inject constructor(
     }
 
     private fun handleFillPreCheck(command: EventData.ActionFillPreCheck) {
+        pendingWearConfirm.set(null)
+        if (!wearControlEnabled()) return
         val insulinAfterConstraints = constraintChecker.applyBolusConstraints(ConstraintObject(command.insulin, aapsLogger)).value()
         var message = rh.gs(app.aaps.core.ui.R.string.prime_fill) + ": " + insulinAfterConstraints + rh.gs(R.string.units_short)
         if (insulinAfterConstraints - command.insulin != 0.0) message += "\n" + rh.gs(app.aaps.core.ui.R.string.constraint_applied)
+        offerPendingConfirm(PendingWearConfirm.Kind.FILL, insulinAfterConstraints, 0)
         rxBus.send(
             EventMobileToWear(
                 EventData.ConfirmAction(
@@ -1924,6 +1980,37 @@ class DataHandlerMobile @Inject constructor(
                 ValueWithUnit.Minute(command.duration)
             )
         )
+    }
+
+    /**
+     * Phone-side gate for watch-initiated treatments: the watch hides its actions when "Controls from
+     * Watch" is off, but the phone must not rely on that. Sends an error to the watch when refusing.
+     */
+    private fun wearControlEnabled(): Boolean {
+        if (preferences.get(BooleanKey.WearControl)) return true
+        aapsLogger.warn(LTag.WEAR, "Watch treatment refused: Controls from Watch is disabled on the phone")
+        sendError(rh.gs(R.string.wear_control_disabled_on_phone))
+        return false
+    }
+
+    private fun offerPendingConfirm(kind: PendingWearConfirm.Kind, insulin: Double, carbs: Int, wizardTimeStamp: Long = 0L) =
+        pendingWearConfirm.set(PendingWearConfirm(kind, insulin, carbs, wizardTimeStamp, dateUtil.now()))
+
+    /**
+     * Takes the pending confirmation out of its slot (always, so it can be used at most once) and
+     * returns true only when Controls from Watch is still on, it is of [kind], [matches] holds and it is
+     * not older than [WEAR_CONFIRM_TIMEOUT_MS]. Sends an error to the watch when refusing.
+     */
+    private fun acceptPendingConfirm(kind: PendingWearConfirm.Kind, matches: (PendingWearConfirm) -> Boolean): Boolean {
+        val pending = pendingWearConfirm.getAndSet(null)
+        if (!wearControlEnabled()) return false
+        val age = pending?.let { dateUtil.now() - it.createdAt }
+        val accepted = pending != null && pending.kind == kind && matches(pending) && age != null && age in 0..WEAR_CONFIRM_TIMEOUT_MS
+        if (!accepted) {
+            aapsLogger.warn(LTag.WEAR, "Watch confirm $kind refused: pending=$pending age=$age")
+            sendError(rh.gs(R.string.wear_confirm_not_matching))
+        }
+        return accepted
     }
 
     @Synchronized private fun sendError(errorMessage: String) {
