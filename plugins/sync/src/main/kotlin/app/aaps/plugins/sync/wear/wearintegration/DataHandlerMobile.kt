@@ -808,7 +808,9 @@ class DataHandlerMobile @Inject constructor(
             tempTarget = tempTargetString,
             percentageCorrection = if (percentage != 100) percentage else null,
             totalBeforePercentage = if (percentage != 100) bolusWizard.totalBeforePercentageAdjustment else null,
-            cob = bolusWizard.cob
+            cob = bolusWizard.cob,
+            // display only: the watch's confirm page shows the amount with these warnings; the confirm is unchanged
+            details = confirmDetails(EventData.ConfirmDetails.KIND_WIZARD, bolusWizard.calculatedTotalInsulin, bolusWizard.carbs)
         )
         offerPendingConfirm(PendingWearConfirm.Kind.WIZARD, bolusWizard.calculatedTotalInsulin, bolusWizard.carbs, wizard = bolusWizard)
         rxBus.send(EventMobileToWear(wizardResult))
@@ -921,10 +923,18 @@ class DataHandlerMobile @Inject constructor(
             carbDelayMessagePart +
             eCarbsMessagePart + "\n_____________\n" + wizard.explainShort()
 
+        // the carb delay and the extended carbs go as their own fields (the watch shows them next to the carbs); the
+        // calculation without its first line, whose IC and ISF the watch already names as the estimate's source
+        val eCarbs = if (quickWizardEntry.useEcarbs() == QuickWizardEntry.YES) quickWizardEntry.carbs2() else 0
         val details = confirmDetails(
             EventData.ConfirmDetails.KIND_WIZARD, wizard.calculatedTotalInsulin, wizard.carbs,
             label = quickWizardEntry.buttonText(),
-            note = (carbDelayMessagePart + eCarbsMessagePart).trim().let { if (it.isEmpty()) "" else it + "\n" } + wizard.explainShort()
+            note = wizard.explainShort().lines().drop(1).joinToString("\n"),
+            carbsDelayMin = quickWizardEntry.carbTime(),
+            carbsAlarm = quickWizardEntry.useAlarm() == QuickWizardEntry.YES,
+            eCarbs = eCarbs,
+            eCarbsDurationH = if (eCarbs > 0) quickWizardEntry.duration() else null,
+            eCarbsOffsetMin = if (eCarbs > 0) quickWizardEntry.time() else null
         )
         offerPendingConfirm(PendingWearConfirm.Kind.WIZARD, wizard.calculatedTotalInsulin, wizard.carbs, wizard = wizard, quickWizardEntry = quickWizardEntry)
         rxBus.send(
@@ -2107,7 +2117,8 @@ class DataHandlerMobile @Inject constructor(
      */
     private fun confirmDetails(
         kind: String, insulin: Double, carbs: Int, requestedInsulin: Double? = null, requestedCarbs: Int? = null,
-        label: String = "", note: String = "", carbsStart: Long? = null, carbsDurationH: Int? = null
+        label: String = "", note: String = "", carbsStart: Long? = null, carbsDurationH: Int? = null,
+        carbsDelayMin: Int? = null, carbsAlarm: Boolean = false, eCarbs: Int? = null, eCarbsDurationH: Int? = null, eCarbsOffsetMin: Int? = null
     ): EventData.ConfirmDetails? = try {
         val now = dateUtil.now()
         val units = orNull { profileFunction.getUnits() } ?: GlucoseUnit.MGDL
@@ -2134,7 +2145,9 @@ class DataHandlerMobile @Inject constructor(
                 insulinPeakMin = orNull { activePlugin.activeInsulin.peak },
                 lastBolusAt = lastBolus?.timestamp, lastBolusAmount = lastBolus?.amount,
                 maxBolus = orNull { constraintChecker.getMaxBolusAllowed().value() },
-                carbsStart = carbsStart, carbsDurationH = carbsDurationH
+                carbsStart = carbsStart, carbsDurationH = carbsDurationH,
+                carbsDelayMin = carbsDelayMin, carbsAlarm = carbsAlarm,
+                eCarbs = eCarbs, eCarbsDurationH = eCarbsDurationH, eCarbsOffsetMin = eCarbsOffsetMin
             )
         )
     } catch (e: Exception) {

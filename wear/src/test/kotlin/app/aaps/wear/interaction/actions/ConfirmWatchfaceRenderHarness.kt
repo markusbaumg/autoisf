@@ -51,7 +51,13 @@ class ConfirmWatchfaceRenderHarness {
         val title: String = "BESTÄTIGEN",
         val message: String = "",
         val error: Boolean = false,
-        val lang: String = "de"
+        val lang: String = "de",
+        /** Samsung's font size setting (1.0 default; 1.15 / 1.3 large). */
+        val fontScale: Float = 1f,
+        /** False for a status screen without a returnCommand (its button only closes). */
+        val hasAction: Boolean = true,
+        /** Only page 2 exists (the watch wizard's confirm, WizardConfirmFragment; page 1 is its calculation). */
+        val okOnly: Boolean = false
     )
 
     private val now = System.currentTimeMillis()
@@ -104,6 +110,13 @@ class ConfirmWatchfaceRenderHarness {
                 )
             )
         ),
+        State(
+            "warn_bolus_carbs", bolus.copy(
+                insulin = 1.5, carbs = 20, bgEffectMgdl = -67.5, carbsCovered = 19.5, iobAfter = 2.7, cobNow = 12.0, cobAfter = 32.0, deliverySeconds = 60,
+                lastBolusMinAgo = 4, lastBolusAmount = 0.5,
+                warnings = listOf(ConfirmWarning(ConfirmWarning.W_RECENT_BOLUS, ConfirmWarning.LEVEL_CAUTION, 4.0, 0.5))
+            )
+        ),
         State("mgdl_bolus", bolus.copy(unitsMgdl = true, insulin = 1.25, bgEffectMgdl = -56.25, carbsCovered = 16.25, iobAfter = 2.45, deliverySeconds = 50)),
         State(
             "mgdl_low", bolus.copy(
@@ -129,9 +142,47 @@ class ConfirmWatchfaceRenderHarness {
         State(
             "wizard_long", bolus.copy(
                 kind = ConfirmDetails.KIND_WIZARD, label = "Frühstück gross", insulin = 3.85, carbs = 45, bgEffectMgdl = -173.25, carbsCovered = 50.05,
-                iobAfter = 5.05, cobNow = 0.0, cobAfter = 45.0, deliverySeconds = 154,
-                note = "(+15m)\n+20g/2h(+30m)\nBerechnung (IC: 13,0, ISF: 2,5)\nKH: 3,46U\nCOB: 0g 0,00U\nBZ: 0,52U\nIOB: -0,35U\n15' Trend: 0,10U\nProzent: 4,28U x 90% ≈ 3,85U"
+                iobNow = 0.35, iobAfter = 4.2, deliverySeconds = 154,
+                carbsDelayMin = 15, carbsAlarm = true, eCarbs = 20, eCarbsDurationH = 2, eCarbsOffsetMin = 30,
+                note = "Kohlenhydrate: 3,46U\nCOB: 0g 0,00U\nBZ: 0,52U\nIOB: -0,35U\n15' Trend: 0,10U\nProzent: 4,28U x 90% ≈ 3,85U"
             )
+        ),
+        // large doses and Samsung's large font settings: the amount is never wrapped or cut
+        State("big_12_35", bolus.copy(insulin = 12.35, carbs = 45, bgEffectMgdl = -555.75, carbsCovered = 160.55, iobAfter = 13.55, deliverySeconds = 494), fontScale = 1.3f),
+        State("big_10_125", bolus.copy(insulin = 10.125, bgEffectMgdl = -455.6, carbsCovered = 131.6, iobAfter = 11.325, deliverySeconds = 405)),
+        State(
+            "fs115_warn", bolus.copy(
+                insulin = 2.5, carbs = 30, bgEffectMgdl = -112.5, carbsCovered = 32.5, iobAfter = 3.7, cobNow = 0.0, cobAfter = 30.0, deliverySeconds = 100,
+                bgMgdl = 68.0, deltaMgdl = -6.0, arrow = "↘", lastBolusMinAgo = 12, lastBolusAmount = 0.5,
+                warnings = listOf(
+                    ConfirmWarning(ConfirmWarning.W_BG_LOW, ConfirmWarning.LEVEL_DANGER, 68.0),
+                    ConfirmWarning(ConfirmWarning.W_BG_FALLING, ConfirmWarning.LEVEL_DANGER, -6.0),
+                    ConfirmWarning(ConfirmWarning.W_RECENT_BOLUS, ConfirmWarning.LEVEL_CAUTION, 12.0, 0.5)
+                )
+            ), fontScale = 1.15f
+        ),
+        State(
+            "fs130_wizard", bolus.copy(
+                kind = ConfirmDetails.KIND_WIZARD, label = "Abendessen", insulin = 3.85, carbs = 45, bgEffectMgdl = -173.25, carbsCovered = 50.05,
+                iobNow = 0.35, iobAfter = 4.2, deliverySeconds = 154, carbsDelayMin = 15, eCarbs = 20, eCarbsDurationH = 2, eCarbsOffsetMin = 0,
+                warnings = listOf(ConfirmWarning(ConfirmWarning.W_BG_STALE, ConfirmWarning.LEVEL_CAUTION, 18.0))
+            ), fontScale = 1.3f
+        ),
+        // the watch wizard's own confirm page (WizardConfirmFragment), with warnings
+        State(
+            "watch_wizard_low", bolus.copy(
+                kind = ConfirmDetails.KIND_WIZARD, insulin = 1.6, carbs = 30, bgMgdl = 66.0, deltaMgdl = -7.0, arrow = "↘",
+                warnings = listOf(
+                    ConfirmWarning(ConfirmWarning.W_BG_LOW, ConfirmWarning.LEVEL_DANGER, 66.0),
+                    ConfirmWarning(ConfirmWarning.W_BG_FALLING, ConfirmWarning.LEVEL_DANGER, -7.0),
+                    ConfirmWarning(ConfirmWarning.W_NEAR_MAX_BOLUS, ConfirmWarning.LEVEL_CAUTION, 2.0)
+                )
+            ), okOnly = true
+        ),
+        State("watch_wizard", ConfirmDetails(kind = ConfirmDetails.KIND_WIZARD, insulin = 3.25, carbs = 45), okOnly = true),
+        State(
+            "status", null, title = "TDD", hasAction = false,
+            message = "Heute: 32,4 U\nGestern: 41,0 U\n2 Tage: 38,2 U\n3 Tage: 40,1 U\n4 Tage: 37,9 U\n5 Tage: 39,5 U\n6 Tage: 42,3 U\n7 Tage: 36,8 U"
         ),
         State("fill", ConfirmDetails(kind = ConfirmDetails.KIND_FILL, insulin = 0.7, deliverySeconds = 28)),
         State("legacy", null, message = "Bolus: 0.5U\nKohlenhydrate: 0g"),
@@ -157,6 +208,13 @@ class ConfirmWatchfaceRenderHarness {
         val dir = File(out!!, "confirm").apply { mkdirs() }
         val clipped = ArrayList<String>()
         for (s in states()) {
+            if (s.okOnly) {
+                val (page2, overflow) = render(s, page = 1, scroll = 0f)
+                write(page2, File(dir, "${s.id}_ok.png"))
+                if (overflow > 0) clipped += "${s.id}_ok: $overflow px too tall"
+                clipped += textProblems.map { "${s.id}_ok: $it" }
+                continue
+            }
             val (page1, scrollRange) = render(s, page = 0, scroll = 0f)
             write(page1, File(dir, "${s.id}.png"))
             clipped += textProblems.map { "${s.id}: $it" }
@@ -183,14 +241,15 @@ class ConfirmWatchfaceRenderHarness {
     private fun render(s: State, page: Int, scroll: Float): Pair<Bitmap, Int> {
         RuntimeEnvironment.setQualifiers("${if (s.lang == "de") "de-rDE" else "en-rUS"}-w225dp-h225dp-round-xhdpi")
         Locale.setDefault(if (s.lang == "de") Locale.GERMANY else Locale.US)
-        val context: Context = RuntimeEnvironment.getApplication()
+        val app: Context = RuntimeEnvironment.getApplication()
+        val context: Context = app.createConfigurationContext(android.content.res.Configuration(app.resources.configuration).apply { fontScale = s.fontScale })
         val px = 450
         val root = FrameLayout(context).apply { setBackgroundColor(Color.BLACK) }
         val screen = ConfirmScreen(context)
         val view = if (page == 0)
-            LayoutInflater.from(context).inflate(R.layout.action_confirm_text, root, false).also { screen.bindInfoPage(it, s.title, s.message, s.details, s.error) }
+            LayoutInflater.from(context).inflate(R.layout.action_confirm_text, root, false).also { screen.bindInfoPage(it, s.title, s.message, s.details, s.error, s.hasAction) }
         else
-            LayoutInflater.from(context).inflate(R.layout.action_confirm_ok, root, false).also { screen.bindConfirmPage(it, s.details, s.error) }
+            LayoutInflater.from(context).inflate(R.layout.action_confirm_ok, root, false).also { screen.bindConfirmPage(it, s.details, s.error, s.hasAction) }
         root.addView(view, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         // the pager's page dots (activity_pager.xml)
         root.addView(SimplePageIndicator(context).apply {
@@ -239,11 +298,15 @@ class ConfirmWatchfaceRenderHarness {
         // Every line that can be read in this frame must sit inside the circle: on page 2 all of it, on page 1 the part
         // between the top fading edge and the bottom shade (a line is either readable or faded out, never cut).
         val layout = v.layout ?: return
-        // a chip keeps its word on line 1 and its detail on line 2: its detail never wraps; a card value is one line
-        if (v.tag == ConfirmScreen.TAG_CHIP && layout.lineCount != v.text.count { it == '\n' } + 1)
-            textProblems += "page ${page + 1} chip \"${v.text.toString().replace('\n', '|')}\" wraps (${layout.lineCount} lines)"
-        if (v.tag == ConfirmScreen.TAG_VALUE && layout.lineCount != 1)
-            textProblems += "page ${page + 1} value \"${v.text}\" wraps"
+        // the amount and a card value are one line; nothing breaks inside a word or between a number and its unit
+        // (a line may only end at a newline or a normal space: Android breaks at a non-breaking space only by force)
+        if ((v.tag == ConfirmScreen.TAG_VALUE || v.tag == ConfirmScreen.TAG_AMOUNT) && layout.lineCount != 1)
+            textProblems += "page ${page + 1} ${v.tag} \"${v.text}\" wraps"
+        for (i in 0 until layout.lineCount - 1) {
+            val end = layout.getLineEnd(i)
+            if (end > 0 && end < v.text.length && v.text[end - 1] != ' ' && v.text[end - 1] != '\n')
+                textProblems += "page ${page + 1} \"${v.text.toString().replace('\n', '|')}\" breaks inside a word after \"${v.text.subSequence(layout.getLineStart(i), end)}\""
+        }
         val loc = IntArray(2).also { pos -> var x = 0; var y = 0; var c: View? = v; while (c != null && c !== root) { x += c.left - c.scrollX; y += c.top - c.scrollY; c = c.parent as? View }; pos[0] = x; pos[1] = y }
         for (i in 0 until layout.lineCount) {
             val left = loc[0] + v.compoundPaddingLeft + layout.getLineLeft(i)
@@ -285,7 +348,7 @@ class ConfirmWatchfaceRenderHarness {
         const val ROUND_MARGIN_PX = 8f
 
         /** Page 1's top fading edge and bottom shade (dp, action_confirm_text.xml). */
-        const val FADE_DP = 44f
+        const val FADE_DP = 56f
         const val SHADE_DP = 40f
 
         /** Page 1 gets an intermediate frame for every this many px of scrolling. */

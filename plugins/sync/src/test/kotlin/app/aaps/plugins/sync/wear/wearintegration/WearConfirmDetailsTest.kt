@@ -135,6 +135,32 @@ class WearConfirmDetailsTest {
         assertThat(d.bgEffectMgdl!!).isWithin(1e-9).of(30 * 45.0 / 13.0)
     }
 
+    @Test fun `quick wizard carries its carb delay and extended carbs, and delayed carbs are not on board yet`() {
+        val d = WearConfirmDetails.build(
+            inputs(kind = ConfirmDetails.KIND_WIZARD, insulin = 3.85, carbs = 45).copy(
+                carbsDelayMin = 15, carbsAlarm = true, eCarbs = 20, eCarbsDurationH = 2, eCarbsOffsetMin = 30
+            )
+        )
+        assertThat(d.carbsDelayMin).isEqualTo(15)
+        assertThat(d.carbsAlarm).isTrue()
+        assertThat(d.eCarbs).isEqualTo(20)
+        assertThat(d.eCarbsDurationH).isEqualTo(2)
+        assertThat(d.eCarbsOffsetMin).isEqualTo(30)
+        // the carbs come in 15 min: no "COB now -> after" as if they were on board right away
+        assertThat(d.cobAfter).isNull()
+        assertThat(d.cobNow).isNull()
+        // the effect is the insulin's, as without a delay
+        assertThat(d.bgEffectMgdl!!).isWithin(1e-9).of(-3.85 * 45.0)
+
+        // no delay, no extended carbs: nothing of it is sent
+        val plain = WearConfirmDetails.build(inputs(kind = ConfirmDetails.KIND_WIZARD, insulin = 3.85, carbs = 45).copy(carbsDelayMin = 0, carbsAlarm = true, eCarbs = 0, eCarbsDurationH = 2))
+        assertThat(plain.carbsDelayMin).isNull()
+        assertThat(plain.carbsAlarm).isFalse()
+        assertThat(plain.eCarbs).isNull()
+        assertThat(plain.eCarbsDurationH).isNull()
+        assertThat(plain.cobAfter).isEqualTo(57.0)
+    }
+
     @Test fun `missing profile values leave the effect out`() {
         val d = WearConfirmDetails.build(inputs().copy(isfMgdl = null, ic = 0.0, secondsPerUnit = null))
         assertThat(d.bgEffectMgdl).isNull()

@@ -136,6 +136,8 @@ class DataHandlerWear @Inject constructor(
                         putExtra("percentage", event.percentageCorrection ?: 100)
                         putExtra("total_before_percentage", event.totalBeforePercentage ?: Double.NaN)
                         putExtra("cob", event.cob)
+                        // display only (the confirm page's amount and warnings); never sent back
+                        ConfirmScreen.encode(event.details)?.let { details -> putExtra(ConfirmScreen.KEY_DETAILS, details) }
                     }
 
                     context.startActivity(resultIntent)

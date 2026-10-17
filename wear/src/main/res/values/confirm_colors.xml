@@ -9,9 +9,9 @@
     <color name="confirm_danger_tint">#2BFF5A6E</color>
     <color name="confirm_muted">#8A93A8</color>
     <color name="confirm_card">#171B24</color>
-    <color name="confirm_card_top">#1B2030</color>
-    <color name="confirm_card_bottom">#141821</color>
-    <color name="confirm_card_hairline">#14FFFFFF</color>
+    <color name="confirm_card_top">#222838</color>
+    <color name="confirm_card_bottom">#161A24</color>
+    <color name="confirm_card_hairline">#1FFFFFFF</color>
     <color name="confirm_text">#F2F4F8</color>
     <color name="confirm_text_dim">#C3C9D5</color>
 </resources>

@@ -75,6 +75,10 @@ class AcceptActivity : ViewSelectorActivity() {
             false
         }
 
+    /** False for a status screen without a returnCommand: its button only closes it (display only). */
+    private val hasAction: Boolean
+        get() = actionKey.isNotEmpty()
+
     private inner class MyPagerAdapter : PagerAdapter() {
 
         override fun getPageCount(): Int = 2
@@ -85,7 +89,7 @@ class AcceptActivity : ViewSelectorActivity() {
                 LayoutInflater.from(applicationContext).inflate(R.layout.action_confirm_text, container, false).apply {
                     val scrollView = findViewById<View>(R.id.message_scroll)
                     try {
-                        ConfirmScreen(this@AcceptActivity).bindInfoPage(this, confirmTitle, message, details, isError)
+                        ConfirmScreen(this@AcceptActivity).bindInfoPage(this, confirmTitle, message, details, isError, hasAction)
                     } catch (e: Exception) {
                         // never lose the confirm over its looks: fall back to the phone's plain text
                         findViewById<TextView>(R.id.message)?.apply { visibility = View.VISIBLE; text = message }
@@ -116,7 +120,7 @@ class AcceptActivity : ViewSelectorActivity() {
                 // Page 1: Confirm page
                 LayoutInflater.from(applicationContext).inflate(R.layout.action_confirm_ok, container, false).apply {
                     try {
-                        ConfirmScreen(this@AcceptActivity).bindConfirmPage(this, details, isError)
+                        ConfirmScreen(this@AcceptActivity).bindConfirmPage(this, details, isError, hasAction)
                     } catch (_: Exception) {
                         // display only: the button below works without it
                     }

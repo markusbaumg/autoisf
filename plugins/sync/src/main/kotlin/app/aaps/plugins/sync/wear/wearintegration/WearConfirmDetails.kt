@@ -66,7 +66,14 @@ internal object WearConfirmDetails {
         val lastBolusAmount: Double? = null,
         val maxBolus: Double? = null,
         val carbsStart: Long? = null,
-        val carbsDurationH: Int? = null
+        val carbsDurationH: Int? = null,
+        /** Quick wizard: its carbs are entered this many minutes from now (with an alarm when [carbsAlarm]). */
+        val carbsDelayMin: Int? = null,
+        val carbsAlarm: Boolean = false,
+        /** Quick wizard: extended carbs entered besides [carbs] (g), over [eCarbsDurationH] h from [eCarbsOffsetMin] min. */
+        val eCarbs: Int? = null,
+        val eCarbsDurationH: Int? = null,
+        val eCarbsOffsetMin: Int? = null
     )
 
     fun build(i: Inputs): ConfirmDetails {
@@ -88,7 +95,9 @@ internal object WearConfirmDetails {
         val iobNow = i.iobNow?.takeIf { it.isFinite() }
         val iobAfter = if (dosing && iobNow != null) iobNow + i.insulin else null
         val cobNow = i.cobNow?.takeIf { it.isFinite() && it >= 0.0 }
-        val immediateCarbs = !fill && i.kind != ConfirmDetails.KIND_ECARBS && i.carbs != 0
+        val delayMin = i.carbsDelayMin?.takeIf { it > 0 }
+        // carbs entered later (extended, or the quick wizard's delayed carbs) are not on board right after the confirm
+        val immediateCarbs = !fill && i.kind != ConfirmDetails.KIND_ECARBS && i.carbs != 0 && delayMin == null
         val cobAfter = if (immediateCarbs && cobNow != null) (cobNow + i.carbs).coerceAtLeast(0.0) else null
 
         val deliverySeconds = i.secondsPerUnit?.takeIf { it > 0.0 && i.insulin > EPS }?.let { (i.insulin * it).roundToInt().coerceAtLeast(1) }
@@ -152,6 +161,11 @@ internal object WearConfirmDetails {
             lastBolusAmount = if (fill || lastBolusMinAgo == null) null else i.lastBolusAmount,
             carbsStart = i.carbsStart,
             carbsDurationH = i.carbsDurationH,
+            carbsDelayMin = if (i.carbs > 0) delayMin else null,
+            carbsAlarm = i.carbs > 0 && delayMin != null && i.carbsAlarm,
+            eCarbs = i.eCarbs?.takeIf { it > 0 },
+            eCarbsDurationH = if ((i.eCarbs ?: 0) > 0) i.eCarbsDurationH else null,
+            eCarbsOffsetMin = if ((i.eCarbs ?: 0) > 0) i.eCarbsOffsetMin else null,
             note = i.note,
             warnings = warnings
         )

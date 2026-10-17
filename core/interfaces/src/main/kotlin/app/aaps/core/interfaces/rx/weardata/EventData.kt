@@ -131,7 +131,9 @@ sealed class EventData : Event() {
         val tempTarget: String?,
         val percentageCorrection: Int?,
         val totalBeforePercentage: Double?,
-        val cob: Double
+        val cob: Double,
+        /** Display-only extras for the watch's confirm page (warnings, see [ConfirmAction.details]); never sent back. */
+        val details: ConfirmDetails? = null
     ) : EventData()
 
     @Serializable
@@ -462,6 +464,8 @@ sealed class EventData : Event() {
      * @param deliverySeconds ≈ time the pump needs to deliver [insulin]; [insulinPeakMin] peak time of the active insulin
      * @param lastBolusMinAgo / [lastBolusAmount] the last manual (normal) bolus
      * @param carbsStart / [carbsDurationH] start time and duration of extended carbs
+     * @param carbsDelayMin the quick wizard enters its [carbs] this many minutes from now ([carbsAlarm]: with an alarm)
+     * @param eCarbs / [eCarbsDurationH] / [eCarbsOffsetMin] the quick wizard's extended carbs, entered besides [carbs]
      * @param note extra lines, e.g. the wizard's calculation
      */
     @Serializable
@@ -489,6 +493,11 @@ sealed class EventData : Event() {
         val lastBolusAmount: Double? = null,
         val carbsStart: Long? = null,
         val carbsDurationH: Int? = null,
+        val carbsDelayMin: Int? = null,
+        val carbsAlarm: Boolean = false,
+        val eCarbs: Int? = null,
+        val eCarbsDurationH: Int? = null,
+        val eCarbsOffsetMin: Int? = null,
         val note: String = "",
         val warnings: List<ConfirmWarning> = emptyList()
     ) {

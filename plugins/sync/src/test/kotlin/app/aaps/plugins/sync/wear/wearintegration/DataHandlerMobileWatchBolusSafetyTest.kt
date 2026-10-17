@@ -21,6 +21,7 @@ import app.aaps.core.interfaces.rx.weardata.EventData
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.TrendCalculator
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.objects.wizard.BolusWizard
 import app.aaps.core.objects.wizard.QuickWizard
 import app.aaps.core.objects.wizard.QuickWizardEntry
@@ -558,17 +559,72 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         assertThat(deliveredBoluses().single().insulin).isEqualTo(2.0)
     }
 
-    @Test fun `quick wizard confirm carries the button name and the calculation as details`() {
+    @Test fun `quick wizard confirm carries the button name, the calculation, the carb delay and the extended carbs as details`() {
         prepareWizard(insulin = 2.0, carbs = 30)
-        quickWizardEntry(30)
+        whenever(bolusWizard.explainShort()).thenReturn("Calc (IC: 13.0, ISF: 45.0)\nCarbs: 2.31U\nIOB: -0.31U")
+        val entry = quickWizardEntry(30, eCarbs = 20)
+        whenever(entry.carbTime()).thenReturn(15)
+        whenever(entry.useAlarm()).thenReturn(QuickWizardEntry.YES)
+        whenever(entry.time()).thenReturn(30)
         rxBus.send(EventData.ActionQuickWizardPreCheck("guid"))
-        confirmActions().last().details!!.let {
+        val confirm = confirmActions().last()
+        confirm.details!!.let {
             assertThat(it.kind).isEqualTo(EventData.ConfirmDetails.KIND_WIZARD)
             assertThat(it.label).isEqualTo("Meal")
             assertThat(it.insulin).isEqualTo(2.0)
             assertThat(it.carbs).isEqualTo(30)
-            assertThat(it.note).isEqualTo("explain")
+            // the calculation without its "Calc (IC, ISF)" line (the watch names IC and ISF as the estimate's source)
+            assertThat(it.note).isEqualTo("Carbs: 2.31U\nIOB: -0.31U")
+            assertThat(it.carbsDelayMin).isEqualTo(15)
+            assertThat(it.carbsAlarm).isTrue()
+            assertThat(it.eCarbs).isEqualTo(20)
+            assertThat(it.eCarbsDurationH).isEqualTo(2)
+            assertThat(it.eCarbsOffsetMin).isEqualTo(30)
         }
+        // the confirm itself is the wizard's, as before
+        assertThat(confirm.returnCommand).isEqualTo(EventData.ActionWizardConfirmed(now))
+    }
+
+    @Test fun `watch wizard result carries display-only details of exactly its amount`() {
+        prepareWizard(insulin = 2.5, carbs = 40)
+        whenever(ads.lastBg()).thenReturn(InMemoryGlucoseValue(timestamp = now - 120_000L, value = 65.0))
+        whenever(preferences.get(UnitDoubleKey.OverviewLowMark)).thenReturn(70.0)
+
+        rxBus.send(EventData.ActionWizardPreCheck(40, 100))
+        val result = toWatch.filterIsInstance<EventData.ActionWizardResult>().single()
+        result.details!!.let {
+            assertThat(it.kind).isEqualTo(EventData.ConfirmDetails.KIND_WIZARD)
+            assertThat(it.insulin).isEqualTo(result.totalInsulin)
+            assertThat(it.carbs).isEqualTo(result.carbs)
+            assertThat(it.warnings.map { w -> w.code }).contains(EventData.ConfirmWarning.W_BG_LOW)
+        }
+        // the warning does not block: the confirm delivers the calculated bolus as before
+        rxBus.send(EventData.ActionWizardConfirmed(result.timestamp))
+        assertThat(errorsToWatch()).isEmpty()
+        assertThat(deliveredBoluses().single().insulin).isEqualTo(2.5)
+    }
+
+    @Test fun `warnings never block - a limited bolus at a low BG still sends and delivers exactly the offered command`() {
+        whenever(ads.lastBg()).thenReturn(InMemoryGlucoseValue(timestamp = now - 120_000L, value = 55.0))
+        whenever(preferences.get(UnitDoubleKey.OverviewLowMark)).thenReturn(70.0)
+        whenever(constraintsChecker.applyBolusConstraints(any())).thenAnswer {
+            it.getArgument<Constraint<Double>>(0).also { c -> c.setIfSmaller(1.5, "max", this) }
+        }
+        rxBus.send(EventData.ActionBolusPreCheck(3.0, 10))
+
+        val confirm = confirmActions().last()
+        val codes = confirm.details!!.warnings.map { it.code }
+        assertThat(codes).containsAtLeast(EventData.ConfirmWarning.W_BG_LOW, EventData.ConfirmWarning.W_CONSTRAINT)
+        val offered = confirm.returnCommand as EventData.ActionBolusConfirmed
+        assertThat(offered.insulin).isEqualTo(1.5)
+        assertThat(offered.carbs).isEqualTo(10)
+
+        // the watch sends back exactly this command; the phone delivers exactly it, once
+        rxBus.send(offered)
+        assertThat(errorsToWatch()).isEmpty()
+        val delivered = deliveredBoluses().single()
+        assertThat(delivered.insulin).isEqualTo(1.5)
+        assertThat(delivered.carbs).isEqualTo(10.0)
     }
 
     @Test fun `wizard confirm without precheck is refused`() {
