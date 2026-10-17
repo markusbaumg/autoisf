@@ -252,6 +252,16 @@ class GlassWatchface : WatchFace() {
     private var predDotCount = 0
     private val segX = FloatArray(GlassFaceLogic.SPARK_HISTORY + 2)
     private val segY = FloatArray(GlassFaceLogic.SPARK_HISTORY + 2)
+    private val segV = DoubleArray(GlassFaceLogic.SPARK_HISTORY + 2)
+    /**
+     * Glass polish round 6: older history above the plot's top (clamped) as (x0, x1, peak mg/dL) triples; drawn faded in
+     * the colour of its REAL value with an up-chevron, never as a solid plateau that reads as data.
+     */
+    private val offRuns = FloatArray(3 * 12)
+    private var offCount = 0
+    private val offTmp = FloatArray(3 * 12)
+    private val chevron = Path()
+    private val offDots = DashPathEffect(floatArrayOf(0.1f, 5f), 0f)
     private var predCount = 0
     private var sparkX0 = GlassFaceLogic.SPARK_X0
     private var sparkForecast = true
@@ -758,18 +768,30 @@ class GlassWatchface : WatchFace() {
         nowX = GlassFaceLogic.nowX(sparkX0, sparkForecast)
         sparkEndX = if (sparkForecast) GlassFaceLogic.SPARK_X1 else nowX
         fun sx(slot: Float) = GlassFaceLogic.sparkX(slot, sparkX0, sparkForecast)
-        // linear range over what is visible (history, current reading, forecast) and the target band: never clamped flat
+        // linear range over what is visible (history, current reading, forecast) and the target band. Glass polish round 6:
+        // the current reading, the last 30 min and the forecast are never clamped (keepMax); only older history may be
         var vMin = Double.NaN
         var vMax = Double.NaN
-        fun see(v: Double) {
+        var keepMax = Double.NaN
+        var nowV = Double.NaN
+        var nowTs = Long.MIN_VALUE
+        val keepFrom = anchor - GlassFaceLogic.SPARK_KEEP_MS
+        fun see(v: Double, keep: Boolean) {
             if (v <= 0.0) return
             vMin = if (vMin.isNaN()) v else min(vMin, v)
             vMax = if (vMax.isNaN()) v else max(vMax, v)
+            if (keep) keepMax = if (keepMax.isNaN()) v else max(keepMax, v)
         }
-        for (e in data.graphData.entries) if (e.timeStamp <= anchor && GlassFaceLogic.slotOf(e.timeStamp, anchor) != null) see(e.sgv)
-        if (bgTs > 0L && GlassFaceLogic.slotOf(bgTs, anchor) != null) see(bgMgdl)
-        if (sparkForecast) for (p in preds) if (GlassFaceLogic.slotOf(p.timeStamp, anchor) != null) see(p.sgv)
-        val (lo, hi) = GlassFaceLogic.sparkRange(vMin, vMax, lowMgdl, highMgdl)
+        for (e in data.graphData.entries) if (e.timeStamp <= anchor && GlassFaceLogic.slotOf(e.timeStamp, anchor) != null) {
+            see(e.sgv, e.timeStamp >= keepFrom)
+            if (e.sgv > 0.0 && e.timeStamp > nowTs) { nowTs = e.timeStamp; nowV = e.sgv }
+        }
+        if (bgTs > 0L && bgMgdl > 0.0 && GlassFaceLogic.slotOf(bgTs, anchor) != null) {
+            see(bgMgdl, true)
+            if (bgTs >= nowTs) { nowTs = bgTs; nowV = bgMgdl }
+        }
+        if (sparkForecast) for (p in preds) if (GlassFaceLogic.slotOf(p.timeStamp, anchor) != null) see(p.sgv, true)
+        val (lo, hi) = GlassFaceLogic.sparkRange(vMin, vMax, lowMgdl, highMgdl, nowV, keepMax)
         fun sy(v: Double) = GlassFaceLogic.sparkY(v, lo, hi)
         // band edges on the same scale (inside the plot by construction; the clamp and the check stay as a guard)
         val lowRaw = GlassFaceLogic.sparkYRaw(lowMgdl, lo, hi)
@@ -781,10 +803,16 @@ class GlassWatchface : WatchFace() {
         lowZone = lowEdge && !vMin.isNaN() && vMin < lowMgdl
         history.reset()
         hasCurrent = false
+        offCount = 0
         // graph.gaps: a gap longer than GAP_MS breaks the line, never interpolated; each run is drawn as a smooth curve
         var n = 0
         fun flush() {
             if (n == 0) return
+            val k = GlassFaceLogic.offScaleRuns(segX, segV, n, hi, offTmp)
+            for (i in 0 until k) if (3 * offCount + 2 < offRuns.size) {
+                offRuns[3 * offCount] = offTmp[3 * i]; offRuns[3 * offCount + 1] = offTmp[3 * i + 1]; offRuns[3 * offCount + 2] = offTmp[3 * i + 2]
+                offCount++
+            }
             history.moveTo(segX[0], segY[0])
             if (n == 1) history.lineTo(segX[0] + 0.01f, segY[0])
             else {
@@ -795,14 +823,14 @@ class GlassWatchface : WatchFace() {
             }
             n = 0
         }
-        fun add(x: Float, y: Float) {
+        fun add(x: Float, y: Float, v: Double) {
             if (n == segX.size) {
                 // a run longer than the buffer (1' data): flush and carry the last point over, so the curve stays continuous
-                val lx = segX[n - 1]; val ly = segY[n - 1]
+                val lx = segX[n - 1]; val ly = segY[n - 1]; val lv = segV[n - 1]
                 flush()
-                segX[0] = lx; segY[0] = ly; n = 1
+                segX[0] = lx; segY[0] = ly; segV[0] = lv; n = 1
             }
-            segX[n] = x; segY[n] = y; n++
+            segX[n] = x; segY[n] = y; segV[n] = v; n++
         }
         var lastTs = Long.MIN_VALUE
         var started = false
@@ -813,7 +841,7 @@ class GlassWatchface : WatchFace() {
             val x = sx(slot)
             val y = sy(e.sgv)
             if (started && e.timeStamp - prevTs > GlassFaceLogic.GAP_MS) flush()
-            add(x, y)
+            add(x, y, e.sgv)
             started = true
             prevTs = e.timeStamp
             curX = x; curY = y; lastTs = e.timeStamp
@@ -823,7 +851,7 @@ class GlassWatchface : WatchFace() {
                 val x = sx(slot)
                 val y = sy(bgMgdl)
                 if (started && bgTs - prevTs > GlassFaceLogic.GAP_MS) flush()
-                add(x, y)
+                add(x, y, bgMgdl)
                 started = true
                 curX = x; curY = y
             }
@@ -1039,9 +1067,13 @@ class GlassWatchface : WatchFace() {
             line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = TRACE_W
             line.shader = historyShader(range)
             if (!stale) line.setShadowLayer(4f, 0f, 0f, withAlpha(rangeColour, 110))
-            canvas.drawPath(history, line)
+            drawTrace(canvas, line)
             line.shader = null
             line.clearShadowLayer()
+            // Glass polish round 6: clamped older history faded in the colour of its real value, with an up-chevron
+            drawOffScale(canvas, aa = true, width = TRACE_W) { peak ->
+                withAlpha(if (stale) STALE_COL else if (peak > highMgdl) HIGH_COL else IN_COL, OFF_SCALE_ALPHA)
+            }
         }
         if (hasCurrent) {
             fill.reset(); fill.isAntiAlias = true
@@ -1095,12 +1127,15 @@ class GlassWatchface : WatchFace() {
         rect.set(x - w / 2f, y - CAPTION_H / 2f, x + w / 2f, y + CAPTION_H / 2f)
         if (ambient) {
             if (caption == FaceState.Caption.LOW_BADGE) {
-                // urgent low by SHAPE (UX round 3): a double outline, 2 px outside and 1 px inside, burn-in safe
+                // urgent low by SHAPE (UX round 3): a double outline, 2 px outside and 1 px inside, burn-in safe.
+                // Glass polish round 6: at the former 30 px height, the inner outline needs the room around the word
+                val hh = CAPTION_H_AMBIENT_BADGE / 2f
+                rect.set(x - w / 2f, y - hh, x + w / 2f, y + hh)
                 stroke.reset(); stroke.isAntiAlias = aa; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 2f; stroke.color = wordColour
-                canvas.drawRoundRect(rect, CAPTION_H / 2f, CAPTION_H / 2f, stroke)
+                canvas.drawRoundRect(rect, hh, hh, stroke)
                 stroke.strokeWidth = 1f
                 rect.inset(3.5f, 3.5f)
-                canvas.drawRoundRect(rect, CAPTION_H / 2f - 3.5f, CAPTION_H / 2f - 3.5f, stroke)
+                canvas.drawRoundRect(rect, hh - 3.5f, hh - 3.5f, stroke)
             }
         } else if (caption == FaceState.Caption.LOW_BADGE) {
             fill.reset(); fill.isAntiAlias = true; fill.color = LOW_COL
@@ -1213,6 +1248,56 @@ class GlassWatchface : WatchFace() {
             floatArrayOf(0f, ft, 1f - fb, 1f), Shader.TileMode.CLAMP
         )
         ComposeShader(vertical, bandFade(Color.WHITE), PorterDuff.Mode.DST_IN)
+    }
+
+    /** Glass polish round 6: the history trace less the clamped older runs ([offRuns]), which [drawOffScale] draws. */
+    private fun drawTrace(canvas: Canvas, paint: Paint) {
+        if (offCount == 0) {
+            canvas.drawPath(history, paint)
+            return
+        }
+        val save = canvas.save()
+        for (i in 0 until offCount)
+            canvas.clipOutRect(offRuns[3 * i], GlassFaceLogic.SPARK_Y0 - OFF_CLIP, offRuns[3 * i + 1], GlassFaceLogic.SPARK_Y1 + OFF_CLIP)
+        canvas.drawPath(history, paint)
+        canvas.restoreToCount(save)
+    }
+
+    /**
+     * Glass polish round 6 (strict panel): older history above the plot is clamped to its top edge; a solid plateau
+     * there read as data ("flat at 7 mmol/l"). It is drawn at [colourOf] (the colour of its REAL peak, faded) and
+     * marked with a small up-chevron above the plateau: "off the scale, higher than shown".
+     */
+    private fun drawOffScale(canvas: Canvas, aa: Boolean, width: Float, trace: Boolean = true, colourOf: (Float) -> Int) {
+        val top = GlassFaceLogic.SPARK_Y0 + GlassFaceLogic.SPARK_INSET
+        for (i in 0 until offCount) {
+            val x0 = offRuns[3 * i]
+            val x1 = offRuns[3 * i + 1]
+            val colour = colourOf(offRuns[3 * i + 2])
+            line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE
+            line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = width
+            line.color = colour
+            if (trace) {
+                // dotted: a faint solid plateau still read as a flat stretch of data
+                line.pathEffect = offDots
+                val save = canvas.save()
+                canvas.clipRect(x0 + OFF_DOT_INSET, GlassFaceLogic.SPARK_Y0 - OFF_CLIP, x1 - OFF_DOT_INSET, GlassFaceLogic.SPARK_Y1 + OFF_CLIP)
+                canvas.drawPath(history, line)
+                canvas.restoreToCount(save)
+                line.pathEffect = null
+            }
+            if (x1 - x0 < OFF_CHEVRON_MIN_RUN) continue
+            // the chevron a step stronger than the faded line, so it reads as a mark, centred on the clamped run
+            line.color = if (Color.alpha(colour) < 255) withAlpha(colour, OFF_CHEVRON_ALPHA) else colour
+            line.strokeWidth = 1.5f
+            val cx = (x0 + x1) / 2f
+            val y = top - OFF_CHEVRON_GAP
+            chevron.rewind()
+            chevron.moveTo(cx - OFF_CHEVRON_W, y)
+            chevron.lineTo(cx, y - OFF_CHEVRON_H)
+            chevron.lineTo(cx + OFF_CHEVRON_W, y)
+            canvas.drawPath(chevron, line)
+        }
     }
 
     /**
@@ -1472,7 +1557,9 @@ class GlassWatchface : WatchFace() {
         if (hasHistory) {
             line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE
             line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = 1.5f; line.color = c(A_HIST)
-            canvas.drawPath(history, line)
+            drawTrace(canvas, line)
+            // Glass polish round 6: clamped older history as a dim line (low-bit: only the chevron, no grey exists)
+            drawOffScale(canvas, aa = aa, width = 1.5f, trace = !lowBit) { if (lowBit) Color.WHITE else A_LINE }
         }
         if (hasCurrent) {
             fill.reset(); fill.isAntiAlias = aa; fill.color = Color.BLACK
@@ -1864,7 +1951,8 @@ class GlassWatchface : WatchFace() {
         // Glass polish round 1: the delta row and the TIEF/HOCH pill a step smaller with the 112 px digits
         // Glass polish round 3: back to 24 / 30, the word that stands in for colour does not shrink in a layout pass
         private const val CAPTION_SIZE = 24f
-        private const val CAPTION_H = 30f
+        private const val CAPTION_H = 26f // Glass polish round 6: 30 -> 26 (the word stays 24 px), 12 px to the card's bottom
+        private const val CAPTION_H_AMBIENT_BADGE = 30f
         private const val CAPTION_PAD = 10f
         private const val CAPTION_GAP = 12f
         // UX round 4: chip r 18 -> 24 and a 30 px arrow with a 3.4 px stroke (the double arrow reads at arm's length)
@@ -1937,6 +2025,15 @@ class GlassWatchface : WatchFace() {
         private const val PRED_DOT_STEP = 6.5f
         private const val PRED_START = 9f
         private const val PRED_ALPHA = 190
+        /** Glass polish round 6: clamped older history (off the plot's top) at about 28 %, its chevron at about 60 %. */
+        private const val OFF_SCALE_ALPHA = 72
+        private const val OFF_CHEVRON_ALPHA = 150
+        private const val OFF_CHEVRON_MIN_RUN = 8f
+        private const val OFF_CHEVRON_W = 3.5f
+        private const val OFF_CHEVRON_H = 3f
+        private const val OFF_CHEVRON_GAP = 3f
+        private const val OFF_CLIP = 12f
+        private const val OFF_DOT_INSET = 3f
         /** In-range digits (Glass/Orbit UX round 2): a pale mint, the family's green at Glass's calmer strength. */
         private val IN_DIGIT_COL = 0xFFCFF5E4.toInt()
         private val HIGH_COL = 0xFFFFB547.toInt()

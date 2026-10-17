@@ -214,6 +214,18 @@ class WatchfaceRenderHarness {
         RenderState("low") { now -> data(now, 3.4, "↓", "-0.3", -1) },
         RenderState("low_3_5_fall") { now -> data(now, 3.5, "↘", "-0.2", -1, history = List(36) { k -> 6.0 - 2.5 * (k / 35.0) }) },
         RenderState("urgent_low") { now -> data(now, 2.6, "\u21ca", "-0.6", -1, history = List(36) { k -> 7.0 - 4.4 * (k / 35.0) * (k / 35.0) }) },
+        // Glass polish round 6 (sparkline safety): a rebound high after a low (2,8 for an hour, then up to 16,7), a
+        // forecast-only dip (in range now, the forecast under the low line), a low NOW after a meal peak 2 h ago
+        RenderState("rebound_high") { now ->
+            data(now, 16.7, "\u21c8", "+1.0", 1, history = List(36) { k -> if (k < 14) 2.8 + 0.05 * (k % 3) else 2.8 + 13.9 * ((k - 13) / 22.0) * ((k - 13) / 22.0) })
+        },
+        RenderState("forecast_dip", ball = Ball.IDLE) { now ->
+            traced(now, List(36) { k -> 7.5 - 2.3 * (k / 35.0) }, List(12) { k -> (5.0 - 0.25 * (k + 1)).coerceAtLeast(3.3) }, "↘", "-0.2", 0)
+        },
+        RenderState("meal_then_low") { now ->
+            traced(now, List(36) { k -> 5.5 + 6.5 * kotlin.math.exp(-((k - 10.0) * (k - 10.0)) / 30.0) - (if (k > 10) 2.0 * (k - 10) / 25.0 else 0.0) }
+                .mapIndexed { k, v -> if (k == 35) 3.5 else v }, List(12) { k -> 3.5 + 0.05 * (k + 1) }, "↘", "-0.2", -1)
+        },
         RenderState("mgdl_224") { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true) },
         RenderState("stale_17") { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
         RenderState("very_stale_45") { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 45, st = status(now, loopAgeMin = 45)) },

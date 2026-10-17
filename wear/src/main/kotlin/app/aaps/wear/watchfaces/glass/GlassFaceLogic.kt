@@ -129,11 +129,19 @@ object GlassFaceLogic {
 
     fun sentinel(sgvMgdl: Double, age: BgAge): Sentinel? = FaceState.sentinel(sgvMgdl, age)
 
-    /** Hero BG text: "---" without a reading or from 60'; the phone string otherwise, "+" appended at the high sentinel. */
+    /**
+     * Hero BG text: "---" without a reading or from 60'; the phone string otherwise, "+" appended at the high sentinel.
+     * Glass polish round 6: the low sentinel is marked symmetrically, "<" before it ("<2,2", "<39"): the sensor reads
+     * at most this, the true value may be lower (a plain "2,2" read as a measured value while "22,3+" was marked).
+     */
     fun bgText(sgvString: String, ageMinutes: Long?, sentinel: Sentinel?): String {
         val s = sgvString.trim()
         if (ageMinutes == null || ageMinutes >= BG_HIDE_MIN || s.isEmpty() || s.none { it.isDigit() }) return "---"
-        return if (sentinel == Sentinel.HIGH && !s.endsWith("+")) "$s+" else s
+        return when {
+            sentinel == Sentinel.HIGH && !s.endsWith("+") -> "$s+"
+            sentinel == Sentinel.LOW && !s.startsWith("<") -> "<$s"
+            else -> s
+        }
     }
 
     /** Colour level of the BG age label: normal below 6', warn from 6', alert from 12' (or no reading). */
@@ -574,8 +582,17 @@ object GlassFaceLogic {
      * [SPARK_HYPO_LOW_HEADROOM_MGDL] (about 120 mg/dL), whatever the earlier peak (a low after a meal must not be squeezed
      * again; higher points are clamped to the plot top), and the minimum span does not apply: with the default band the low edge sits at about y 330, 3,5 at 333, 2,6 at 342 and
      * 2,2 at 346. The high edge is then above the plot (not drawn, the band fades out upward). In range and high: as before.
+     * Glass polish round 6 (safety, strict panel): the fixed hypo window clamped EVERYTHING above low + 50, so a rebound
+     * high (2,2 an hour ago, 22,2 now) was drawn as a flat green line along the plot top, and a forecast-only dip did the
+     * same to an in-range trace. Now: the floor is 40 whenever a visible value is below the low line, but the top always
+     * includes [keepMaxMgdl] (the current reading, the forecast and the last [SPARK_KEEP_MS]) plus
+     * [SPARK_KEEP_MARGIN_MGDL]; only OLDER history may be clamped, and only while the current reading itself is below
+     * the low line (the round-5 case: a low NOW after a meal peak 2 h ago). With the current reading in range or high
+     * the top covers every visible value and the high line + margin (both band edges inside, as in range).
      */
     const val SPARK_BAND_MARGIN_MGDL = 15.0
+    const val SPARK_KEEP_MARGIN_MGDL = 10.0
+    const val SPARK_KEEP_MS = 30 * MINUTE_MS
     const val SPARK_HYPO_LOW_HEADROOM_MGDL = 50.0
     const val SPARK_MIN_SPAN_MGDL = 90.0
     const val SPARK_FLOOR_MGDL = 40.0
@@ -585,16 +602,28 @@ object GlassFaceLogic {
 
     /**
      * (lo, hi) of the plot for the visible values [minMgdl]..[maxMgdl] (NaN when there are none) and the target band
-     * [lowMgdl]..[highMgdl].
+     * [lowMgdl]..[highMgdl]. [nowMgdl] is the current reading (NaN: none drawn), [keepMaxMgdl] the highest value that must
+     * never be clamped: the current reading, the forecast and the last [SPARK_KEEP_MS] of history (NaN: every value is
+     * kept, the safe default).
      */
     fun sparkRange(
-        minMgdl: Double, maxMgdl: Double, lowMgdl: Double = DEFAULT_LOW_MGDL, highMgdl: Double = DEFAULT_HIGH_MGDL
+        minMgdl: Double, maxMgdl: Double, lowMgdl: Double = DEFAULT_LOW_MGDL, highMgdl: Double = DEFAULT_HIGH_MGDL,
+        nowMgdl: Double = Double.NaN, keepMaxMgdl: Double = Double.NaN
     ): Pair<Double, Double> {
         if (minMgdl.isNaN() || maxMgdl.isNaN()) return SPARK_EMPTY_LO to SPARK_EMPTY_HI
         if (minMgdl < lowMgdl) {
-            // hypo scale: a fixed window 40 .. low line + headroom, so an earlier peak (e.g. after a meal) cannot squeeze
-            // the low values together again; higher history points are clamped to the plot top
-            return SPARK_FLOOR_MGDL to (lowMgdl + SPARK_HYPO_LOW_HEADROOM_MGDL).coerceAtMost(SPARK_CEIL_MGDL)
+            // hypo depth on a fixed scale: the floor is 40 mg/dL
+            val hi = if (!nowMgdl.isNaN() && nowMgdl < lowMgdl) {
+                // low NOW: the top is the low line + headroom, so an older peak (e.g. a meal 2 h ago) cannot squeeze the
+                // low values together; it rises only for what must stay true (now, the last 30 min, the forecast)
+                val keep = if (keepMaxMgdl.isNaN()) maxMgdl else keepMaxMgdl
+                max(lowMgdl + SPARK_HYPO_LOW_HEADROOM_MGDL, keep + SPARK_KEEP_MARGIN_MGDL)
+            } else {
+                // in range or high now (a rebound, or only the history / the forecast dips): nothing is clamped and the
+                // high line stays inside the plot
+                max(maxMgdl, highMgdl + SPARK_BAND_MARGIN_MGDL)
+            }
+            return SPARK_FLOOR_MGDL to hi.coerceAtMost(SPARK_CEIL_MGDL)
         }
         var lo = min(minMgdl, lowMgdl - SPARK_BAND_MARGIN_MGDL).coerceAtLeast(SPARK_FLOOR_MGDL)
         var hi = max(maxMgdl, highMgdl + SPARK_BAND_MARGIN_MGDL).coerceAtMost(SPARK_CEIL_MGDL).coerceAtLeast(lo)
@@ -606,6 +635,30 @@ object GlassFaceLogic {
             if (hi > SPARK_CEIL_MGDL) { lo -= hi - SPARK_CEIL_MGDL; hi = SPARK_CEIL_MGDL }
         }
         return lo to hi
+    }
+
+    /**
+     * Glass polish round 6: x intervals of a history run where the REAL value is above [hi] (clamped older history), from
+     * the run's points [xs]/[vs] (n points, in time order), with linear crossings between points. Written to [out] as
+     * (x0, x1, peak mg/dL) triples; returns the number of intervals. A lone point above [hi] gets [lonePad] px each side.
+     */
+    fun offScaleRuns(xs: FloatArray, vs: DoubleArray, n: Int, hi: Double, out: FloatArray, lonePad: Float = 2f): Int {
+        var count = 0
+        var i = 0
+        while (i < n && 3 * count + 2 < out.size) {
+            if (vs[i] <= hi) { i++; continue }
+            val start = if (i > 0) xs[i - 1] + ((hi - vs[i - 1]) / (vs[i] - vs[i - 1])).toFloat() * (xs[i] - xs[i - 1]) else xs[i] - lonePad
+            var peak = vs[i]
+            var j = i
+            while (j + 1 < n && vs[j + 1] > hi) { j++; peak = max(peak, vs[j]) }
+            val end = if (j + 1 < n) xs[j] + ((vs[j] - hi) / (vs[j] - vs[j + 1])).toFloat() * (xs[j + 1] - xs[j]) else xs[j] + lonePad
+            out[3 * count] = start
+            out[3 * count + 1] = end
+            out[3 * count + 2] = peak.toFloat()
+            count++
+            i = j + 1
+        }
+        return count
     }
 
     /**
@@ -790,7 +843,10 @@ object GlassFaceLogic {
     const val HERO_Y0 = 132f
     const val HERO_Y1 = 280f
     // Glass polish round 3: the meta row 256 -> 258, 7 px of air under the comma's tail (margin under the row ~16 px)
-    const val META_Y = 258f
+    // Glass polish round 6 (strict panel: the content sat low, the cap 14 px under the card's top, the TIEF/HOCH pill
+    // 7 px above its bottom): the row 258 -> 255 and the digits 2 px up ([BG_Y]) with a 26 px pill: about 11 px of glass
+    // over the cap and 12 px under the pill
+    const val META_Y = 255f
 
     /** Digits' centre next to the chip (Glass/Orbit UX round 4: 198 -> 200, equal optical padding left and right). */
     const val BG_X_CHIP = 191f // Glass polish round 1: the widest group (230 px digits, gap, chip) centred on the card
@@ -803,7 +859,7 @@ object GlassFaceLogic {
     const val CHIP_GAP = 18f
 
     /** Digits' vertical centre with the delta row, and centred in the card without it (Glass polish round 2: 4 px / 3 px up). */
-    const val BG_Y = 188f
+    const val BG_Y = 186f // Glass polish round 6: 188 -> 186, equal glass over the cap and under the meta row
     const val BG_Y_NO_META = 208f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
