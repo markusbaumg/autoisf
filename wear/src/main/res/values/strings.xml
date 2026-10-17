@@ -238,7 +238,7 @@
     <string name="key_switch_external" translatable="false">switch_external</string>
     <string name="key_last_selected_watchface" translatable="false">last_selected_watchface</string>
     <string name="glass_waiting">Waiting for AAPS</string>
-    <string name="glass_phone_disconnected">Phone disconnected · %1$s</string>
+    <string name="glass_phone_disconnected">Phone lost · %1$s</string>
     <string name="glass_no_data">No data · %1$s</string>
     <string name="glass_no_profile">No profile</string>
     <string name="glass_loop_off">Loop off</string>

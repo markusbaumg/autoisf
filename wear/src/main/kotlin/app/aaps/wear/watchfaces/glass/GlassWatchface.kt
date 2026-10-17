@@ -192,7 +192,6 @@ class GlassWatchface : WatchFace() {
     private var loopTextAmbient = "--"
     private var loopLabel = "LOOP"
     private var loopLabelShown = true
-    private var loopAgeHidden = false
     private var pillValueSize = PILL_VALUE_SIZE
     private var pillUnitSize = PILL_UNIT_SIZE
     private var showKh = true
@@ -510,7 +509,7 @@ class GlassWatchface : WatchFace() {
         hero = GlassFaceLogic.heroLayout(showChip, metaEmpty = !showDelta && !showAge && captionText.isEmpty())
         // UX round 3 (spec F1): low AND urgent low digits are red; a white 3,4 next to a white 6,4 hid the low in sunlight
         bgColour = when (GlassFaceLogic.digitTone(range, stale)) {
-            GlassFaceLogic.DigitTone.STALE -> TXT2
+            GlassFaceLogic.DigitTone.STALE -> STALE_DIGIT_COL // UX round 4: brighter than TXT2 on the grey card
             GlassFaceLogic.DigitTone.LOW   -> LOW_COL
             GlassFaceLogic.DigitTone.WHITE -> Color.WHITE
         }
@@ -543,8 +542,7 @@ class GlassWatchface : WatchFace() {
         }
         loopTextAmbient = loopText // no bare "!" (UX round 1): the 2 px ring of the dot and the footer carry a bad loop
         loopLabel = if (loopMode == LoopMode.LGS && loopHealth in setOf(LoopHealth.OK, LoopHealth.WARN, LoopHealth.BAD)) "LGS" else "LOOP"
-        // stale: the chip and the footer already show the age; the pill keeps the dot only (UX round 2)
-        loopAgeHidden = GlassFaceLogic.loopAgeRedundant(strike, loopAge, age) && loopHealth != LoopHealth.OFF && loopHealth != LoopHealth.OPEN
+        // UX round 4: the loop age always shows (stale included): it matters most exactly then
         val (iobV, iobU) = HaloFaceLogic.valueUnit(if (firstStart || noProfile) "" else st.iobSum, "U")
         iobText = iobV
         iobUnit = iobU
@@ -557,7 +555,6 @@ class GlassWatchface : WatchFace() {
         pills = GlassFaceLogic.pills(sp.getBoolean(R.string.key_show_iob, true), pumpControl = IS_PUMPCONTROL)
         // loop off: "aus" with the pause dot says it; the loop glyph would read as "running"
         loopLabelShown = GlassFaceLogic.loopLabelAllowed(loopHealth) && loopHealth != LoopHealth.OFF
-        layoutPills()
 
         // status slot / footer
         val warnings = GlassFaceLogic.warnings(
@@ -604,6 +601,7 @@ class GlassWatchface : WatchFace() {
         val amount = bolusAmount()
         updateBall()
         if (!amount.isNaN()) amountText = GlassFaceLogic.bolusAmountText(amount, locale)
+        layoutPills() // after the ball: with the ball shown the row moves right of its hit area (UX round 4)
         buildSparkline(bg.timeStamp, bg.sgv)
     }
 
@@ -623,15 +621,23 @@ class GlassWatchface : WatchFace() {
         metaDeltaW = if (showDelta) text.measureText(deltaText) else 0f
         metaSepW = if (showDelta && showAge) text.measureText(META_SEP) else 0f
         var total = metaDeltaW + metaSepW + if (showAge) text.measureText(ageText) else 0f
-        val pillW = if (captionText.isNotEmpty()) captionPillWidth() + if (total > 0f) CAPTION_GAP else 0f else 0f
-        metaSize = maxOf(META_MIN_SIZE, GlassFaceLogic.fitSize(META_SIZE, total, META_MAX_WIDTH - pillW))
+        // UX round 4: the TIEF/HOCH pill sits right-aligned in the chip column, the delta line centres in the space
+        // left of it (never under the comma of the larger digits)
+        val capW = if (captionText.isNotEmpty()) captionPillWidth() else 0f
+        captionX = HERO_X1 - HERO_PAD - capW / 2f
+        val left = HERO_X0 + HERO_PAD
+        val right = if (capW > 0f) HERO_X1 - HERO_PAD - capW - CAPTION_GAP else HERO_X1 - HERO_PAD
+        metaSize = maxOf(META_MIN_SIZE, GlassFaceLogic.fitSize(META_SIZE, total, right - left))
         val k = metaSize / META_SIZE
         metaDeltaW *= k
         metaSepW *= k
         total *= k
         metaWidth = total
-        metaX = hero.metaCentreX - (total + pillW) / 2f
+        val centre = if (capW > 0f) (left + right) / 2f else hero.metaCentreX
+        metaX = centre - total / 2f
     }
+
+    private var captionX = 0f
 
     private fun captionPillWidth(): Float {
         setText(tf700, CAPTION_SIZE)
@@ -650,20 +656,21 @@ class GlassWatchface : WatchFace() {
      */
     private fun layoutPills() {
         pillUnitSize = minPx(PILL_UNIT_SIZE, PILL_UNIT_PX_MIN)
+        val (centre, maxWidth) = GlassFaceLogic.pillRowFrame(ball != BallState.HIDDEN)
         var size = minPx(PILL_VALUE_SIZE, PILL_VALUE_PX_MIN)
         while (true) {
             measurePills(size)
             val total = pillW.sum() + PILL_GAP * (pillW.count { it > 0f } - 1).coerceAtLeast(0)
-            if (total <= GlassFaceLogic.PILL_ROW_MAX_WIDTH || size <= PILL_VALUE_MIN) break
+            if (total <= maxWidth || size <= PILL_VALUE_MIN) break
             size -= 1f
         }
         pillValueSize = size
-        pillX = GlassFaceLogic.pillRow(pillW, PILL_GAP, CX)
+        pillX = GlassFaceLogic.pillRow(pillW, PILL_GAP, centre)
     }
 
     private fun measurePills(valueSize: Float) {
         setText(tf600, valueSize)
-        val loopValueW = if (loopAgeHidden) 0f else text.measureText(loopText)
+        val loopValueW = text.measureText(loopText)
         val iobValueW = text.measureText(iobText)
         val khValueW = text.measureText(khText)
         setText(tf600, pillUnitSize)
@@ -865,10 +872,11 @@ class GlassWatchface : WatchFace() {
         // hero BG
         setText(tf600, bgSize, align = Paint.Align.CENTER)
         text.color = bgColour
-        if (!stale) text.setShadowLayer(10f, 0f, 0f, withAlpha(rangeColour, 0x70))
+        // UX round 4: no glow behind red digits (it lowered their contrast on the low card)
+        if (!stale && !GlassFaceLogic.isLow(range)) text.setShadowLayer(10f, 0f, 0f, withAlpha(rangeColour, 0x70))
         drawBg(canvas, hero.bgX, hero.bgY)
         if (strike && bgText != "---") {
-            line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE; line.strokeWidth = 3f; line.color = TXT2
+            line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE; line.strokeWidth = 3f; line.color = STALE_DIGIT_COL
             canvas.drawLine(hero.bgX - bgHalfWidth - 4f, hero.bgY + 2f, hero.bgX + bgHalfWidth + 4f, hero.bgY + 2f, line)
         }
         drawCaption(canvas, ambient = false, lowBit = false)
@@ -879,21 +887,19 @@ class GlassWatchface : WatchFace() {
             canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, fill)
             stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 2f; stroke.color = withAlpha(rangeColour, 210)
             canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, stroke)
-            drawArrow(canvas, rangeColour, aa = true, maxWidth = 4f)
+            drawArrow(canvas, rangeColour, aa = true, maxWidth = 4.2f)
         }
 
         // meta line + phone-off glyph (W10); UX round 3: a normal age in the delta colour (TXT2 was 4.2:1 on the glass)
-        drawMeta(canvas, DELTA_COL, TXT3, when (ageLevel) {
+        // UX round 4: the "·" in TXT2 (TXT3 vanished in sunlight and "-0,6 2'" read as one number)
+        drawMeta(canvas, DELTA_COL, TXT2, when (ageLevel) {
             Level.NORMAL -> DELTA_COL
             Level.WARN   -> WARN_COL
             Level.ALERT  -> ALERT_COL
         }, aa = true)
         if (link == PhoneLink.LOST_FRESH) drawPhoneOff(canvas, min(metaX + metaWidth + 20f, HERO_X1 - 20f), hero.metaY, TXT2)
 
-        // sparkline
-        fill.reset(); fill.isAntiAlias = true; fill.color = withAlpha(rangeColour, 24)
-        rect.set(sparkX0, highY, sparkEndX, lowY)
-        canvas.drawRoundRect(rect, 8f, 8f, fill)
+        // sparkline (UX round 4: no band fill, the two dashed range lines frame it)
         drawSparkGuides(canvas, withAlpha(Color.WHITE, 46), withAlpha(Color.WHITE, 60), aa = true)
         if (hasHistory) {
             line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE
@@ -923,8 +929,8 @@ class GlassWatchface : WatchFace() {
             }
         }
 
-        // pills
-        for (i in 0..2) if (pillW[i] > 0f) drawPillChrome(canvas, pillX[i], pillW[i])
+        // pills (UX round 4: borderless, separated by dots like the footer: one rhythm for the lower stack)
+        drawPillSeparators(canvas, TXT3, aa = true)
         drawPillContents(canvas, ambient = false, lowBit = false)
 
         // footer = status slot
@@ -943,7 +949,7 @@ class GlassWatchface : WatchFace() {
         if (caption == FaceState.Caption.NONE) return
         val aa = !lowBit
         val w = captionPillWidth()
-        val x = metaX + metaWidth + (if (metaWidth > 0f) CAPTION_GAP else 0f) + w / 2f
+        val x = captionX
         val y = hero.metaY
         val hue = if (caption == FaceState.Caption.HIGH_WORD) HIGH_COL else LOW_COL
         val wordColour = when {
@@ -986,14 +992,14 @@ class GlassWatchface : WatchFace() {
         val triple = trend == Trend.UP3 || trend == Trend.DOWN3
         line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE
         line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND
-        line.strokeWidth = min(if (triple) 3.4f else 2.6f, maxWidth)
+        line.strokeWidth = min(if (triple) 4.2f else 3.4f, maxWidth)
         line.color = colour
         val cy = hero.chipY
         canvas.save()
         canvas.rotate(-trend.angle, CHIP_X, cy)
         canvas.drawLine(CHIP_X - ARROW_L, cy, CHIP_X + ARROW_L, cy, line)
         drawChevron(canvas, CHIP_X + ARROW_L, cy)
-        if (trend.double) drawChevron(canvas, CHIP_X + ARROW_L - 7f, cy)
+        if (trend.double) drawChevron(canvas, CHIP_X + ARROW_L - 9f, cy)
         canvas.restore()
     }
 
@@ -1084,14 +1090,15 @@ class GlassWatchface : WatchFace() {
         }
     }
 
-    /** Glass chrome of one pill (top-lit gradient, 1 px edge), drawn live: the pill row is sized to its content. */
-    private fun drawPillChrome(canvas: Canvas, x0: Float, w: Float) {
-        fill.reset(); fill.isAntiAlias = true; fill.shader = pillShader
-        rect.set(x0, PILL_Y0, x0 + w, PILL_Y1)
-        canvas.drawRoundRect(rect, PILL_R, PILL_R, fill)
-        fill.shader = null
-        stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1f; stroke.color = withAlpha(Color.WHITE, 55)
-        canvas.drawRoundRect(rect, PILL_R, PILL_R, stroke)
+    /** A small dot centred in each gap between two drawn pills (the pills have no chrome since UX round 4). */
+    private fun drawPillSeparators(canvas: Canvas, colour: Int, aa: Boolean) {
+        fill.reset(); fill.isAntiAlias = aa; fill.color = colour
+        var prevEnd = Float.NaN
+        for (i in 0..2) {
+            if (pillW[i] <= 0f) continue
+            if (!prevEnd.isNaN()) canvas.drawCircle((prevEnd + pillX[i]) / 2f, PILL_Y, 2f, fill)
+            prevEnd = pillX[i] + pillW[i]
+        }
     }
 
     /**
@@ -1105,13 +1112,11 @@ class GlassWatchface : WatchFace() {
         if (pillW[0] > 0f) {
             drawLoopDot(canvas, ambient, lowBit)
             var x = pillX[0] + PILL_PAD + LOOP_DOT_W + PILL_INNER_GAP
-            if (!loopAgeHidden) {
-                setText(tf600, pillValueSize, aa)
-                text.color = if (lowBit) Color.WHITE else if (ambient) A_TXT1 else loopValueColour
-                val v = if (ambient) loopTextAmbient else loopText
-                canvas.drawText(v, x, baseline(y), text)
-                x += text.measureText(v) + PILL_INNER_GAP
-            }
+            setText(tf600, pillValueSize, aa)
+            text.color = if (lowBit) Color.WHITE else if (ambient) A_TXT1 else loopValueColour
+            val v = if (ambient) loopTextAmbient else loopText
+            canvas.drawText(v, x, baseline(y), text)
+            x += text.measureText(v) + PILL_INNER_GAP
             if (loopLabelShown) {
                 if (loopLabel == "LGS") {
                     setText(tf600, pillUnitSize, aa)
@@ -1157,9 +1162,6 @@ class GlassWatchface : WatchFace() {
     }
 
     private val glyphPath = Path()
-    private val pillShader by lazy {
-        LinearGradient(0f, PILL_Y0, 0f, PILL_Y1, withAlpha(Color.WHITE, 29), withAlpha(Color.WHITE, 9), Shader.TileMode.CLAMP)
-    }
 
     private fun drawFooter(canvas: Canvas, runs: List<GlassFaceLogic.Run>, xs: FloatArray, size: Float, ambient: Boolean, aa: Boolean) {
         setText(tf500, size, aa) // layoutFooter already applied the physical floor
@@ -1246,7 +1248,7 @@ class GlassWatchface : WatchFace() {
                 canvas.drawText(againText, bx, baseline(by + 14f), text)
             }
 
-            ball == BallState.SENT  -> drawCentred(canvas, "…", bx, by + 14f, tf700, 16f, withAlpha(BALL_UNIT_COL, 191))
+            ball == BallState.SENT  -> drawCentred(canvas, "…", bx, by + 14f, tf700, BALL_SUB_SIZE, withAlpha(BALL_UNIT_COL, 191))
             else                    -> drawCentred(canvas, "U", bx, by + 14f, tf600, BALL_SUB_SIZE, if (disabled) TXT3 else BALL_UNIT_COL)
         }
     }
@@ -1259,7 +1261,8 @@ class GlassWatchface : WatchFace() {
         val aa = !lowBit
         fun c(colour: Int) = if (lowBit) Color.WHITE else colour
 
-        drawTime(canvas, tf200, c(A_TXT1), c(A_TXT2), c(A_TXT2), aa)
+        // UX round 4: the time at regular weight (the 200 hairline read weaker than the date under it)
+        drawTime(canvas, tf400, c(A_TXT1), c(A_TXT2), c(A_TXT2), aa)
 
         // hero card outline: the range as a shape (§9; colour is never the only carrier)
         drawAmbientOutline(canvas, lowBit)
@@ -1297,14 +1300,8 @@ class GlassWatchface : WatchFace() {
             canvas.drawCircle(curX, curY, 3f, stroke)
         }
 
-        // pills
-        if (!lowBit) {
-            stroke.reset(); stroke.isAntiAlias = aa; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1f; stroke.color = A_LINE
-            for (i in 0..2) if (pillW[i] > 0f) {
-                rect.set(pillX[i], PILL_Y0, pillX[i] + pillW[i], PILL_Y1)
-                canvas.drawRoundRect(rect, PILL_R, PILL_R, stroke)
-            }
-        }
+        // pills: borderless as in interactive
+        drawPillSeparators(canvas, c(A_TXT3), aa)
         drawPillContents(canvas, ambient = true, lowBit = lowBit)
 
         drawFooter(canvas, footerAmbient, footerAmbientX, footerAmbientSize, ambient = true, aa = aa)
@@ -1418,8 +1415,21 @@ class GlassWatchface : WatchFace() {
         c.save()
         val card = Path().apply { addRoundRect(HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, HERO_R, Path.Direction.CW) }
         c.clipPath(card)
-        blob(c, p, 110f, 112f, 340f, 284f, withAlpha(colour, (110 * k).toInt()), 40f)
-        blob(c, p, 140f, 136f, 270f, 248f, withAlpha(colour, (60 * k).toInt()), 26f)
+        if (r == Range.LOW || r == Range.URGENT_LOW) {
+            // UX round 4 (P0 contrast): red digits on a red bloom measured 2.0-2.6:1. The bloom under the digits stays
+            // at or below 20 % and the hue moves to a glow along the card rim (digits now about 3.5:1 or better).
+            blob(c, p, 110f, 112f, 340f, 284f, withAlpha(colour, (40 * k).toInt()), 40f)
+            p.reset(); p.isAntiAlias = true; p.style = Paint.Style.STROKE; p.strokeWidth = 14f
+            p.color = withAlpha(colour, (150 * k).toInt())
+            p.maskFilter = BlurMaskFilter(10f * 1.73f, BlurMaskFilter.Blur.NORMAL)
+            c.drawRoundRect(HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, HERO_R, p)
+            p.maskFilter = null
+        } else {
+            // stale: a quieter grey bloom so the struck digits keep their contrast
+            val s = if (r == Range.STALE) 0.6f else 1f
+            blob(c, p, 110f, 112f, 340f, 284f, withAlpha(colour, (110 * k * s).toInt()), 40f)
+            blob(c, p, 140f, 136f, 270f, 248f, withAlpha(colour, (60 * k * s).toInt()), 26f)
+        }
         c.restore()
         p.reset()
         p.isAntiAlias = true
@@ -1605,17 +1615,18 @@ class GlassWatchface : WatchFace() {
         // with the TIEF/HOCH pill, sparkline 44 px with the ball docked left, three content-sized pills, footer 22 px.
         // UX round 3: the time and date start below y 60 (the Watch5 Pro status icon spans y 23-49), the date is 24 px,
         // the card is y 120..274, the sparkline 50 px, the pills y 344..380 and the footer 26 px at y 406.
-        private const val TIME_Y = 72f
-        private const val TIME_Y_NO_DATE = 84f
+        // UX round 4: time and date 4-6 px further apart and 10 px or more above the card (y 116)
+        private const val TIME_Y = 66f
+        private const val TIME_Y_NO_DATE = 80f
         private const val TIME_SIZE = 40f
         private const val AM_PM_GAP = 4f
-        private const val DATE_Y = 101f
+        private const val DATE_Y = 97f
         private const val DATE_SIZE = 24f
         /** Physical text floor (Halo's [app.aaps.wear.watchfaces.halo.HaloLayout.MIN_TEXT_PX]): 384 px screens keep it. */
         private const val MIN_TEXT_PX = 18f
-        private const val HERO_X0 = 75f
+        private const val HERO_X0 = GlassFaceLogic.HERO_X0
         private const val HERO_Y0 = GlassFaceLogic.HERO_Y0
-        private const val HERO_X1 = 375f
+        private const val HERO_X1 = GlassFaceLogic.HERO_X1
         private const val HERO_Y1 = GlassFaceLogic.HERO_Y1
         private const val HERO_R = 28f
         private const val HERO_PAD = 12f
@@ -1623,32 +1634,30 @@ class GlassWatchface : WatchFace() {
         private const val CAPTION_H = 30f
         private const val CAPTION_PAD = 10f
         private const val CAPTION_GAP = 12f
-        private const val CHIP_X = 345f
-        private const val CHIP_R = 18f
-        private const val ARROW_L = 10f
-        private val HEAD_DX = (8.0 * cos(Math.toRadians(42.0))).toFloat()
-        private val HEAD_DY = (8.0 * sin(Math.toRadians(42.0))).toFloat()
+        // UX round 4: chip r 18 -> 24 and a 30 px arrow with a 3.4 px stroke (the double arrow reads at arm's length)
+        private const val CHIP_X = GlassFaceLogic.CHIP_X
+        private const val CHIP_R = GlassFaceLogic.CHIP_R
+        private const val ARROW_L = 15f
+        private val HEAD_DX = (10.0 * cos(Math.toRadians(42.0))).toFloat()
+        private val HEAD_DY = (10.0 * sin(Math.toRadians(42.0))).toFloat()
         private const val META_SIZE = 28f
         private const val META_MIN_SIZE = 24f
-        private const val META_MAX_WIDTH = 276f
         private const val META_SEP = " · "
-        private const val PILL_Y0 = GlassFaceLogic.PILL_Y0
-        private const val PILL_Y1 = 380f
+        // UX round 4: borderless pills (text 26 px, units 20 px), a dot in the 22 px gap
         private const val PILL_Y = 362f
-        private const val PILL_R = 18f
-        private const val PILL_PAD = 13f
-        private const val PILL_GAP = 8f
+        private const val PILL_PAD = 4f
+        private const val PILL_GAP = 22f
         private const val PILL_INNER_GAP = 7f
         private const val UNIT_GAP = 4f
-        private const val PILL_VALUE_SIZE = 24f
+        private const val PILL_VALUE_SIZE = 26f
         private const val PILL_VALUE_MIN = 18f
         private const val PILL_VALUE_PX_MIN = 22f
-        private const val PILL_UNIT_SIZE = 18f
-        private const val PILL_UNIT_PX_MIN = 16f
+        private const val PILL_UNIT_SIZE = 20f
+        private const val PILL_UNIT_PX_MIN = MIN_TEXT_PX
         private const val LOOP_DOT_W = 12f
         private const val LOOP_GLYPH_W = 16f
         private const val BALL_AMOUNT_SIZE = 19f
-        private const val BALL_SUB_SIZE = 16f
+        private const val BALL_SUB_SIZE = MIN_TEXT_PX
 
         /** Flavour effects (flavor.client / flavor.pumpcontrol): no predictions; pumpcontrol has no loop pill. */
         private val IS_PUMPCONTROL = BuildConfig.FLAVOR == "pumpcontrol"
@@ -1668,6 +1677,7 @@ class GlassWatchface : WatchFace() {
         private val BADGE_TEXT_COL = 0xFF1A0508.toInt()
         private val CAPTION_FILL = 0xE00B0D14.toInt()
         private val STALE_COL = 0xFF8A93A8.toInt()
+        private val STALE_DIGIT_COL = 0xFFC2C9DA.toInt()
         private val TXT1 = 0xFFEEF1F7.toInt()
         private val TXT2 = 0xFF9AA6C4.toInt()
         private val TXT3 = 0xFF6F7A99.toInt()

@@ -907,15 +907,18 @@ class OrbitWatchface : WatchFace() {
         // 2. orbit track with the time and date gaps
         drawTrack(canvas, trackRect, 1.5f, TRACK, true)
 
-        // 3. sparkline: a soft target band (as Glass) under quiet dashed edges
+        // 3. sparkline: a soft target band (as Glass); UX round 4: the dotted edges only out of range (in range the
+        // two dotted lines around a short stroke read as a scribble, the band and the now dot carry it)
         setFill(withAlpha(GREEN, if (old) 10 else 22), true)
         rect.set(OrbitFaceLogic.SPARK_X0, highY, OrbitFaceLogic.SPARK_X1, lowY)
         canvas.drawRoundRect(rect, 6f, 6f, fill)
-        setStroke(1f, withAlpha(GREEN, 70), true)
-        stroke.pathEffect = dash
-        canvas.drawLine(OrbitFaceLogic.SPARK_X0, highY, OrbitFaceLogic.SPARK_X1, highY, stroke)
-        canvas.drawLine(OrbitFaceLogic.SPARK_X0, lowY, OrbitFaceLogic.SPARK_X1, lowY, stroke)
-        stroke.pathEffect = null
+        if (range != Range.IN) {
+            setStroke(1f, withAlpha(GREEN, 70), true)
+            stroke.pathEffect = dash
+            canvas.drawLine(OrbitFaceLogic.SPARK_X0, highY, OrbitFaceLogic.SPARK_X1, highY, stroke)
+            canvas.drawLine(OrbitFaceLogic.SPARK_X0, lowY, OrbitFaceLogic.SPARK_X1, lowY, stroke)
+            stroke.pathEffect = null
+        }
         setStroke(2.5f, rangeColour, true)
         stroke.strokeJoin = Paint.Join.ROUND
         stroke.strokeCap = Paint.Cap.ROUND
@@ -1019,7 +1022,8 @@ class OrbitWatchface : WatchFace() {
         }
         drawPillRow(canvas, if (s != null && !slotInDeltaRow) s else null, ambient = true)
 
-        // LOOP, IOB and TT as outlines; COB and BASAL are dropped
+        // LOOP, IOB and TT as value + label only (UX round 4: no disc outlines, the orbit ring is the one circle);
+        // COB and BASAL are dropped
         for (i in balls.indices) {
             if (i == OrbitFaceLogic.IDX_COB || i == OrbitFaceLogic.IDX_BASAL) continue
             val b = balls[i] ?: continue
@@ -1027,12 +1031,6 @@ class OrbitWatchface : WatchFace() {
             val y = ballY[i]
             setFill(Color.BLACK, aa)
             canvas.drawCircle(x, y, OrbitFaceLogic.BALL_R, fill)
-            if (!burnIn) {
-                setStroke(1.2f, amb(AMB3), aa)
-                if (b.dashed) stroke.pathEffect = ringDash
-                canvas.drawCircle(x, y, OrbitFaceLogic.BALL_R, stroke)
-                stroke.pathEffect = null
-            }
             if (b.value == "--" && !b.pause) continue
             if (b.pause) drawPause(canvas, x, y - BALL_VALUE_DY, amb(AMB1), aa, hollow = true)
             else {
@@ -1583,7 +1581,7 @@ class OrbitWatchface : WatchFace() {
     companion object {
 
         private const val MAX_POINTS = 96
-        private const val HERO_Y = 190f
+        private const val HERO_Y = OrbitFaceLogic.HERO_Y
         /** Delta row centre: low enough that the German comma's tail of the 120 px digits stays clear of it. */
         private const val DELTA_ROW_Y = OrbitFaceLogic.DELTA_ROW_Y
         private const val DATE_SIZE = 25f
@@ -1634,9 +1632,10 @@ class OrbitWatchface : WatchFace() {
         private const val CYAN = 0xFF5AC8FA.toInt()
         private const val TEAL = 0xFF3DDBD9.toInt()
         private const val VIOLET = 0xFFB388FF.toInt()
-        private const val NEUTRAL_RING = 0xFF5A6B85.toInt()
+        // UX round 4: neutral rings darker (5A6B85 -> 3A4250) so the hero stays dominant; dim one step darker still
+        private const val NEUTRAL_RING = 0xFF3A4250.toInt()
         private const val LBL_NEUTRAL = 0xFF9AA6B8.toInt()
-        private const val DIM_RING = 0xFF3A4250.toInt()
+        private const val DIM_RING = 0xFF2C323D.toInt()
         private const val DIM_TXT = 0xFF7D8796.toInt()
         private const val TXT2 = 0xFF9AA6C4.toInt()
         private const val TXT3 = 0xFF6F7A99.toInt()

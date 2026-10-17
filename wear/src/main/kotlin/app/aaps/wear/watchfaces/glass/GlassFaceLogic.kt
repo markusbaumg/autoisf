@@ -141,6 +141,7 @@ object GlassFaceLogic {
     /**
      * UX round 3: the decimal separator of the BG ("6,4", "6.4") is set tight: each side loses [SEPARATOR_KERN] em,
      * so the German comma no longer reads as "6 , 4". Returns (before, separator, after), or null without one.
+     * UX round 4: a positive value here TIGHTENS (it is subtracted on both sides); 0.06 -> 0.07 at the larger hero.
      */
     fun splitDecimal(s: String): Triple<String, String, String>? {
         val i = s.indexOfFirst { it == ',' || it == '.' }
@@ -148,7 +149,7 @@ object GlassFaceLogic {
         return Triple(s.substring(0, i), s.substring(i, i + 1), s.substring(i + 1))
     }
 
-    const val SEPARATOR_KERN = 0.06f
+    const val SEPARATOR_KERN = 0.07f
 
     /** Hue of the BG digits (spec §4.1, F1): low and urgent low are red, never white; stale grey; else white. */
     enum class DigitTone { WHITE, LOW, STALE }
@@ -163,12 +164,14 @@ object GlassFaceLogic {
      * BG digits: start size, step, floor and the widest allowed text with and without the trend chip (spec §4.1).
      * UX round 2: 116 -> 128 px (about 91 px cap height, Halo's size): the trend chip shrinks to r 18 and the TIEF/HOCH
      * word moved to the delta line, so the digits get 216 px; without the chip the full inner card width (12 px padding).
+     * UX round 4: 128 -> 150 px (about 107 px cap height, the digits fill about two thirds of the card), 240 px next to
+     * the chip, 300 px without it (the card widened to x 63..387).
      */
-    const val BG_SIZE = 128f
+    const val BG_SIZE = 150f
     const val BG_SIZE_STEP = 2f
     const val BG_MIN_SIZE = 80f
-    const val BG_MAX_WIDTH = 216f
-    const val BG_MAX_WIDTH_NO_CHIP = 276f
+    const val BG_MAX_WIDTH = 240f
+    const val BG_MAX_WIDTH_NO_CHIP = 300f
 
     /**
      * BG text size on the 450 grid: [BG_SIZE], stepping down 2 px until the text measured at that size is at most
@@ -418,11 +421,27 @@ object GlassFaceLogic {
         val budget = maxWidth * FOOTER_SIZE / size // width available at FOOTER_SIZE
         if (width <= budget + 0.01f) return FooterFit(size, runs)
         val first = runs[0]
-        val cut = ellipsize(first.text, budget - (width - measure(first.text)), measure)
+        val cut = ellipsizeKeepTail(first.text, budget - (width - measure(first.text)), measure)
         return FooterFit(size, listOf(first.copy(text = cut)) + runs.drop(1))
     }
 
     const val ELLIPSIS = "…"
+
+    /** Separator before the age token of a W-level text ("Telefon getrennt · 14′"). */
+    const val TAIL_SEP = " · "
+
+    /**
+     * UX round 4 (safety): like [ellipsize], but a trailing " · <age>" token is never cut: only the label before it
+     * is shortened ("Phone disc… · 14′"), so the age of a lost phone or of missing data always stays on screen.
+     */
+    fun ellipsizeKeepTail(s: String, maxWidth: Float, measure: (String) -> Float): String {
+        if (measure(s) <= maxWidth) return s
+        val i = s.lastIndexOf(TAIL_SEP)
+        if (i <= 0) return ellipsize(s, maxWidth, measure)
+        val tail = s.substring(i)
+        val label = ellipsize(s.substring(0, i), maxWidth - measure(tail), measure)
+        return label + tail
+    }
 
     /** [s] cut at the end with "…" so that it measures at most [maxWidth]; unchanged when it fits. */
     fun ellipsize(s: String, maxWidth: Float, measure: (String) -> Float): String {
@@ -464,11 +483,16 @@ object GlassFaceLogic {
      * Plot rect on the 450 grid, 36 history slots (5') + 12 prediction slots. The plot ends at "now" when no
      * forecast is drawn (no empty quarter). With the bolus ball the plot starts right of the ball ([SPARK_X0_BALL]).
      */
-    const val SPARK_X0 = 80f
-    const val SPARK_X0_BALL = 124f
-    const val SPARK_Y0 = 282f
-    const val SPARK_X1 = 370f
-    const val SPARK_Y1 = 332f
+    /**
+     * UX round 4: the plot is wider (70..380) and starts 8 px right of the ball's hit area ([BALL_HIT_RIGHT]); the band
+     * fill is gone, values are drawn inside a [SPARK_INSET] px inset so the line never touches the card or the pills.
+     */
+    const val SPARK_X0 = 70f
+    const val SPARK_X0_BALL = 140f
+    const val SPARK_Y0 = 292f
+    const val SPARK_X1 = 380f
+    const val SPARK_Y1 = 340f
+    const val SPARK_INSET = 4f
     const val SPARK_HISTORY = 36
     const val SPARK_TOTAL = 48
     const val SLOT_MS = 5 * MINUTE_MS
@@ -489,10 +513,12 @@ object GlassFaceLogic {
     /** x of the now line (about 297 with a forecast, the right edge without). */
     fun nowX(x0: Float = SPARK_X0, forecast: Boolean = true): Float = sparkX((SPARK_HISTORY - 1).toFloat(), x0, forecast)
 
-    /** y for a value in mg/dL, clamped to the plot. */
+    /** y for a value in mg/dL, clamped to the plot less [SPARK_INSET] at the top and bottom. */
     fun sparkY(mgdl: Double): Float {
         val v = mgdl.coerceIn(SPARK_MIN_MGDL, SPARK_MAX_MGDL)
-        return (SPARK_Y1 - (v - SPARK_MIN_MGDL) / (SPARK_MAX_MGDL - SPARK_MIN_MGDL) * (SPARK_Y1 - SPARK_Y0)).toFloat()
+        val top = SPARK_Y0 + SPARK_INSET
+        val bottom = SPARK_Y1 - SPARK_INSET
+        return (bottom - (v - SPARK_MIN_MGDL) / (SPARK_MAX_MGDL - SPARK_MIN_MGDL) * (bottom - top)).toFloat()
     }
 
     /**
@@ -544,15 +570,19 @@ object GlassFaceLogic {
     fun bolusAmountText(amount: Double, locale: Locale): String = FaceState.bolusAmountText(amount, locale)
 
     /**
-     * Hit test of the ball (r=[BALL_HIT_R], 24 dp at xhdpi, around the centre) clipped to the round screen (r=225)
-     * and, UX round 3, cut off at [bottom] (2 px above the pill row): a tap on the loop pill never arms a bolus.
+     * Hit test of the ball (r=[BALL_HIT_R], 24 dp at xhdpi, around the centre) clipped to the round screen (r=225).
+     * UX round 4: clipped at [top] (2 px under the hero card, whose double tap opens the menu) and at [right] (8 px
+     * left of the graph; with the ball shown the pill row also starts right of it), so no other zone ever arms a bolus.
      */
-    fun ballHit(x: Float, y: Float, cx: Float = BALL_X, cy: Float = BALL_Y, r: Float = BALL_HIT_R, bottom: Float = BALL_HIT_BOTTOM): Boolean {
+    fun ballHit(
+        x: Float, y: Float, cx: Float = BALL_X, cy: Float = BALL_Y, r: Float = BALL_HIT_R,
+        top: Float = BALL_HIT_TOP, right: Float = BALL_HIT_RIGHT
+    ): Boolean {
         val dx = x - cx
         val dy = y - cy
         val sx = x - 225f
         val sy = y - 225f
-        return y <= bottom && dx * dx + dy * dy <= r * r && sx * sx + sy * sy <= 225f * 225f
+        return y >= top && x <= right && dx * dx + dy * dy <= r * r && sx * sx + sy * sy <= 225f * 225f
     }
 
     /** Fraction (1..0) of the armed countdown ring still to show. */
@@ -560,16 +590,20 @@ object GlassFaceLogic {
         if (windowMs <= 0) 0f else (1f - (now - armedAt).toFloat() / windowMs).coerceIn(0f, 1f)
 
     /**
-     * UX round 2: docked at the left end of the sparkline band (the plot starts right of it), 12 px under the card and
-     * 8 px above the pill row, about 40 px from the bezel.
+     * UX round 2: docked at the left end of the sparkline band (the plot starts right of it).
+     * UX round 4: (90, 322), 10 px under the card, 30 px or more from the bezel; its hit area reaches 78 px down from
+     * the card to the bezel and 88 px across, the pill row moves right of it.
      */
-    const val BALL_X = 82f
-    const val BALL_Y = 310f
+    const val BALL_X = 90f
+    const val BALL_Y = 322f
     const val BALL_R = 28f
 
-    /** Top of the pill row (UX round 3: 344..380) and the lowest y the ball still takes a tap at. */
-    const val PILL_Y0 = 344f
-    const val BALL_HIT_BOTTOM = PILL_Y0 - 2f
+    /** Pill row band (UX round 4: borderless, text centred at y 362). */
+    const val PILL_Y0 = 348f
+
+    /** Hit-area clips: 2 px under the card, 8 px left of the graph (which starts at [SPARK_X0_BALL]). */
+    const val BALL_HIT_TOP = 286f
+    const val BALL_HIT_RIGHT = 132f
 
     /** Hit radius on the 450 grid at xhdpi: 48 px = 24 dp, the family's 48 dp target (the face scales it to stay 24 dp). */
     const val BALL_HIT_R = 48f
@@ -584,15 +618,24 @@ object GlassFaceLogic {
      */
     data class HeroLayout(val bgX: Float, val bgY: Float, val bgMaxWidth: Float, val chipY: Float, val metaCentreX: Float, val metaY: Float)
 
-    /** UX round 3: the card is y 120..274 (the time and date moved below the system status icon). */
-    const val HERO_Y0 = 120f
-    const val HERO_Y1 = 274f
-    const val META_Y = 256f
+    /**
+     * UX round 3: the card is y 120..274 (the time and date moved below the system status icon).
+     * UX round 4: x 63..387, y 116..284 for the 150 px digits; the delta line at y 266, about 8 px under the comma.
+     */
+    const val HERO_X0 = 63f
+    const val HERO_X1 = 387f
+    const val HERO_Y0 = 116f
+    const val HERO_Y1 = 284f
+    const val META_Y = 266f
+
+    /** Trend chip column (UX round 4: r 18 -> 24). */
+    const val CHIP_X = 352f
+    const val CHIP_R = 24f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
-        showChip  -> if (metaEmpty) HeroLayout(200f, 192f, BG_MAX_WIDTH, 189f, 225f, META_Y) else HeroLayout(200f, 174f, BG_MAX_WIDTH, 171f, 225f, META_Y)
-        metaEmpty -> HeroLayout(225f, 192f, BG_MAX_WIDTH_NO_CHIP, 189f, 225f, META_Y)
-        else      -> HeroLayout(225f, 174f, BG_MAX_WIDTH_NO_CHIP, 171f, 225f, META_Y)
+        showChip  -> if (metaEmpty) HeroLayout(198f, 202f, BG_MAX_WIDTH, 200f, 225f, META_Y) else HeroLayout(198f, 178f, BG_MAX_WIDTH, 176f, 225f, META_Y)
+        metaEmpty -> HeroLayout(225f, 202f, BG_MAX_WIDTH_NO_CHIP, 200f, 225f, META_Y)
+        else      -> HeroLayout(225f, 178f, BG_MAX_WIDTH_NO_CHIP, 176f, 225f, META_Y)
     }
 
     /**
@@ -632,16 +675,19 @@ object GlassFaceLogic {
     /** The LOOP/LGS label is hidden only for an open loop ("Offen" fills the pill); never dropped for width (spec F14). */
     fun loopLabelAllowed(health: LoopHealth): Boolean = health != LoopHealth.OPEN
 
-    /**
-     * UX round 2: with a struck (stale) reading the loop pill drops its age when the loop has been silent at least as
-     * long as the BG: the chip and the footer already show that age, and the loop cannot run without data. The dot
-     * (hollow, red) still carries the loop state. A loop that ran more recently than the BG keeps its age.
-     */
-    fun loopAgeRedundant(struck: Boolean, loopAgeMinutes: Long?, bgAgeMinutes: Long?): Boolean =
-        struck && loopAgeMinutes != null && bgAgeMinutes != null && loopAgeMinutes >= bgAgeMinutes
-
     /** Pill row width budget on the 450 grid (the chord at the pill row's lower edge less the rounded ends). */
     const val PILL_ROW_MAX_WIDTH = 320f
+
+    /**
+     * UX round 4: with the ball shown the pill row moves right of its hit area: x 140..392 (the chord at the row's
+     * lower edge), centred at 266.
+     */
+    const val PILL_ROW_BALL_X0 = SPARK_X0_BALL
+    const val PILL_ROW_BALL_X1 = 392f
+
+    /** (centre, max width) of the pill row with or without the ball. */
+    fun pillRowFrame(ballShown: Boolean): Pair<Float, Float> =
+        if (ballShown) (PILL_ROW_BALL_X0 + PILL_ROW_BALL_X1) / 2f to (PILL_ROW_BALL_X1 - PILL_ROW_BALL_X0) else 225f to PILL_ROW_MAX_WIDTH
 
     /**
      * Left edges of the pills of the given [widths], centred on [centre] with [gap] between them. Zero widths are

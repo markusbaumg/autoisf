@@ -102,7 +102,9 @@ object OrbitFaceLogic {
      */
     const val DELTA_ROW_Y = 266f
     const val DELTA_SIZE = 26f
-    const val SLOT_Y = 306f
+
+    /** UX round 4: 306 -> 312, at least 8 px between the delta row (and its TIEF/HOCH pill) and a status pill. */
+    const val SLOT_Y = 312f
 
     /** UX round 3: status pills 34 px tall with 25 px text (a 1.4 mm cap height: the face's only W-level message). */
     const val SLOT_H = 34f
@@ -119,9 +121,12 @@ object OrbitFaceLogic {
     /** Width of the pill row between the 4 and 8 o'clock satellites (their shells end at x 111 / 339). */
     const val PILL_ROW_MAX_WIDTH = 216f
 
-    /** With a status pill under the delta row the sparkline moves down into this box. */
-    const val SPARK_Y_TOP_PILL = 332f
-    const val SPARK_Y_BOTTOM_PILL = 372f
+    /**
+     * With a status pill under the delta row the sparkline moves down into this box. UX round 4: a shorter box under the
+     * lower pill (8 px clear of it), below the satellites' shells.
+     */
+    const val SPARK_Y_TOP_PILL = 338f
+    const val SPARK_Y_BOTTOM_PILL = 370f
 
     /**
      * UX round 3: the TIEF/HOCH caption follows the delta on the delta row (as Glass), 30 px tall, so a W4-W9 pill
@@ -144,7 +149,8 @@ object OrbitFaceLogic {
     const val BALL_VALUE_HARD_MAX = 60f
     const val HERO_MAX_WIDTH = 200f
     const val DATE_LINE_MAX_WIDTH = 196f
-    const val DELTA_ROW_MAX_WIDTH = 212f
+    /** UX round 4: 212 -> 200, a HOCH/TIEF pill at the row's end keeps 20 px or more to the 4 and 8 o'clock satellites. */
+    const val DELTA_ROW_MAX_WIDTH = 200f
 
     /** UX round 3: 210 (was 230): a delta-row pill keeps clear of the 4 and 8 o'clock satellites. */
     const val SLOT_MAX_WIDTH = 210f
@@ -509,10 +515,40 @@ object OrbitFaceLogic {
     fun heroGroupWidth(widthAt108: Float, size: Float, glyph: Boolean): Float =
         widthAt108 * size / HERO_REF + if (glyph) HERO_GLYPH_GAP + HERO_GLYPH_W * size / HERO_REF else 0f
 
-    /** [HERO_SIZE], stepped down by 4 until the group fits [HERO_GROUP_MAX] (minimum 60). */
+    /** Hero centre line (the digits are centred on it). */
+    const val HERO_Y = 190f
+
+    /** UX round 4: the hero group keeps this much clear space to the 10 and 2 o'clock satellites (LOOP, IOB). */
+    const val SAT_CLEAR = 20f
+
+    /**
+     * True when the hero group at [size] keeps [SAT_CLEAR] to the LOOP and IOB satellites: the digits' top corners
+     * (cap top about 0.37 em above the centre line, taken 0.1 em inside) and the trend glyph's outer top corner (its strokes reach about
+     * 0.14 em around the glyph centre) are checked against the satellite shells.
+     */
+    fun heroClear(widthAt108: Float, size: Float, glyph: Boolean): Boolean {
+        val group = heroGroupWidth(widthAt108, size, glyph)
+        val left = CX - group / 2f
+        val digitsRight = left + widthAt108 * size / HERO_REF
+        val minD = BALL_R + SAT_CLEAR
+        // digits' outer top corners, 0.1 em inside the box (the bowls of 6/8/9/0 and the stems of 1/4 are round or inset)
+        val inset = 0.10f * size
+        val capTop = HERO_Y - 0.37f * size + inset
+        fun clear(x: Float, y: Float, deg: Float) =
+            kotlin.math.hypot(x - pointX(SAT_R, deg), y - pointY(SAT_R, deg)) >= minD
+        if (!clear(left + inset, capTop, DEG_LOOP) || !clear(digitsRight - inset, capTop, DEG_IOB)) return false
+        if (!glyph) return true
+        val glyphCentre = digitsRight + HERO_GLYPH_GAP + HERO_GLYPH_W * size / HERO_REF / 2f
+        return clear(glyphCentre + 0.14f * size, HERO_Y - 0.14f * size, DEG_IOB)
+    }
+
+    /**
+     * [HERO_SIZE], stepped down by 4 until the group fits [HERO_GROUP_MAX] and (UX round 4) keeps clear of the
+     * satellites ([heroClear]); minimum 60.
+     */
     fun heroSize(widthAt108: Float, glyph: Boolean): Float {
         var size = HERO_SIZE
-        while (size > HERO_MIN_SIZE && heroGroupWidth(widthAt108, size, glyph) > HERO_GROUP_MAX) size -= 4f
+        while (size > HERO_MIN_SIZE && (heroGroupWidth(widthAt108, size, glyph) > HERO_GROUP_MAX || !heroClear(widthAt108, size, glyph))) size -= 4f
         return size
     }
 

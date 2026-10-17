@@ -446,6 +446,9 @@ class OrbitFaceLogicTest {
         // the pill row has its own line 8 px or more below the delta baseline (never over the delta)
         val deltaBaseline = OrbitFaceLogic.DELTA_ROW_Y + OrbitFaceLogic.DELTA_SIZE * 0.36f
         assertThat(OrbitFaceLogic.SLOT_Y - OrbitFaceLogic.SLOT_H / 2f - deltaBaseline).isAtLeast(8f)
+        // UX round 4: 8 px or more also under the TIEF/HOCH pill of the delta row, and 8 px from the pill to the moved sparkline
+        assertThat(OrbitFaceLogic.SLOT_Y - OrbitFaceLogic.SLOT_H / 2f - (OrbitFaceLogic.DELTA_ROW_Y + OrbitFaceLogic.CAPTION_H / 2f)).isAtLeast(8f)
+        assertThat(OrbitFaceLogic.SPARK_Y_TOP_PILL - (OrbitFaceLogic.SLOT_Y + OrbitFaceLogic.SLOT_H / 2f)).isAtLeast(8f)
         // the moved sparkline (pill row shown) stays below the pills and above the date line
         val dateY = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f)
         assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM_PILL).isLessThan(dateY - 12f - 11f)
@@ -507,11 +510,13 @@ class OrbitFaceLogicTest {
                     val size = OrbitFaceLogic.heroSize(w108, glyph)
                     assertThat(size).isAtLeast(OrbitFaceLogic.HERO_MIN_SIZE)
                     assertThat(OrbitFaceLogic.heroGroupWidth(w108, size, glyph)).isAtMost(OrbitFaceLogic.HERO_GROUP_MAX)
+                    // UX round 4: 20 px or more to the LOOP and IOB satellites (sentinel "22,3+" touched IOB)
+                    if (size > OrbitFaceLogic.HERO_MIN_SIZE) assertThat(OrbitFaceLogic.heroClear(w108, size, glyph)).isTrue()
                 }
             }
             assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("22,2+", 108f), true)).isLessThan(OrbitFaceLogic.HERO_SIZE)
-            // the conservative estimate may step "6,4" + arrow down one step (the real Roboto width keeps 120)
-            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("6,4", 108f), true)).isAtLeast(OrbitFaceLogic.HERO_SIZE - 4f)
+            // the conservative estimate may step "6,4" + arrow down two steps (the real Roboto width keeps 116 or more)
+            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("6,4", 108f), true)).isAtLeast(OrbitFaceLogic.HERO_SIZE - 8f)
             // ball values: "20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "Offen"
             for (v in listOf("20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "0,85", "Offen", "2 Std")) {
                 val size = OrbitFaceLogic.ballValueSize(OrbitFaceLogic.estimateWidth(v, 24f))
