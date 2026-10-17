@@ -211,7 +211,11 @@ class WatchfaceRenderHarness {
             data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14))
         },
         RenderState("en_no_data_ever", lang = "en") { _ -> ComplicationData() },
-        RenderState("en_ball_idle", lang = "en", ball = Ball.IDLE, data = inRange)
+        RenderState("en_ball_idle", lang = "en", ball = Ball.IDLE, data = inRange),
+        // Orbit discs round 3: worst cases of the squeezed hero, between the bolus button at 9 and the TT disc at 3
+        RenderState("ball_tt_very_high", ball = Ball.IDLE) { now -> data(now, 22.2, "\u21c8", "+1.2", 1, st = status(now, tt = "8.0", ttLevel = 2)) },
+        RenderState("ball_tt_10_5", ball = Ball.IDLE) { now -> data(now, 10.5, "↗", "+0.3", 0, st = status(now, tt = "8.0", ttLevel = 2)) },
+        RenderState("ball_tt_mgdl_224", ball = Ball.IDLE) { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true, st = status(now, tt = "144", ttLevel = 2)) }
     )
 
     // ------------------------------------------------------------------ test
