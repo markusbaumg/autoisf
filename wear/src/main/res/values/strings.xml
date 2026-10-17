@@ -248,7 +248,6 @@
     <string name="glass_reservoir">Reservoir %1$s</string>
     <string name="glass_phone_battery">Phone %1$d %%</string>
     <string name="glass_cob">COB %1$s</string>
-    <string name="glass_low_caption">LOW</string>
     <string name="glass_hours">%1$d h</string>
     <string name="glass_days">%1$d d</string>
     <string name="glass_bolus_refused_no_phone">Phone disconnected: no bolus request</string>

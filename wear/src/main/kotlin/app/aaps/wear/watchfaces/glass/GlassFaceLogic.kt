@@ -1,6 +1,16 @@
 package app.aaps.wear.watchfaces.glass
 
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
+import app.aaps.wear.watchfaces.common.FaceState
+import app.aaps.wear.watchfaces.common.FaceState.BgAge
+import app.aaps.wear.watchfaces.common.FaceState.Level
+import app.aaps.wear.watchfaces.common.FaceState.LoopHealth
+import app.aaps.wear.watchfaces.common.FaceState.LoopMode
+import app.aaps.wear.watchfaces.common.FaceState.LoopRun
+import app.aaps.wear.watchfaces.common.FaceState.PhoneLink
+import app.aaps.wear.watchfaces.common.FaceState.Range
+import app.aaps.wear.watchfaces.common.FaceState.Sentinel
+import app.aaps.wear.watchfaces.common.FaceState.Warning
 import app.aaps.wear.watchfaces.common.PhoneReach
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -20,22 +30,22 @@ import kotlin.math.min
  * user's unit and locale and are shown as sent (German keeps its decimal comma, units.phone_locale);
  * only placeholders are mapped to "--". Geometry never parses display strings.
  *
- * NOTE for the integrator: these signals are the seed of the shared `FaceState` helper; once the Halo
- * branch lands, move them there and let Glass/Orbit/Halo share them.
+ * The family signals (BG age, range, trend, loop health, phone link, warning order) are computed by the shared
+ * [FaceState] helper; the functions here delegate to it, so Glass, Halo and Orbit can never disagree.
  */
 object GlassFaceLogic {
 
     const val MINUTE_MS = 60_000L
 
     /** BG age (minutes): aging from 6', stale from 12', very stale from 30', digits replaced by "---" from 60'. */
-    const val AGE_WARN_MIN = 6L
-    const val STALE_MIN = 12L
-    const val VERY_STALE_MIN = 30L
-    const val BG_HIDE_MIN = 60L
+    const val AGE_WARN_MIN = FaceState.AGING_MIN
+    const val STALE_MIN = FaceState.STALE_MIN
+    const val VERY_STALE_MIN = FaceState.VERY_STALE_MIN
+    const val BG_HIDE_MIN = FaceState.BG_HIDE_MIN
 
     /** Loop age: amber from 6', red from 15'. */
-    const val LOOP_WARN_MIN = 6L
-    const val LOOP_BAD_MIN = 15L
+    const val LOOP_WARN_MIN = FaceState.LOOP_WARN_MIN
+    const val LOOP_BAD_MIN = FaceState.LOOP_BAD_MIN
 
     /** From 10' the "LOOP" label is hidden to make room for the two-digit value. */
     const val LOOP_LABEL_HIDE_MIN = 10L
@@ -44,7 +54,7 @@ object GlassFaceLogic {
     const val MAX_SHOWN_MIN = 99L
 
     /** No Status/SingleBg from the phone for at least this long: data counts as not fresh (phoneLink). */
-    const val DATA_FRESH_MS = 12 * MINUTE_MS
+    const val DATA_FRESH_MS = FaceState.DATA_FRESH_MS
 
     /** Status slot / footer: widest line (spec §4.8: the chord at 0.93 R, 257 px on the 450 grid). */
     const val FOOTER_MAX_WIDTH = 257f
@@ -54,25 +64,17 @@ object GlassFaceLogic {
     const val FOOTER_MIN_SIZE = 16f
 
     /** Fallback low/high marks when the phone did not send them. */
-    const val DEFAULT_LOW_MGDL = 70.0
-    const val DEFAULT_HIGH_MGDL = 180.0
+    const val DEFAULT_LOW_MGDL = FaceState.DEFAULT_LOW_MGDL
+    const val DEFAULT_HIGH_MGDL = FaceState.DEFAULT_HIGH_MGDL
 
     /** Derived urgency levels (contract gap G1: not sent by the phone). */
-    const val URGENT_LOW_MGDL = 54.0
-    const val VERY_HIGH_MGDL = 250.0
-    const val SENTINEL_LOW_MGDL = 39.0
-    const val SENTINEL_HIGH_MGDL = 400.0
-    const val FAST_DELTA_MGDL = 10.0
+    const val URGENT_LOW_MGDL = FaceState.URGENT_LOW_MGDL
+    const val VERY_HIGH_MGDL = FaceState.VERY_HIGH_MGDL
+    const val SENTINEL_LOW_MGDL = FaceState.SENTINEL_LOW_MGDL
+    const val SENTINEL_HIGH_MGDL = FaceState.SENTINEL_HIGH_MGDL
+    const val FAST_DELTA_MGDL = FaceState.FAST_DELTA_MGDL
 
     // ------------------------------------------------------------------------------------------- BG state
-
-    enum class Range { IN, HIGH, VERY_HIGH, LOW, URGENT_LOW, STALE }
-
-    enum class BgAge { FRESH, AGING, STALE, VERY_STALE, NONE }
-
-    enum class Level { NORMAL, WARN, ALERT }
-
-    enum class Sentinel { LOW, HIGH }
 
     enum class Trend(val angle: Float, val double: Boolean) {
         NONE(0f, false), FLAT(0f, false), UP45(45f, false), UP(90f, false), UP2(90f, true), UP3(90f, true),
@@ -80,51 +82,29 @@ object GlassFaceLogic {
     }
 
     /** Whole minutes since [timeStamp] (clock skew clamps to 0), or null without a time stamp. */
-    fun ageMinutes(timeStamp: Long, now: Long): Long? = if (timeStamp <= 0L) null else max(0L, (now - timeStamp) / MINUTE_MS)
+    fun ageMinutes(timeStamp: Long, now: Long): Long? = FaceState.ageMinutes(timeStamp, now)
 
-    fun bgAge(ageMinutes: Long?): BgAge = when {
-        ageMinutes == null              -> BgAge.NONE
-        ageMinutes < AGE_WARN_MIN       -> BgAge.FRESH
-        ageMinutes < STALE_MIN          -> BgAge.AGING
-        ageMinutes < VERY_STALE_MIN     -> BgAge.STALE
-        else                            -> BgAge.VERY_STALE
-    }
+    fun bgAge(ageMinutes: Long?): BgAge = FaceState.bgAge(ageMinutes)
 
     /** STALE, VERY_STALE and NONE: no range hue, empty chip, no delta. */
-    fun isStale(age: BgAge): Boolean = age == BgAge.STALE || age == BgAge.VERY_STALE || age == BgAge.NONE
+    fun isStale(age: BgAge): Boolean = FaceState.isOld(age)
 
     /** Strike-through only for a real but old reading (not when there was never one). */
-    fun strikeThrough(age: BgAge): Boolean = age == BgAge.STALE || age == BgAge.VERY_STALE
+    fun strikeThrough(age: BgAge): Boolean = FaceState.isStruck(age)
 
-    fun lowLine(low: Double): Double = if (low > 0.0) low else DEFAULT_LOW_MGDL
-    fun highLine(low: Double, high: Double): Double = if (high > lowLine(low)) high else DEFAULT_HIGH_MGDL
+    fun lowLine(low: Double): Double = FaceState.lowLine(low)
+    fun highLine(low: Double, high: Double): Double = FaceState.highLine(low, high)
 
     /**
      * Range key of the aurora and the accents (states.md bgRange). The phone's low/high marks are used;
      * urgent low is below 54 mg/dL or a low that falls fast; very high is above 250 mg/dL. Stale beats range.
      */
-    fun range(sgvMgdl: Double, lowMgdl: Double, highMgdl: Double, age: BgAge, fastFall: Boolean): Range {
-        if (isStale(age)) return Range.STALE
-        val lo = lowLine(lowMgdl)
-        val hi = highLine(lowMgdl, highMgdl)
-        return when {
-            sgvMgdl < URGENT_LOW_MGDL || (sgvMgdl < lo && fastFall) -> Range.URGENT_LOW
-            sgvMgdl < lo                                             -> Range.LOW
-            sgvMgdl > VERY_HIGH_MGDL                                 -> Range.VERY_HIGH
-            sgvMgdl > hi                                             -> Range.HIGH
-            else                                                     -> Range.IN
-        }
-    }
+    fun range(sgvMgdl: Double, lowMgdl: Double, highMgdl: Double, age: BgAge, fastFall: Boolean): Range =
+        FaceState.range(sgvMgdl, FaceState.levelFromMarks(sgvMgdl, lowMgdl, highMgdl), age, fastFall)
 
-    fun isLow(r: Range) = r == Range.LOW || r == Range.URGENT_LOW
+    fun isLow(r: Range) = FaceState.isLow(r)
 
-    fun sentinel(sgvMgdl: Double, age: BgAge): Sentinel? = when {
-        isStale(age)                     -> null
-        sgvMgdl <= 0.0                   -> null
-        sgvMgdl <= SENTINEL_LOW_MGDL     -> Sentinel.LOW
-        sgvMgdl >= SENTINEL_HIGH_MGDL    -> Sentinel.HIGH
-        else                             -> null
-    }
+    fun sentinel(sgvMgdl: Double, age: BgAge): Sentinel? = FaceState.sentinel(sgvMgdl, age)
 
     /** Hero BG text: "---" without a reading or from 60'; the phone string otherwise, "+" appended at the high sentinel. */
     fun bgText(sgvString: String, ageMinutes: Long?, sentinel: Sentinel?): String {
@@ -177,98 +157,50 @@ object GlassFaceLogic {
         if (width <= maxWidth || width <= 0f) size else size * maxWidth / width
 
     /** Trend from the phone's arrow; "X" uses the delta sign; anything else (unknown, "??", "--") is NONE. */
-    fun trend(slopeArrow: String, deltaMgdl: Double?): Trend = when (slopeArrow.trim()) {
-        "⇈"      -> Trend.UP2
-        "↑"      -> Trend.UP
-        "↗"      -> Trend.UP45
-        "→"      -> Trend.FLAT
-        "↘"      -> Trend.DOWN45
-        "↓"      -> Trend.DOWN
-        "⇊"      -> Trend.DOWN2
-        "X"      -> when {
-            deltaMgdl == null -> Trend.NONE
-            deltaMgdl < 0     -> Trend.DOWN3
-            else              -> Trend.UP3
-        }
+    fun trend(slopeArrow: String, deltaMgdl: Double?): Trend = Trend.valueOf(FaceState.trend(slopeArrow, deltaMgdl).name)
 
-        else     -> Trend.NONE
-    }
-
-    fun fastFall(trend: Trend, deltaMgdl: Double?): Boolean =
-        trend == Trend.DOWN2 || trend == Trend.DOWN3 || (deltaMgdl != null && deltaMgdl <= -FAST_DELTA_MGDL)
+    fun fastFall(trend: Trend, deltaMgdl: Double?): Boolean = FaceState.fastFall(FaceState.Trend.valueOf(trend.name), deltaMgdl)
 
     /** Delta as sent by the phone (already signed, phone locale); a missing sign is added; placeholders "--". */
-    fun deltaText(delta: String): String {
-        val d = delta.trim()
-        if (d.isEmpty() || d.startsWith("--") || d.none { it.isDigit() }) return "--"
-        return if (d[0] == '+' || d[0] == '-' || d[0] == '±') d else "+$d"
-    }
+    fun deltaText(delta: String): String = FaceState.deltaText(delta)
 
     /** Which delta string to show (key_show_detailed_delta / key_show_avg_delta), as the stock faces do. */
     fun pickDelta(delta: String, avgDelta: String, deltaDetailed: String, avgDeltaDetailed: String, detailed: Boolean, avg: Boolean): String =
-        when {
-            detailed && avg -> avgDeltaDetailed
-            detailed        -> deltaDetailed
-            avg             -> avgDelta
-            else            -> delta
-        }
+        FaceState.pickDelta(delta, avgDelta, deltaDetailed, avgDeltaDetailed, detailed, avg)
 
     /** The age label is optional (key_show_ago) only while fresh; the aging/stale warning always shows. */
     fun showAge(prefShowAgo: Boolean, age: BgAge): Boolean = prefShowAgo || age != BgAge.FRESH
 
     // ------------------------------------------------------------------------------------------- loop
 
-    enum class LoopRun { RUNNING, OFF, NO_PROFILE }
-
-    enum class LoopMode { CLOSED, OPEN, LGS, UNKNOWN }
-
-    enum class LoopHealth { OK, WARN, BAD, NEVER, OFF, OPEN, NEUTRAL }
-
     /** Loop age in minutes from Status.openApsStatus (-1 or 0: no loop run). */
-    fun loopAgeMinutes(openApsStatus: Long, now: Long): Long? = if (openApsStatus <= 0L) null else max(0L, (now - openApsStatus) / MINUTE_MS)
+    fun loopAgeMinutes(openApsStatus: Long, now: Long): Long? = FaceState.loopAgeMinutes(openApsStatus, now)
 
     /**
      * The phone puts text into Status.externalStatus only when there is no profile (one localised line,
      * no newline) or the loop is not running (localised "disabled" line ending with "\n");
      * the watch's empty store holds "no status".
      */
-    fun loopRun(externalStatus: String): LoopRun {
-        if (externalStatus.isBlank() || externalStatus.trim() == "no status") return LoopRun.RUNNING
-        return if (externalStatus.endsWith("\n")) LoopRun.OFF else LoopRun.NO_PROFILE
-    }
+    fun loopRun(externalStatus: String, iobSum: String = ""): LoopRun = FaceState.loopRun(externalStatus, iobSum)
 
     /** First start: nothing ever arrived (no BG, no loop run, IOB placeholder). */
-    fun firstStart(bgTimeStamp: Long, openApsStatus: Long, iobSum: String): Boolean =
-        bgTimeStamp == 0L && openApsStatus <= 0L && iobSum.trim().let { it == "IOB" || it.isEmpty() }
+    fun firstStart(bgTimeStamp: Long, openApsStatus: Long, iobSum: String): Boolean = FaceState.firstStart(bgTimeStamp, openApsStatus, iobSum)
 
     /** No profile: loopRun says so, or the phone sent an empty IOB. */
-    fun noProfile(run: LoopRun, iobSum: String, firstStart: Boolean): Boolean = !firstStart && (run == LoopRun.NO_PROFILE || iobSum.isEmpty())
+    fun noProfile(run: LoopRun, iobSum: String, firstStart: Boolean): Boolean = FaceState.noProfile(run, iobSum, firstStart)
 
     /**
      * Loop mode from the available-states list: the one of OPEN/LGS/CLOSED that is missing is the current one.
      * UNKNOWN when the list is empty, ambiguous or older than the last data by more than 15'.
      */
-    fun loopMode(available: Set<String>, listTimeStamp: Long, lastData: Long): LoopMode {
-        if (available.isEmpty() || listTimeStamp <= 0L) return LoopMode.UNKNOWN
-        if (lastData > 0L && lastData - listTimeStamp > 15 * MINUTE_MS) return LoopMode.UNKNOWN
-        val missing = listOf("LOOP_CLOSED" to LoopMode.CLOSED, "LOOP_OPEN" to LoopMode.OPEN, "LOOP_LGS" to LoopMode.LGS)
-            .filter { it.first !in available }
-        return if (missing.size == 1) missing[0].second else LoopMode.UNKNOWN
-    }
+    fun loopMode(available: Set<String>, listTimeStamp: Long, lastData: Long): LoopMode = FaceState.loopMode(available, listTimeStamp, lastData)
 
     /**
      * Loop indicator (states.md loop.*): NEVER (no loop run: grey, never red) · OFF (disabled/suspended) ·
      * NEUTRAL (no profile) · OPEN (no age alarm) · OK < 6' · WARN 6-14' · BAD >= 15'.
      */
-    fun loopHealth(ageMinutes: Long?, run: LoopRun, mode: LoopMode): LoopHealth = when {
-        run == LoopRun.NO_PROFILE      -> LoopHealth.NEUTRAL
-        run == LoopRun.OFF             -> LoopHealth.OFF
-        ageMinutes == null             -> LoopHealth.NEVER
-        mode == LoopMode.OPEN          -> LoopHealth.OPEN
-        ageMinutes >= LOOP_BAD_MIN     -> LoopHealth.BAD
-        ageMinutes >= LOOP_WARN_MIN    -> LoopHealth.WARN
-        else                           -> LoopHealth.OK
-    }
+    fun loopHealth(ageMinutes: Long?, run: LoopRun, mode: LoopMode, realRun: Boolean = true): LoopHealth =
+        FaceState.loopHealth(ageMinutes, run, mode, realRun)
 
     /** The "LOOP" label is hidden once the value has two digits (or is the "old" word). */
     fun loopLabelVisible(ageMinutes: Long?): Boolean = ageMinutes == null || ageMinutes < LOOP_LABEL_HIDE_MIN
@@ -285,41 +217,20 @@ object GlassFaceLogic {
 
     // ------------------------------------------------------------------------------------------- phone link
 
-    enum class PhoneLink { OK, LOST_FRESH, LOST_STALE, SILENT }
-
     /** Display link: an UNKNOWN answer does not warn (the first lookup is still running). */
-    fun phoneLink(reach: PhoneReach, lastDataTimeStamp: Long, now: Long): PhoneLink =
-        phoneLink(reach != PhoneReach.UNREACHABLE, lastDataTimeStamp, now)
+    fun phoneLink(reach: PhoneReach, lastDataTimeStamp: Long, now: Long): PhoneLink = FaceState.phoneLink(reach, lastDataTimeStamp, now)
 
-    fun dataFresh(lastDataTimeStamp: Long, now: Long): Boolean = lastDataTimeStamp > 0L && now - lastDataTimeStamp < DATA_FRESH_MS
+    fun dataFresh(lastDataTimeStamp: Long, now: Long): Boolean = FaceState.dataFresh(lastDataTimeStamp, now)
 
-    fun phoneLink(reachable: Boolean, lastDataTimeStamp: Long, now: Long): PhoneLink {
-        val fresh = dataFresh(lastDataTimeStamp, now)
-        return when {
-            reachable && fresh -> PhoneLink.OK
-            reachable          -> PhoneLink.SILENT
-            fresh              -> PhoneLink.LOST_FRESH
-            else               -> PhoneLink.LOST_STALE
-        }
-    }
+    fun phoneLink(reachable: Boolean, lastDataTimeStamp: Long, now: Long): PhoneLink = FaceState.phoneLink(reachable, lastDataTimeStamp, now)
 
     // ------------------------------------------------------------------------------------------- values
 
     /** Phone string trimmed; the placeholders of the empty store and "??" become "--". */
-    fun display(s: String): String {
-        val t = s.trim()
-        return if (t.isEmpty() || t in PLACEHOLDERS || t.none { it.isDigit() }) "--" else t
-    }
-
-    private val PLACEHOLDERS = setOf("IOB", "-.--", "--g", "-.--U/h", "no status", "??", "--")
+    fun display(s: String): String = FaceState.display(s)
 
     /** Numeric value of a phone string with either decimal separator ("2,53", "-0.35"), or null. */
-    fun parseNumber(s: String): Double? {
-        val t = display(s)
-        if (t == "--") return null
-        val num = t.takeWhile { it.isDigit() || it == '-' || it == '+' || it == ',' || it == '.' }.replace(',', '.')
-        return num.toDoubleOrNull()
-    }
+    fun parseNumber(s: String): Double? = FaceState.parseNumber(s)
 
     enum class Tone { TXT1, TXT2, TXT3, INS, TT, TBR, WARN, ALERT }
 
@@ -353,16 +264,11 @@ object GlassFaceLogic {
     }
 
     /** Phone battery percent from Status.battery ("18"), or null; "0" means unknown. */
-    fun phoneBatteryPercent(battery: String): Int? = battery.trim().removeSuffix("%").trim().toIntOrNull()?.takeIf { it in 1..100 }
+    fun phoneBatteryPercent(battery: String): Int? = FaceState.phoneBatteryPercent(battery)
 
     // ------------------------------------------------------------------------------------------- status slot
 
     /** Rank of the warning that owns the status slot (states.md §4.2). */
-    enum class Warning(val rank: Int) {
-        WAITING(1), PHONE_LOST(2), NO_DATA(3), NO_PROFILE(4), LOOP_OFF(5), LOOP_BAD(6),
-        RES_CRITICAL(7), PHONE_BATTERY(8), RES_LOW(9), PHONE_LOST_FRESH(10)
-    }
-
     data class SlotInput(
         val firstStart: Boolean,
         val link: PhoneLink,
@@ -377,23 +283,11 @@ object GlassFaceLogic {
     )
 
     /** All active warnings, highest rank first. Fresh lows suppress W7-W10 (the user sees one thing). */
-    fun warnings(i: SlotInput): List<Warning> {
-        val w = ArrayList<Warning>(4)
-        if (i.firstStart) w += Warning.WAITING
-        if (i.link == PhoneLink.LOST_STALE) w += Warning.PHONE_LOST
-        if (i.link != PhoneLink.LOST_STALE && !i.firstStart && (i.link == PhoneLink.SILENT || strikeThrough(i.bgAge))) w += Warning.NO_DATA
-        if (i.noProfile) w += Warning.NO_PROFILE
-        if (i.loop == LoopHealth.OFF) w += Warning.LOOP_OFF
-        if (i.loop == LoopHealth.BAD) w += Warning.LOOP_BAD
-        val res = display(i.reservoirString) != "--"
-        if (i.reservoirLevel == 2 && res) w += Warning.RES_CRITICAL
-        if (i.phoneBatteryLevel == 0 && phoneBatteryPercent(i.phoneBattery) != null) w += Warning.PHONE_BATTERY
-        if (i.reservoirLevel == 1 && res) w += Warning.RES_LOW
-        if (i.link == PhoneLink.LOST_FRESH) w += Warning.PHONE_LOST_FRESH
-        val freshLow = (i.bgAge == BgAge.FRESH || i.bgAge == BgAge.AGING) && isLow(i.range)
-        if (freshLow) w.removeAll { it.rank > 6 }
-        return w
-    }
+    fun warnings(i: SlotInput): List<Warning> = FaceState.warnings(
+        FaceState.WarningInput(
+            i.firstStart, i.link, i.bgAge, i.range, i.noProfile, i.loop, i.reservoirString, i.reservoirLevel, i.phoneBattery, i.phoneBatteryLevel
+        )
+    )
 
     enum class RunKind { WARNING, TT, COB, BASAL, BGI, RESERVOIR, PHONE_BATTERY }
 
@@ -614,11 +508,7 @@ object GlassFaceLogic {
     }
 
     /** "+0,5" / "+1,0" with the watch locale's decimal separator. */
-    fun bolusAmountText(amount: Double, locale: Locale): String {
-        val tenths = Math.round(abs(amount) * 10).toInt()
-        val sep = java.text.DecimalFormatSymbols.getInstance(locale).decimalSeparator
-        return "+${tenths / 10}$sep${tenths % 10}"
-    }
+    fun bolusAmountText(amount: Double, locale: Locale): String = FaceState.bolusAmountText(amount, locale)
 
     /** Hit test of the ball (r=44 around the centre) clipped to the round screen (r=225). */
     fun ballHit(x: Float, y: Float, cx: Float = BALL_X, cy: Float = BALL_Y, r: Float = BALL_HIT_R): Boolean {
