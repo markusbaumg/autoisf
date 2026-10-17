@@ -1763,6 +1763,10 @@ class GlassWatchface : WatchFace() {
         watchfaceScope.launch {
             val set: Array<Bitmap?> = try {
                 withContext(Dispatchers.Default) { Array(Range.entries.size) { bakeBackground(Range.entries[it], size) } }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // the face is going away (switch, destroy): not an error
+                if (bakingKey == key) bakingKey = ""
+                throw e
             } catch (e: Exception) {
                 aapsLogger.error(LTag.WEAR, "GlassWatchface background bake failed", e)
                 if (bakingKey == key) bakingKey = ""

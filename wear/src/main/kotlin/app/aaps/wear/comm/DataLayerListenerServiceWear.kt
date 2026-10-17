@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -44,6 +45,9 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.serialization.ExperimentalSerializationApi
 import javax.inject.Inject
 
+/** Resend requests within this window after the last one are not sent again (the phone sends a full data set each). */
+private const val RESEND_DEBOUNCE_MS = 3_000L
+
 class DataLayerListenerServiceWear : WearableListenerService() {
 
     @Inject lateinit var aapsLogger: AAPSLogger
@@ -60,6 +64,7 @@ class DataLayerListenerServiceWear : WearableListenerService() {
     private var handler = Handler(HandlerThread(this::class.simpleName + "Handler").also { it.start() }.looper)
 
     private val disposable = CompositeDisposable()
+    @Volatile private var lastResendRequestAt = Long.MIN_VALUE / 2
     private var heartRateListener: HeartRateListener? = null
     private var stepCountListener: StepCountListener? = null
 
@@ -76,6 +81,16 @@ class DataLayerListenerServiceWear : WearableListenerService() {
             .toObservable(EventWearToMobile::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe {
+                // several faces/services ask for a resend while starting (e.g. onCreate firing repeatedly after an
+                // install); the phone answers each with a full data set, so one request per window is enough
+                if (it.payload is EventData.ActionResendData) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastResendRequestAt < RESEND_DEBOUNCE_MS) {
+                        aapsLogger.debug(LTag.WEAR, "Resend request skipped (debounced): ${(it.payload as EventData.ActionResendData).from}")
+                        return@subscribe
+                    }
+                    lastResendRequestAt = now
+                }
                 sendMessage(rxPath, it.payload.serialize())
             }
         disposable += rxBus
