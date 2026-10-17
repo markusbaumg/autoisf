@@ -235,6 +235,8 @@ class GlassWatchface : WatchFace() {
     /** Glass polish round 1: a band edge is drawn only where it lies inside the plot. */
     private var lowEdge = false
     private var highEdge = false
+    /** Glass polish round 4: a visible value is below the low line (hypo y scale), the zone under the low edge is tinted red. */
+    private var lowZone = false
     private var lowMgdl = GlassFaceLogic.DEFAULT_LOW_MGDL
     private var highMgdl = GlassFaceLogic.DEFAULT_HIGH_MGDL
     private var metaIsWarning = false
@@ -776,6 +778,7 @@ class GlassWatchface : WatchFace() {
         highEdge = GlassFaceLogic.bandEdgeVisible(highRaw)
         lowY = lowRaw.coerceIn(GlassFaceLogic.SPARK_Y0, GlassFaceLogic.SPARK_Y1)
         highY = highRaw.coerceIn(GlassFaceLogic.SPARK_Y0, GlassFaceLogic.SPARK_Y1)
+        lowZone = lowEdge && !vMin.isNaN() && vMin < lowMgdl
         history.reset()
         hasCurrent = false
         // graph.gaps: a gap longer than GAP_MS breaks the line, never interpolated; each run is drawn as a smooth curve
@@ -1009,6 +1012,16 @@ class GlassWatchface : WatchFace() {
             fill.color = Color.WHITE
             fill.shader = bandShader(withAlpha(bandCol, BAND_ALPHA))
             rect.set(sparkX0, highY, sparkEndX, lowY)
+            canvas.drawRoundRect(rect, BAND_CORNER, BAND_CORNER, fill)
+            fill.shader = null
+        }
+        // Glass polish round 4: at a hypo the zone under the low edge is a faint red tint (the depth reads as "in the
+        // red zone", in words the hero and the state line still say it); never on a stale reading
+        if (hasHistory && lowZone && !stale) {
+            fill.reset(); fill.isAntiAlias = true
+            fill.color = Color.WHITE
+            fill.shader = bandFade(withAlpha(LOW_COL, LOW_ZONE_ALPHA))
+            rect.set(sparkX0, lowY, sparkEndX, GlassFaceLogic.SPARK_Y1)
             canvas.drawRoundRect(rect, BAND_CORNER, BAND_CORNER, fill)
             fill.shader = null
         }
@@ -1905,6 +1918,8 @@ class GlassWatchface : WatchFace() {
         private const val BAND_FADE = 20f
         private const val BAND_FADE_V = 16f
         private const val BAND_ALPHA = 20
+        /** Glass polish round 4: the red tint under the low edge at a hypo ([lowZone]). */
+        private const val LOW_ZONE_ALPHA = 28
         private const val BAND_LOW_EDGE_ALPHA = 130
         private const val BAND_HIGH_EDGE_ALPHA = 70
         /** Glass polish round 3: on a stale reading the band is drawn in [STALE_COL] (green hinted "in range"). */
