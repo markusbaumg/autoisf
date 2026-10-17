@@ -1,8 +1,11 @@
 package app.aaps.wear.watchfaces.halo
 
+import kotlin.math.abs
+import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * All sizes and positions of the "AAPS Halo" face, in screen px, derived from the face diameter [d]
@@ -13,9 +16,10 @@ import kotlin.math.max
  * - text never goes below [MIN_TEXT_PX] (a 384 px screen would otherwise shrink a 17 px label to 14.5 px);
  * - the bolus tap target is a fixed 48 dp ([TAP_TARGET_DP]), not scaled.
  *
- * Current variant: "L-" (a bit smaller than fit1): ring R 172 (76 % of the radius, top at y 46), hero 154 px
- * (8.4 mm cap height), secondary line above the pill, and one bottom row COB - pill - IOB (values with their unit,
- * no labels; IOB on the right, next to the end where its arc fills from).
+ * Current variant: "M", refined (rounds 1 and 2): ring R 158 (top at y 60, clear of the system status icon), hero 140 px
+ * (7.7 mm cap height), delta / secondary / bottom row on an even ~41 px step, and one bottom row COB - pill - IOB
+ * with the values anchored at an equal gap to the pill (COB right-aligned, IOB left-aligned), so the row stays
+ * balanced whatever the values are. The bolus ball (when enabled) takes the pill's slot but carries a loop badge.
  */
 class HaloLayout(val d: Float, density: Float = 2f) {
 
@@ -27,98 +31,120 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     private fun font(v: Float) = max(v * u, MIN_TEXT_PX)
 
     // Ring (BG scale, 270 deg with the gap at the bottom).
-    val ringR = g(172f)
-    val ringW = g(15f)
+    val ringR = g(158f)
+    val ringW = g(14f)
     val ringGlow = g(8f)
-    val cutIn = g(163f)                 // threshold cuts R +- 9
-    val cutOut = g(181f)
-    val ambCutIn = g(165f)
-    val ambCutOut = g(179f)
-    val backdropR = g(182f)
-    val tailR = g(157f)
+    val cutIn = g(149f)                 // threshold cuts R +- 9
+    val cutOut = g(167f)
+    val ambCutIn = g(151f)
+    val ambCutOut = g(165f)
+    val backdropR = g(170f)
+    val tailR = g(143f)
     val tailW = g(3f)
-    val knobR = g(13.5f)
+    val tailMaxAlpha = 90               // ~35 %: an echo of the trend, not a stroke
+    val tailTextClear = g(20f)          // the tail ends this far before the time / date boxes
+    val knobR = g(13f)
+    val knobSeparation = g(3.5f)        // dark ring around the knob, so it does not merge into the ring gradient
     val knobGlow = g(6f)
-    val dotR = g(7f)
-    val ambKnobR = g(8f)
+    val dotR = g(6.5f)
+    val ambKnobR = g(7.5f)
     val ambStroke = g(2f)
     val cutStroke = g(3f)
 
-    // IOB arc at the right bezel, filling from its bottom end.
-    val iobR = g(211f)
-    val iobW = g(6f)
+    // IOB arc at the right bezel, filling from its bottom end. R 202 keeps ~4.3 % of the diameter to the bezel; the
+    // +-38 deg sweep keeps its lower end >= 16 px from the IOB value (tested).
+    val iobR = g(202f)
+    val iobW = g(7f)
     val iobGlow = g(5f)
-    val iobHalfSweep = 42f
+    val iobHalfSweep = 38f
     val ambIobW = g(1f)
     val ambIobFillW = g(2f)
 
     // Time and German date.
-    val timeY = g(92f)
-    val timeSize = font(39f)
-    val dateY = g(124f)
+    val timeY = g(102f)
+    val timeSize = font(38f)
+    val dateY = g(137f)                 // ~3 px more air under the time than round 1
     val dateSize = font(22f)
 
     // Hero BG.
-    val heroY = g(211f)
-    val heroSize = g(154f)
-    val heroMaxW = g(252f)              // "10.4" shrinks to fit inside the trend tail
+    val heroY = g(214f)
+    val heroSize = g(140f)
+    val heroMaxW = g(250f)              // "224" fits at full size, "12.4" shrinks ~5 %; inside the trend tail
     val heroGlow = g(10f)
     val heroStrike = g(2f)
-    val heroAmbStroke = g(2f)
-    val heroAmbStrokeBurnIn = g(1.5f)
+    val heroAmbStroke = g(2.5f)
+    val heroAmbStrokeBurnIn = g(2f)
 
-    // Arrow, delta and BG age.
-    val deltaY = g(294f)
-    val arrowSize = font(32f)
-    val deltaSize = font(26f)
-    val arrowGap = g(10f)
+    // Arrow, delta and BG age (the age only when it is getting old, see HaloFaceLogic.showBgAge).
+    val deltaY = g(290f)
+    val arrowSize = font(40f)
+    val deltaSize = font(32f)           // ~1.7 mm cap height: the second most important value
+    val arrowGap = g(6f)
 
     // Secondary line (temp target + basal), between the delta line and the pill.
-    val secondaryY = g(330f)
-    val secondarySize = font(22f)
-    val secondaryMaxW = g(210f)          // "TT 5.6 · 0.00U/h" is ~162; wider ones shrink, clear of the ring ends
+    val secondaryY = g(331f)
+    val secondarySize = font(24f)
+    val secondaryMaxW = g(180f)          // "TT 5.6 · 0.00U/h" shrinks to fit, clear of the ring ends
 
-    // Loop pill.
-    val pillY = g(375f)
-    val pillHalfW = g(40f)
-    val pillHalfH = g(18f)
-    val pillTextSize = font(23f)
-    val pillDotX = c - g(25f)
-    val pillDotR = g(6f)
-    val pillDotGlow = g(4f)
-    val pillAmbDotR = g(4.5f)
-    val pillTextX = c + g(8f)
+    // Loop pill: loop glyph (a circular arrow in the state colour) and the loop age.
+    val pillY = g(372f)
+    val pillHalfW = g(42f)
+    val pillHalfH = g(17f)
+    val pillTextSize = font(22f)
+    val pillGlyphX = c - g(24f)
+    val pillGlyphR = g(8.5f)            // ~1.4 mm: large enough to carry the state colour at a glance
+    val pillGlyphStroke = g(3f)
+    val pillGlyphHead = g(5f)
+    val pillGlyphGlow = g(4f)
+    val pillTextX = c + g(11f)
     val pillStroke = g(1f)
 
-    // Bottom row: COB value (left) and IOB value (right) beside the pill, value + smaller unit, no labels.
+    // Bottom row: COB value (left, right-aligned) and IOB value (right, left-aligned) at the same gap to the pill.
     val rowY = pillY
-    val cobX = g(138f)
-    val iobX = g(312f)
-    val rowValueSize = font(28f)
-    val rowUnitSize = font(19f)
-    val rowUnitGap = g(2f)
-    val rowMaxW = g(64f)                // "12(5)g" / "-0.25U" shrink to fit
+    val rowPillGap = g(16f)
+    val cobRight = c - pillHalfW - rowPillGap
+    val iobLeft = c + pillHalfW + rowPillGap
+    val rowValueSize = font(30f)
+    val rowUnitSize = font(20f)
+    val rowUnitGap = g(3f)
+    val rowUnitAlpha = 0xA6             // unit in its value's hue at ~65 %
+    val rowMaxW = g(72f)                // "12(5)g" / "-0.25U" shrink to fit
 
-    // Bolus ball (optional): takes the pill's place in the ring gap; its 48 dp tap circle (y 328..424 at 450 px)
-    // stays below the hero double-tap zone and clear of the ring ends.
+    // Bolus ball (optional): in the pill's slot. The loop state stays visible as a badge on the ball. Its 48 dp tap
+    // circle stays below the hero double-tap zone and on the glass.
     val ballX = c
-    val ballY = g(376f)
-    val ballR = g(26f)
+    val ballY = pillY
+    val ballR = g(28f)
     val ballStroke = g(2.5f)
     val ballGlow = g(5f)
     val ballGlowArmed = g(9f)
-    val ballAmountSize = g(15f)
-    val ballAmountDy = g(-5f)
-    val ballSubSize = g(10f)
-    val ballSubDy = g(11f)
-    val ballSubMaxW = g(40f)
+    val ballAmountSize = font(20f)
+    val ballAmountDy = g(-6f)
+    val ballSubSize = font(18f)
+    val ballSubDy = g(12f)
+    val ballSubMaxW = g(46f)
     val ballHitR = max(ballR, TAP_TARGET_DP / 2f * density)
+    /** Top edge of the ball's tap area: the 48 dp circle is cut off here, 4 design px below the secondary line. */
+    val ballHitTop = secondaryY + secondarySize * CAP_HEIGHT / 2f + g(4f)
+    val badgeX = ballX + ballR * 0.7071f
+    val badgeY = ballY - ballR * 0.7071f
+    val badgeR = g(7f)
+    val badgeRim = g(2.5f)
 
     // Double-tap zone of the hero BG (opens the main menu).
-    val heroTapLeft = g(90f)
-    val heroTapRight = g(360f)
-    val heroTapTop = g(152f)
+    val heroTapLeft = g(95f)
+    val heroTapRight = g(355f)
+    val heroTapTop = g(160f)
     val heroTapBottom = g(275f)
+
+    /**
+     * Half-width (degrees) of the tail gap around 12 o'clock (270 deg): the trend tail is not drawn within
+     * 270 +- this, so it never points at the time or the date.
+     */
+    val tailGapHalf: Float = run {
+        val half = max(timeBox().right - c, dateBox().right - c) + tailTextClear
+        Math.toDegrees(asin(min(1f, half / tailR).toDouble())).toFloat()
+    }
 
     /** Ambient burn-in shift, scaled like the rest. */
     fun burnIn(designPx: Float) = designPx * u
@@ -135,19 +161,42 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     }
 
     /** Approximate ink boxes at their widest (fit limits, or typical widest strings), for the layout test. */
+    fun timeBox() = textBox("time", c, timeY, timeSize * 0.56f * 5f, timeSize)              // "00:00"
+    fun dateBox() = textBox("date", c, dateY, dateSize * 0.52f * 10f, dateSize)              // "Mi 17. Okt"
+
     fun boxes(): List<Box> = listOf(
-        textBox("time", c, timeY, timeSize * 0.56f * 5f, timeSize),                          // "00:00"
-        textBox("date", c, dateY, dateSize * 0.52f * 10f, dateSize),                          // "Mi 17. Okt"
+        timeBox(),
+        dateBox(),
         textBox("hero", c, heroY, heroMaxW, heroSize),
-        textBox("delta", c, deltaY, arrowSize + arrowGap + deltaSize * 0.52f * 11f, arrowSize), // "-0.25 · 12'"
+        deltaBox(11),                                                                           // "-0.25 · 12'"
         textBox("secondary", c, secondaryY, secondaryMaxW, secondarySize),
-        Box("pill", c - pillHalfW, pillY - pillHalfH, c + pillHalfW, pillY + pillHalfH, BEZEL_TEXT),
-        textBox("cob", cobX, rowY, rowMaxW, rowValueSize, BEZEL_SIDE),
-        textBox("iob", iobX, rowY, rowMaxW, rowValueSize, BEZEL_SIDE),
+        pillBox(),
+        cobBox(),
+        iobBox(),
     )
 
-    /** The bolus ball's drawn box (it replaces the pill when shown). */
+    /** Arrow plus a delta line of [chars] characters ("+15.8" = 5, with " · 12'" = 11). */
+    fun deltaBox(chars: Int) = textBox("delta", c, deltaY, arrowSize + arrowGap + deltaSize * 0.52f * chars, arrowSize)
+
+    fun pillBox() = Box("pill", c - pillHalfW, pillY - pillHalfH, c + pillHalfW, pillY + pillHalfH, BEZEL_TEXT)
+    fun cobBox() = textBox("cob", cobRight - rowMaxW / 2f, rowY, rowMaxW, rowValueSize, BEZEL_SIDE)
+    fun iobBox() = textBox("iob", iobLeft + rowMaxW / 2f, rowY, rowMaxW, rowValueSize, BEZEL_SIDE)
+
+    /** The bolus ball's drawn box (it takes the pill's slot when shown). */
     fun ballBox(): Box = Box("ball", ballX - ballR, ballY - ballR, ballX + ballR, ballY + ballR, BEZEL_TEXT)
+
+    /** The loop badge on the ball (shown instead of the pill while the ball is shown). */
+    fun badgeBox(): Box = (badgeR + badgeRim).let { r -> Box("badge", badgeX - r, badgeY - r, badgeX + r, badgeY + r, BEZEL_TEXT) }
+
+    /** True when the tail is drawn at ring angle [a] (Canvas degrees, 135..405). */
+    fun tailDrawnAt(a: Float): Boolean = abs(a - 270f) > tailGapHalf
+
+    /** Distance of the tail point at angle [a] to box [b]. */
+    fun tailDistance(a: Float, b: Box): Float {
+        val x = c + tailR * kotlin.math.cos(Math.toRadians(a.toDouble())).toFloat()
+        val y = c + tailR * kotlin.math.sin(Math.toRadians(a.toDouble())).toFloat()
+        return hypot(x - x.coerceIn(b.left, b.right), y - y.coerceIn(b.top, b.bottom)) - tailW / 2f
+    }
 
     /** True when [b] comes closer than [gap] to a round end cap of the ring (the arc check covers only the sweep). */
     fun nearRingEnds(b: Box, gap: Float = 0f): Boolean = listOf(HaloFaceLogic.RING_START, HaloFaceLogic.RING_START + HaloFaceLogic.RING_SWEEP).any { a ->
@@ -156,6 +205,13 @@ class HaloLayout(val d: Float, density: Float = 2f) {
         val nx = ex.coerceIn(b.left, b.right)
         val ny = ey.coerceIn(b.top, b.bottom)
         hypot(nx - ex, ny - ey) < ringW / 2f + gap
+    }
+
+    /** True when [b] comes closer than [gap] to a round end cap of the IOB arc. */
+    fun nearIobArcEnds(b: Box, gap: Float = 0f): Boolean = listOf(-iobHalfSweep, iobHalfSweep).any { a ->
+        val ex = c + iobR * kotlin.math.cos(Math.toRadians(a.toDouble())).toFloat()
+        val ey = c + iobR * kotlin.math.sin(Math.toRadians(a.toDouble())).toFloat()
+        hypot(ex.coerceIn(b.left, b.right) - ex, ey.coerceIn(b.top, b.bottom) - ey) < iobW / 2f + gap
     }
 
     /** True when any point of [b] lies on the ring stroke (within its 270 deg sweep). */

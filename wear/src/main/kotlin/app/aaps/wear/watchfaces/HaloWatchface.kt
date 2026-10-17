@@ -6,7 +6,9 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RadialGradient
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.SweepGradient
@@ -67,6 +69,7 @@ import java.util.Locale
 import javax.inject.Inject
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -75,7 +78,7 @@ import kotlin.math.sin
  * 2.2..16.7 mmol/L scale with the target band, a knob and a 30 min trend tail), time with a German date, arrow,
  * delta and BG age, an IOB arc with IOB and COB, a 3-state loop pill and one secondary line (temp target + basal).
  *
- * Optional "+X U" ball (bottom centre in place of the loop pill, off by default) sends a bolus REQUEST on double-tap, exactly like BolusActivity
+ * Optional "+X U" ball (bottom centre in the loop pill's slot, with a loop badge so the loop state stays visible; off by default) sends a bolus REQUEST on double-tap, exactly like BolusActivity
  * (ActionBolusPreCheck). The phone checks everything and the watch shows the standard confirmation; nothing is
  * delivered without confirming there. Interactive mode only: never in ambient, never in a headless (picker)
  * instance and never in a non-live render (screenshot / highlight layer). An editor preview drawn through the live
@@ -134,6 +137,10 @@ class HaloWatchface : WatchFace() {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val rect = RectF()
+    private val bounds = Rect()
+    private val glyphPath = Path()
+    /** Time the face last became interactive; a ball tap within [WAKE_IGNORE_MS] after it is ignored (sleeve, palm). */
+    private var interactiveSince = 0L
     private val tf400 = Typeface.create(Typeface.DEFAULT, 400, false)
     private val tf300 = Typeface.create(Typeface.DEFAULT, 300, false)
     private val tf500 = Typeface.create(Typeface.DEFAULT, 500, false)
@@ -166,7 +173,8 @@ class HaloWatchface : WatchFace() {
     private var iobSrc: EventData.Status? = null
     private var iobFrac = 0f
     /** Last valid loop time (openApsStatus > 0), persisted; the phone sends -1 on runs without a new temp basal. */
-    private var loopTime = 0L
+    private var loopMemory = HaloFaceLogic.LoopTimeMemory({ 0L }, {})
+    private val loopTime get() = loopMemory.time
     private val fm = Paint.FontMetrics()
     private var backdropColour = 0
     private var backdropShader: RadialGradient? = null
@@ -178,16 +186,12 @@ class HaloWatchface : WatchFace() {
         AndroidInjection.inject(this)
         super.onCreate()
         // No preference writes or resend requests here: the service is also created for the picker preview.
-        loopTime = sp.getLong(KEY_LAST_LOOP_TIME, 0L)
+        // Only a valid time received from the phone is stored (the same in every instance).
+        loopMemory = HaloFaceLogic.LoopTimeMemory({ sp.getLong(KEY_LAST_LOOP_TIME, 0L) }, { sp.putLong(KEY_LAST_LOOP_TIME, it) })
         watchfaceScope.launch {
             complicationDataRepository.complicationData.collect {
                 data = it
-                val kept = HaloFaceLogic.rememberedLoopTime(it.statusData.openApsStatus, loopTime)
-                if (kept != loopTime) {
-                    loopTime = kept
-                    // Only a valid time received from the phone is stored (the same in every instance).
-                    sp.putLong(KEY_LAST_LOOP_TIME, kept)
-                }
+                loopMemory.onReceived(it.statusData.openApsStatus)
                 invalidate()
             }
         }
@@ -244,7 +248,7 @@ class HaloWatchface : WatchFace() {
         if (watchMode != WatchMode.INTERACTIVE) {
             guard.reset()
             handler.removeCallbacks(disarmRunnable)
-        }
+        } else interactiveSince = System.currentTimeMillis()
     }
 
     // ---------------------------------------------------------------- phone reachability
@@ -384,6 +388,9 @@ class HaloWatchface : WatchFace() {
             drawTrendTail(canvas, now, bgAngle)
             val kx = pointX(bgAngle, L.ringR)
             val ky = pointY(bgAngle, L.ringR)
+            // Dark separation ring, so the knob does not merge into the ring gradient.
+            resetPaint().apply { color = Color.BLACK }
+            canvas.drawCircle(kx, ky, L.knobR + L.knobSeparation, p)
             resetPaint().apply { color = Color.WHITE; if (!stale) setShadowLayer(L.knobGlow, 0f, 0f, withAlpha(colour, 0x99)) }
             canvas.drawCircle(kx, ky, L.knobR, p)
             resetPaint().apply { color = if (stale) STALE else colour }
@@ -397,13 +404,13 @@ class HaloWatchface : WatchFace() {
         // 5. hero BG in range colour
         drawHeroBg(canvas, colour, level, ambient = false)
 
-        // 6. arrow + delta · age
+        // 6. arrow (BG colour) + delta, and the BG age once it is getting old
         drawDeltaLine(canvas, ageMin, if (stale) STALE else colour, DELTA, ageColour(level, DELTA), ambient = false)
 
         // 7. IOB arc, IOB and COB
         drawIobCob(canvas, ambient = false)
 
-        // 8. loop pill (the bolus ball takes its place when enabled)
+        // 8. loop pill (the bolus ball takes its slot when enabled and then carries the loop state as a badge)
         buttonShown = bolusCheck().state != State.HIDDEN
         if (!buttonShown) drawLoopPill(canvas, now, ambient = false)
 
@@ -411,7 +418,7 @@ class HaloWatchface : WatchFace() {
         drawFitText(canvas, secondaryLine(), cx, L.secondaryY, L.secondarySize, tf500, SECONDARY, maxWidth = L.secondaryMaxW)
 
         // 10. bolus ball (only when enabled; otherwise not drawn and not tappable)
-        if (buttonShown) drawBolusButton(canvas, guard.isArmed)
+        if (buttonShown) drawBolusButton(canvas, guard.isArmed, HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(loopTime, now)))
         else if (guard.reset()) handler.removeCallbacks(disarmRunnable)
     }
 
@@ -451,14 +458,14 @@ class HaloWatchface : WatchFace() {
             canvas.drawCircle(pointX(a, L.ringR), pointY(a, L.ringR), L.ambKnobR, p)
         }
         drawText(canvas, timeString(), cx, L.timeY, L.timeSize, tf400, amb(0xFFC8C8C8.toInt(), lowBit), aa)
-        drawText(canvas, dateString(), cx, L.dateY, L.dateSize, tf400, amb(0xFF8C8C8C.toInt(), lowBit), aa)
+        drawText(canvas, dateString(), cx, L.dateY, L.dateSize, tf400, amb(AMB_DIM, lowBit), aa)
         drawHeroBg(canvas, Color.WHITE, level, ambient = true)
         val grey = amb(AMB_GREY, lowBit)
         // BG age stays visible in ambient; amber/red when old/stale (low-bit: white, the struck-through BG marks stale).
         drawDeltaLine(canvas, ageMin, grey, grey, if (lowBit) Color.WHITE else ageColour(level, grey), ambient = true)
         drawIobCob(canvas, ambient = true)
         drawLoopPill(canvas, now, ambient = true)
-        if (st.tempTargetLevel == 2) drawFitText(canvas, secondaryLine(), cx, L.secondaryY, L.secondarySize, tf400, amb(0xFF6E6E6E.toInt(), lowBit), aa, L.secondaryMaxW)
+        if (st.tempTargetLevel == 2) drawFitText(canvas, secondaryLine(), cx, L.secondaryY, L.secondarySize, tf400, amb(AMB_DIM, lowBit), aa, L.secondaryMaxW)
     }
 
     private fun drawCut(canvas: Canvas, angle: Float, rIn: Float, rOut: Float) =
@@ -487,13 +494,20 @@ class HaloWatchface : WatchFace() {
         val startA = HaloFaceLogic.angle(firstSgv)
         if (abs(bgAngle - startA) < 1f) return
         // Inside the ring (clear of the knob and of the bolus ball), butt caps so segments do not overlap into beads.
+        // Faint (an echo of the trend) and with a gap at 12 o'clock, so it never points at the time or the date.
         val r = arcRect(L.tailR)
         resetPaint().apply { style = Paint.Style.STROKE; strokeWidth = L.tailW; strokeCap = Paint.Cap.BUTT }
         val segments = 24
         val step = (bgAngle - startA) / segments
+        val gapLo = 270f - L.tailGapHalf
+        val gapHi = 270f + L.tailGapHalf
         for (i in 0 until segments) {
-            p.color = withAlpha(TAIL, 30 + 225 * (i + 1) / segments)
-            canvas.drawArc(r, startA + i * step, step, false, p)
+            p.color = withAlpha(TAIL, 15 + (L.tailMaxAlpha - 15) * (i + 1) / segments)
+            val a0 = min(startA + i * step, startA + (i + 1) * step)
+            val a1 = a0 + abs(step)
+            // Draw only the parts outside the gap.
+            if (a0 < gapLo) canvas.drawArc(r, a0, min(a1, gapLo) - a0, false, p)
+            if (a1 > gapHi) canvas.drawArc(r, max(a0, gapHi), a1 - max(a0, gapHi), false, p)
         }
     }
 
@@ -505,6 +519,7 @@ class HaloWatchface : WatchFace() {
         text.isAntiAlias = !lowBit
         text.textAlign = Paint.Align.CENTER
         text.letterSpacing = -0.02f
+        text.fontFeatureSettings = "tnum"   // tabular figures: the width does not jump between values
         text.typeface = if (ambient) tf300 else tf600
         text.textSize = L.heroSize
         // 4-char values like "10.4" or "15.0" must stay inside the ring: shrink to fit.
@@ -533,36 +548,48 @@ class HaloWatchface : WatchFace() {
         }
     }
 
+    /**
+     * Arrow + delta, and " · age" once the BG age is [HaloFaceLogic.BG_SHOW_AGE_MINUTES] or older. The bold arrow is
+     * centred on the delta's cap height (its own ink box, not the font box), so it does not sit low.
+     */
     private fun drawDeltaLine(canvas: Canvas, ageMin: Long?, arrowColour: Int, deltaColour: Int, ageTextColour: Int, ambient: Boolean) {
         val aa = !(ambient && lowBitAmbient)
         val arrow = arrowString()
         val delta = if (hasBg) HaloFaceLogic.orDash(bg.delta) else HaloFaceLogic.NO_DATA
-        val age = ageString(ageMin)
+        val showAge = HaloFaceLogic.showBgAge(ageMin)
+        val age = if (showAge) ageString(ageMin) else ""
         text.reset()
         text.isAntiAlias = aa
         text.textAlign = Paint.Align.LEFT
-        text.typeface = tf600
+        text.typeface = tf700
         text.textSize = L.arrowSize
-        val arrowW = if (arrow.isEmpty()) 0f else text.measureText(arrow)
+        var arrowW = 0f
+        var arrowBaseline = 0f
+        if (arrow.isNotEmpty()) {
+            text.getTextBounds(arrow, 0, arrow.length, bounds)
+            arrowW = text.measureText(arrow)
+            arrowBaseline = L.deltaY - (bounds.top + bounds.bottom) / 2f
+        }
         text.typeface = tf500
         text.textSize = L.deltaSize
         val deltaW = text.measureText(delta)
-        val sepW = text.measureText(SEP)
-        val ageW = text.measureText(age)
+        val sepW = if (showAge) text.measureText(SEP) else 0f
+        val ageW = if (showAge) text.measureText(age) else 0f
         val gap = if (arrow.isEmpty()) 0f else L.arrowGap
         var x = cx - (arrowW + gap + deltaW + sepW + ageW) / 2f
-        val y = baselineFor(L.deltaY)
+        val y = L.deltaY + L.deltaSize * HaloLayout.CAP_HEIGHT / 2f
         if (arrow.isNotEmpty()) {
-            text.typeface = tf600
+            text.typeface = tf700
             text.textSize = L.arrowSize
             text.color = arrowColour
-            canvas.drawText(arrow, x, y, text)
+            canvas.drawText(arrow, x, arrowBaseline, text)
             x += arrowW + gap
             text.typeface = tf500
             text.textSize = L.deltaSize
         }
         text.color = deltaColour
         canvas.drawText(delta, x, y, text)
+        if (!showAge) return
         x += deltaW
         canvas.drawText(SEP, x, y, text)
         x += sepW
@@ -593,16 +620,21 @@ class HaloWatchface : WatchFace() {
             }
             canvas.drawArc(r, half, sweep, false, p)
         }
-        // Bottom row: COB left, IOB right (next to the arc end it fills from). Unit and colour say which is which.
-        val unitColour = if (ambient) amb(0xFF6E6E6E.toInt(), lowBit) else null
+        // Bottom row: COB left, IOB right (next to the arc end it fills from), at the same gap to the pill.
+        // Unit and colour say which is which; the unit is the value's hue at ~65 %.
+        val cobColour = if (ambient) amb(0xFFAAAAAA.toInt(), lowBit) else COB_VALUE
+        val iobColour = if (ambient) amb(0xFFBEBEBE.toInt(), lowBit) else IOB_VALUE
         val (cobValue, cobUnit) = HaloFaceLogic.valueUnit(st.cob, "g")
-        drawValueUnit(canvas, cobValue, cobUnit, L.cobX, if (ambient) amb(0xFFAAAAAA.toInt(), lowBit) else COB_VALUE, unitColour ?: COB_UNIT, aa)
+        drawValueUnit(canvas, cobValue, cobUnit, L.cobRight, alignRight = true, cobColour, if (ambient) amb(AMB_DIM, lowBit) else withAlpha(COB_VALUE, L.rowUnitAlpha), aa)
         val (iobValue, iobUnit) = HaloFaceLogic.valueUnit(st.iobSum, "U")
-        drawValueUnit(canvas, iobValue, iobUnit, L.iobX, if (ambient) amb(0xFFBEBEBE.toInt(), lowBit) else IOB_VALUE, unitColour ?: IOB_UNIT, aa)
+        drawValueUnit(canvas, iobValue, iobUnit, L.iobLeft, alignRight = false, iobColour, if (ambient) amb(AMB_DIM, lowBit) else withAlpha(IOB_VALUE, L.rowUnitAlpha), aa)
     }
 
-    /** "1.44" + smaller "U", centred as one unit on [centreX] in the bottom row, shrunk to [HaloLayout.rowMaxW]. */
-    private fun drawValueUnit(canvas: Canvas, value: String, unit: String, centreX: Float, valueColour: Int, unitColour: Int, aa: Boolean) {
+    /**
+     * "1.44" + smaller "U" on the same baseline in the bottom row, shrunk to [HaloLayout.rowMaxW]; anchored at [anchorX]
+     * with its right edge ([alignRight], COB) or its left edge (IOB), so the gaps to the pill stay equal.
+     */
+    private fun drawValueUnit(canvas: Canvas, value: String, unit: String, anchorX: Float, alignRight: Boolean, valueColour: Int, unitColour: Int, aa: Boolean) {
         text.reset()
         text.isAntiAlias = aa
         text.textAlign = Paint.Align.LEFT
@@ -613,7 +645,7 @@ class HaloWatchface : WatchFace() {
         text.textSize = L.rowUnitSize
         val uw = if (unit.isEmpty()) 0f else text.measureText(unit) + L.rowUnitGap
         val scale = HaloFaceLogic.fitScale(vw + uw, L.rowMaxW)
-        var x = centreX - (vw + uw) * scale / 2f
+        var x = if (alignRight) anchorX - (vw + uw) * scale else anchorX
         text.typeface = tf500
         text.textSize = L.rowValueSize * scale
         text.color = valueColour
@@ -643,23 +675,21 @@ class HaloWatchface : WatchFace() {
         if (ambient) {
             resetPaint(aa).apply { style = Paint.Style.STROKE; strokeWidth = L.ambStroke; color = amb(0xFF6E6E6E.toInt(), lowBit) }
             canvas.drawRoundRect(rect, corner, corner, p)
-            p.color = when {
+            val glyph = when {
                 lowBit                  -> Color.WHITE
                 state == LoopState.OK   -> 0xFFC8C8C8.toInt()
-                state == LoopState.WARN -> AMBER
+                state == LoopState.WARN -> AMBER_MUTED
                 state == LoopState.STALE -> RED
-                else                    -> 0xFF6E6E6E.toInt()
+                else                    -> 0xFF8C8C8C.toInt()
             }
-            // A stale loop gets a filled dot even in ambient (tiny area, so fine for burn-in).
-            if (state == LoopState.STALE) p.style = Paint.Style.FILL
-            canvas.drawCircle(L.pillDotX, L.pillY, L.pillAmbDotR, p)
+            drawLoopGlyph(canvas, L.pillGlyphX, L.pillY, glyph, aa, glow = false)
             drawText(canvas, label, L.pillTextX, L.pillY, L.pillTextSize, tf600, amb(0xFFC8C8C8.toInt(), lowBit), aa)
             return
         }
         resetPaint().apply {
             color = when (state) {
                 LoopState.OK    -> 0xFF12281E.toInt()
-                LoopState.WARN  -> 0xFF2A2210.toInt()
+                LoopState.WARN  -> 0xFF1C1E24.toInt()        // neutral: WARN means "check", not an alarm
                 LoopState.STALE -> 0xFF2E1218.toInt()
                 LoopState.UNKNOWN -> 0xFF1C1E24.toInt()
             }
@@ -669,30 +699,56 @@ class HaloWatchface : WatchFace() {
             style = Paint.Style.STROKE; strokeWidth = L.pillStroke
             color = when (state) {
                 LoopState.OK    -> 0xFF285A40.toInt()
-                LoopState.WARN  -> 0xFF5A4A20.toInt()
+                LoopState.WARN  -> 0xFF3A3E48.toInt()
                 LoopState.STALE -> 0xFF6A2632.toInt()
                 LoopState.UNKNOWN -> 0xFF3A3E48.toInt()
             }
         }
         canvas.drawRoundRect(rect, corner, corner, p)
-        val dot = when (state) {
-            LoopState.OK    -> GREEN
-            LoopState.WARN  -> AMBER
-            LoopState.STALE -> RED
-            LoopState.UNKNOWN -> GREY
-        }
-        resetPaint().apply { color = dot; if (state != LoopState.UNKNOWN) setShadowLayer(L.pillDotGlow, 0f, 0f, dot) }
-        canvas.drawCircle(L.pillDotX, L.pillY, L.pillDotR, p)
+        // WARN: muted amber glyph and text only (no glow, no tinted fill or border), so it reads as "check".
+        val glyphColour = if (state == LoopState.WARN) AMBER_MUTED else loopColour(state)
+        drawLoopGlyph(canvas, L.pillGlyphX, L.pillY, glyphColour, aa = true, glow = state == LoopState.OK || state == LoopState.STALE)
         val textColour = when (state) {
             LoopState.OK    -> 0xFFD2F5E1.toInt()
-            LoopState.WARN  -> 0xFFFFE6AA.toInt()
+            LoopState.WARN  -> AMBER_MUTED
             LoopState.STALE -> 0xFFFFD2D8.toInt()
             LoopState.UNKNOWN -> GREY
         }
         drawText(canvas, label, L.pillTextX, L.pillY, L.pillTextSize, tf600, textColour)
     }
 
-    private fun drawBolusButton(canvas: Canvas, armed: Boolean) {
+    private fun loopColour(state: LoopState): Int = when (state) {
+        LoopState.OK      -> GREEN
+        LoopState.WARN    -> AMBER_MUTED
+        LoopState.STALE   -> RED
+        LoopState.UNKNOWN -> GREY
+    }
+
+    /** Loop glyph: an open circle with an arrow head (a circular arrow), so the pill reads as "loop", not as BG. */
+    private fun drawLoopGlyph(canvas: Canvas, x: Float, y: Float, colour: Int, aa: Boolean, glow: Boolean) {
+        val r = L.pillGlyphR
+        resetPaint(aa).apply {
+            style = Paint.Style.STROKE; strokeWidth = L.pillGlyphStroke; strokeCap = Paint.Cap.ROUND; color = colour
+            if (glow) setShadowLayer(L.pillGlyphGlow, 0f, 0f, withAlpha(colour, 0x99))
+        }
+        rect.set(x - r, y - r, x + r, y + r)
+        // Open at the top right; the head points clockwise at the gap's end (-60 deg).
+        canvas.drawArc(rect, -30f, 300f, false, p)
+        val hx = x + r * cos(Math.toRadians(-60.0)).toFloat()
+        val hy = y + r * sin(Math.toRadians(-60.0)).toFloat()
+        val h = L.pillGlyphHead
+        glyphPath.reset()
+        glyphPath.moveTo(hx - h, hy - h * 0.15f)
+        glyphPath.lineTo(hx + h * 0.35f, hy + h * 0.15f)
+        glyphPath.lineTo(hx - h * 0.25f, hy + h * 1.05f)
+        glyphPath.close()
+        p.style = Paint.Style.FILL_AND_STROKE
+        p.strokeWidth = L.pillGlyphStroke * 0.4f
+        canvas.drawPath(glyphPath, p)
+    }
+
+    /** The ball in the pill's slot; the loop state stays visible as a badge (its colour) on the ball's upper right. */
+    private fun drawBolusButton(canvas: Canvas, armed: Boolean, loop: LoopState) {
         resetPaint().apply {
             color = if (armed) 0xFF3C2A0A.toInt() else 0xFF141628.toInt()
             setShadowLayer(if (armed) L.ballGlowArmed else L.ballGlow, 0f, 0f, if (armed) 0xAAFFC85A.toInt() else 0x66788CFF)
@@ -703,6 +759,12 @@ class HaloWatchface : WatchFace() {
         drawText(canvas, amountString(drawnBolusAmount()), L.ballX, L.ballY + L.ballAmountDy, L.ballAmountSize, tf700, if (armed) 0xFFFFE6AA.toInt() else 0xFFF0F0FF.toInt())
         if (armed) drawFitText(canvas, againLabel, L.ballX, L.ballY + L.ballSubDy, L.ballSubSize, tf600, 0xFFFFC85A.toInt(), maxWidth = L.ballSubMaxW)
         else drawFitText(canvas, subLabel, L.ballX, L.ballY + L.ballSubDy, L.ballSubSize, tf600, 0xFF96A0DC.toInt(), maxWidth = L.ballSubMaxW)
+        // Loop badge: black rim, then the loop colour.
+        resetPaint().apply { color = Color.BLACK }
+        canvas.drawCircle(L.badgeX, L.badgeY, L.badgeR + L.badgeRim, p)
+        val c = loopColour(loop)
+        resetPaint().apply { color = c; if (loop == LoopState.OK || loop == LoopState.STALE) setShadowLayer(L.pillGlyphGlow, 0f, 0f, withAlpha(c, 0x99)) }
+        canvas.drawCircle(L.badgeX, L.badgeY, L.badgeR, p)
     }
 
     // ---------------------------------------------------------------- cached values
@@ -854,7 +916,10 @@ class HaloWatchface : WatchFace() {
         val dx = x - offX
         val dy = y - offY
 
-        val inside = buttonShown && BolusTapGesture.isInside(dx, dy, L.ballX, L.ballY, L.ballHitR)
+        // The 48 dp circle is cut off at the top, so a tap on the secondary (TT / basal) line can never arm a bolus.
+        val inside = buttonShown && dy >= L.ballHitTop && BolusTapGesture.isInside(dx, dy, L.ballX, L.ballY, L.ballHitR)
+        // A tap on the ball right after the face woke up is most likely a sleeve or palm: ignore it.
+        if (inside && System.currentTimeMillis() - interactiveSince in 0 until WAKE_IGNORE_MS) return
         val outcome = guard.onTap(eventTime, inside, bolusInput())
         when (outcome.result) {
             TapResult.DUPLICATE -> return
@@ -939,11 +1004,14 @@ class HaloWatchface : WatchFace() {
 
         private const val TAP_UP = 2
         private const val TAIL_WINDOW_MS = 30 * 60 * 1000L
+        private const val WAKE_IGNORE_MS = 1000L
         private const val KEY_LAST_LOOP_TIME = "halo_last_loop_enact"
         private const val SEP = " · "
 
         private const val GREEN = 0xFF3DDC97.toInt()
         private const val AMBER = 0xFFFFB547.toInt()
+        /** Loop WARN (13..19'): a desaturated amber, "check" rather than "alarm". */
+        private const val AMBER_MUTED = 0xFFC9A465.toInt()
         private const val RED = 0xFFFF5A6E.toInt()
         private const val GREY = 0xFF8A909C.toInt()
         private const val CYAN = 0xFF5AC8FA.toInt()
@@ -953,15 +1021,15 @@ class HaloWatchface : WatchFace() {
         private const val FILL_START = 0xFF286EBE.toInt()
         private const val TAIL = 0xFFAAB4C3.toInt()
         private const val TIME = 0xFFEBEBF0.toInt()
-        private const val DATE = 0xFF8A909C.toInt()
-        private const val DELTA = 0xFFB4BAC4.toInt()
+        private const val DATE = 0xFFA0A6B0.toInt()
+        private const val DELTA = 0xFFDCE0E6.toInt()
         private const val STALE = 0xFF6E7480.toInt()
-        private const val SECONDARY = 0xFF6E7480.toInt()
-        private const val IOB_TRACK = 0xFF1A1C24.toInt()
-        private const val IOB_UNIT = 0xFF5AA0C8.toInt()
-        private const val COB_UNIT = 0xFFC8A06E.toInt()
+        private const val SECONDARY = 0xFFA0A6B0.toInt()
+        private const val IOB_TRACK = 0xFF1C1F25.toInt()  // dimmer than the ring track: only the blue fill should read
         private const val IOB_VALUE = 0xFFD7F0FF.toInt()
         private const val COB_VALUE = 0xFFFFE0B2.toInt()
         private const val AMB_GREY = 0xFFAAAAAA.toInt()
+        /** Dimmest ambient text (never below #8C8C8C). */
+        private const val AMB_DIM = 0xFF8C8C8C.toInt()
     }
 }
