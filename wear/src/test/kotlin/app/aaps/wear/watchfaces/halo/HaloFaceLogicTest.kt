@@ -29,7 +29,8 @@ class HaloFaceLogicTest {
         assertThat(HaloFaceLogic.loopState(5)).isEqualTo(LoopState.OK)
         assertThat(HaloFaceLogic.loopState(6)).isEqualTo(LoopState.WARN)
         assertThat(HaloFaceLogic.loopState(14)).isEqualTo(LoopState.WARN)
-        assertThat(HaloFaceLogic.loopState(15)).isEqualTo(LoopState.STALE)
+        assertThat(HaloFaceLogic.loopState(19)).isEqualTo(LoopState.WARN)
+        assertThat(HaloFaceLogic.loopState(20)).isEqualTo(LoopState.STALE)
     }
 
     @Test fun loopTimeMinusOneKeepsTheLastValidValue() {
@@ -82,6 +83,13 @@ class HaloFaceLogicTest {
         val now = 10_000_000L
         assertThat(HaloFaceLogic.ambientHero(HaloFaceLogic.bgAgeLevel(HaloFaceLogic.bgAgeMinutes(now - 13 * 60_000L, now)))).isEqualTo(AmbientHero.STRUCK)
         assertThat(HaloFaceLogic.ambientHero(HaloFaceLogic.bgAgeLevel(HaloFaceLogic.bgAgeMinutes(0L, now)))).isEqualTo(AmbientHero.STRUCK)
+    }
+
+    @Test fun bgAgeIsShownOnlyWhenGettingOld() {
+        assertThat(HaloFaceLogic.showBgAge(0)).isFalse()
+        assertThat(HaloFaceLogic.showBgAge(4)).isFalse()
+        assertThat(HaloFaceLogic.showBgAge(5)).isTrue()
+        assertThat(HaloFaceLogic.showBgAge(null)).isTrue()
     }
 
     @Test fun noDataIsDashes() {

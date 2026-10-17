@@ -29,6 +29,9 @@ object HaloFaceLogic {
     const val BG_OLD_MINUTES = 6L
     const val BG_STALE_MINUTES = 12L
 
+    /** BG age from which the age is shown on the delta line (younger is the normal case and would read like the loop age). */
+    const val BG_SHOW_AGE_MINUTES = 5L
+
     const val NO_DATA = "--"
 
     /** Canvas angle on the ring for a BG value in mg/dL. */
@@ -62,12 +65,19 @@ object HaloFaceLogic {
     fun loopAgeMinutes(openApsStatus: Long, now: Long): Long? =
         if (openApsStatus <= 0L) null else max(0L, (now - openApsStatus) / 60000L)
 
-    /** <= 5' OK, 6..14' WARN, > 14' STALE (the stock faces turn red after 14'), never received UNKNOWN. */
+    /** Loop age (minutes) up to which the pill is OK, and up to which it is WARN; older is STALE (red). */
+    const val LOOP_OK_MINUTES = 5L
+    const val LOOP_WARN_MINUTES = 19L
+
+    /**
+     * <= 5' OK, 6..19' WARN, >= 20' STALE, never received UNKNOWN. Red comes later than on the stock faces (> 14'),
+     * because the age is the last temp-basal enact: a stable loop that enacts nothing new for a while is not broken.
+     */
     fun loopState(ageMinutes: Long?): LoopState = when {
-        ageMinutes == null -> LoopState.UNKNOWN
-        ageMinutes <= 5    -> LoopState.OK
-        ageMinutes <= 14   -> LoopState.WARN
-        else               -> LoopState.STALE
+        ageMinutes == null               -> LoopState.UNKNOWN
+        ageMinutes <= LOOP_OK_MINUTES    -> LoopState.OK
+        ageMinutes <= LOOP_WARN_MINUTES  -> LoopState.WARN
+        else                             -> LoopState.STALE
     }
 
     // ------------------------------------------------------------------ BG age
@@ -84,6 +94,9 @@ object HaloFaceLogic {
         ageMinutes >= BG_OLD_MINUTES     -> AgeLevel.OLD
         else                             -> AgeLevel.FRESH
     }
+
+    /** Show the BG age only when it is getting old (or unknown), so a fresh "0'" is not confused with the loop age. */
+    fun showBgAge(ageMinutes: Long?): Boolean = ageMinutes == null || ageMinutes >= BG_SHOW_AGE_MINUTES
 
     fun isStale(timeStamp: Long, now: Long): Boolean = bgAgeLevel(bgAgeMinutes(timeStamp, now)) == AgeLevel.STALE
 
