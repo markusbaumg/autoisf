@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="face_aod_style_halo_time">BZ + Uhrzeit</string>
-    <string name="face_aod_style_halo_bg">Nur BZ</string>
-    <string name="face_aod_style_halo_glance">Übersicht</string>
-    <string name="halo_aod_age_ago">vor %1$s</string>
-</resources>

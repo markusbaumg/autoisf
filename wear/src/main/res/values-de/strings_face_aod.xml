@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- German strings of the shared always-on style; values-de so that de-CH and de-AT use them too. -->
+<!-- values-de so that de-CH and de-AT use it too -->
 <resources>
-    <string name="pref_face_aod_style">Always-On-Stil</string>
-    <string name="face_aod_style_outline">Umriss</string>
-    <string name="face_aod_style_minimal">Minimal</string>
-    <string name="face_aod_style_glance">Übersicht</string>
+    <string name="face_aod_age_ago">vor %1$s</string>
 </resources>

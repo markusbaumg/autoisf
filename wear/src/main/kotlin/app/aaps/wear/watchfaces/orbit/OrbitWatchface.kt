@@ -42,7 +42,7 @@ import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
 import app.aaps.wear.interaction.actions.QuickBolusActivity
 import app.aaps.wear.interaction.menus.MainMenuActivity
-import app.aaps.wear.watchfaces.common.AodStyle
+import app.aaps.wear.watchfaces.common.MonoAod
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.FaceState
 import app.aaps.wear.watchfaces.common.LoopRunTime
@@ -166,8 +166,6 @@ class OrbitWatchface : WatchFace() {
     private var avgDelta = false
     private var showPredictions = true
     private var timeFrameH = OrbitFaceLogic.DEFAULT_TIME_FRAME_H
-    /** The shared always-on style (face_aod_style), mapped to Orbit's own look by [OrbitAod.look]. */
-    private var aodStyle = AodStyle.DEFAULT
     private var loopStatesRaw = ""
     private var loopStateNames: Set<String> = emptySet()
     private var loopStatesTimeStamp = 0L
@@ -241,11 +239,10 @@ class OrbitWatchface : WatchFace() {
     private val ballLabelText = arrayOfNulls<String>(5)
 
     /** Offline render harness only: the date line text drawn by the last frame ("" when none was drawn). */
-    /** Offline render harness only: draws this look in ambient instead of the one the setting picks (AOD exploration). */
-    @VisibleForTesting internal var aodLookOverride: OrbitAod.Look? = null
     /** Offline render harness only: the always-on model of the last ambient rebuild. */
-    @VisibleForTesting internal var aodModel: OrbitAod.Model? = null
-    private val aodPainter = OrbitAod.Painter()
+    @VisibleForTesting internal var aodModel: MonoAod.Model? = null
+    private val aodPainter = MonoAod.Painter()
+    private var aodAgoFormat = "vor %s"
     @VisibleForTesting internal var drawnDateText = ""
     /** Offline render harness only: the glyph box (design px) of the date line drawn by the last frame. */
     @VisibleForTesting internal val drawnDateBox = RectF()
@@ -367,7 +364,7 @@ class OrbitWatchface : WatchFace() {
             reservoirFormat = getString(R.string.orbit_reservoir).replace("%1\$s", "%s"),
             phoneBatteryFormat = getString(R.string.orbit_phone_battery).replace("%1\$s", "%s")
         )
-        aodPainter.agoFormat = getString(R.string.orbit_aod_age_ago).replace("%1\$s", "%s")
+        aodAgoFormat = getString(R.string.face_aod_age_ago).replace("%1\$s", "%s")
         buildShapes()
         readPrefs()
     }
@@ -463,7 +460,6 @@ class OrbitWatchface : WatchFace() {
         detailedDelta = sp.getBoolean(R.string.key_show_detailed_delta, false)
         avgDelta = sp.getBoolean(R.string.key_show_avg_delta, true)
         showPredictions = sp.getBoolean(R.string.key_prediction_lines, true)
-        aodStyle = AodStyle.read(sp)
         timeFrameH = (sp.getString(R.string.key_chart_time_frame, OrbitFaceLogic.DEFAULT_TIME_FRAME_H.toString()).toIntOrNull()
             ?: OrbitFaceLogic.DEFAULT_TIME_FRAME_H).coerceIn(1, 5)
     }
@@ -711,19 +707,12 @@ class OrbitWatchface : WatchFace() {
         shiftX = OrbitFaceLogic.burnInShift(minuteKey, 0).toFloat()
         shiftY = OrbitFaceLogic.burnInShift(minuteKey, 1).toFloat()
         buildSparkline(d, now)
-        if (isAmbient) buildAod(d, now, delta)
+        if (isAmbient) buildAod()
     }
 
-    /** AOD round 2: the always-on model (BG, arrow, time and at most one line of words); see [OrbitAod]. */
-    private fun buildAod(d: ComplicationData, now: Long, delta: String) {
-        val look = aodLookOverride ?: OrbitAod.look(aodStyle)
-        val spark = if (look == OrbitAod.Look.BG_SPARK) {
-            val pts = d.graphData.entries.toMutableList()
-            if (d.bgData.sgv > 0) pts.add(d.bgData)
-            OrbitAod.sparkPoints(LongArray(pts.size) { pts[it].timeStamp }, DoubleArray(pts.size) { pts[it].sgv }, now)
-        } else FloatArray(0)
-        val ampm = if (amPmText.isEmpty()) "" else " $amPmText"
-        aodModel = OrbitAod.model(heroText, range, bgAge, trend, timeText + ampm, caption, slot, deltaRow, delta, spark)
+    /** The always-on model ([MonoAod]: BG, arrow and at most one grey line of words); see [OrbitAod]. */
+    private fun buildAod() {
+        aodModel = OrbitAod.model(heroText, range, bgAge, trend, caption, slot, deltaRow.agePart, aodAgoFormat)
         aodPainter.lowWord = labels.sentinelLow
         aodPainter.highWord = labels.sentinelHigh
     }
@@ -1093,13 +1082,13 @@ class OrbitWatchface : WatchFace() {
     }
 
     /**
-     * Always-on (AOD round 2, owner feedback on the outline AOD: "too hard to read with the fine, thin lines, and it's
-     * too much information"): bold, dimmed digits with the trend arrow, the time in most looks, and one line of words
-     * only when something needs attention. No ring, discs, chart, date or bolus button. Drawn by [OrbitAod.Painter].
+     * Always-on (owner: "simple and black and white only"): the family's one black-and-white look ([MonoAod]), the BG
+     * with the trend arrow and one grey line of words only when something needs attention. No time, ring, discs,
+     * chart, date or bolus button.
      */
     private fun drawAmbient(canvas: Canvas) {
         val m = aodModel ?: return
-        aodPainter.draw(canvas, m, aodLookOverride ?: OrbitAod.look(aodStyle), lowBitAmbient, burnInProtection)
+        aodPainter.draw(canvas, m, lowBitAmbient, burnInProtection)
     }
 
     /** Time with the optional AM/PM suffix (locale.en_12h), below the system status icon (UX round 3). */

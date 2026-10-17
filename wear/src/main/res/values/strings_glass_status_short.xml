@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Glass status row short forms: a long warning shortens before IOB is dropped -->
+    <string name="glass_phone_disconnected_short">Phone · %1$s</string>
+    <string name="glass_reservoir_short">Res %1$s</string>
+    <string name="glass_phone_battery_short">Ph %1$d %%</string>
+</resources>

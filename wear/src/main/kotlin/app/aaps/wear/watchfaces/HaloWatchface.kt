@@ -42,7 +42,7 @@ import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
 import app.aaps.wear.interaction.actions.QuickBolusActivity
 import app.aaps.wear.interaction.menus.MainMenuActivity
-import app.aaps.wear.watchfaces.common.AodStyle
+import app.aaps.wear.watchfaces.common.MonoAod
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.State
@@ -84,8 +84,8 @@ import kotlin.math.sin
  * otherwise an active temp target and a temp basal that matters). Declutter round: no date, no outer IOB arc, no
  * "0 g", no routine basal.
  *
- * Always-on: the family's bold, sparse look ([HaloAod]) in the style of the shared watch setting [AodStyle]; never
- * the bolus ball.
+ * Always-on: the family's one black-and-white look ([MonoAod], via [HaloAod]): the BG and its arrow, at most one grey
+ * line of words; never the bolus ball.
  *
  * Every state (BG age, range, loop health, phone link, warning order) comes from the family helper [FaceState]
  * (designsystem/states.md), shared with Glass and Orbit.
@@ -573,24 +573,21 @@ class HaloWatchface : WatchFace() {
     }
 
     /**
-     * Always-on in the family look ([HaloAod], the style of the shared setting [AodStyle]): bold, dimmed solid digits
-     * with the trend arrow, the time small on top, at most one line of words, and Halo's target band as one dim arc.
-     * No ring, tail, pill, IOB or bolus ball (never in ambient). Low-bit: white, no anti-aliasing. Burn-in protection:
+     * Always-on in the family's one black-and-white look ([MonoAod], owner: "simple and black and white only"): the BG
+     * with the trend arrow and at most one grey line of words (TIEF / HOCH, old data, loop or phone). No time, ring,
+     * tail, pill, IOB or bolus ball (never in ambient). Low-bit: pure white, no anti-aliasing. Burn-in protection:
      * everything shifts by up to 4 px every minute. Ages are computed at draw time (once a minute).
      */
     private fun drawAmbient(canvas: Canvas) {
         val now = System.currentTimeMillis()
         buttonShown = false
         val s = state(now, ambient = true)
-        val look = aodLookOverride ?: HaloAod.look(if (::sp.isInitialized) AodStyle.read(sp) else AodStyle.DEFAULT)
         val model = HaloAod.model(
-            hero = s.bgText, range = s.range, bgAge = s.bgAge, trend = s.trend, time = timeString(), caption = s.caption,
-            warning = s.ownerText, delta = bg.delta, age = ageString(s.ageMin), lowMgdl = lowMgdl(), highMgdl = highMgdl(),
-            sgv = if (s.showValue) bg.sgv else 0.0
+            hero = s.bgText, range = s.range, bgAge = s.bgAge, trend = s.trend, caption = s.caption, warning = s.ownerText,
+            age = ageString(s.ageMin), agoFormat = getString(R.string.face_aod_age_ago).replace("%1\$s", "%s")
         )
         aodPainter.lowWord = words().low
         aodPainter.highWord = words().high
-        aodPainter.agoFormat = getString(R.string.halo_aod_age_ago).replace("%1\$s", "%s")
         canvas.save()
         try {
             if (burnInProtection) {
@@ -598,16 +595,13 @@ class HaloWatchface : WatchFace() {
                 canvas.translate(L.burnIn(HaloFaceLogic.burnInOffsetX(key)), L.burnIn(HaloFaceLogic.burnInOffsetY(key)))
             }
             canvas.scale(L.u, L.u)
-            aodPainter.draw(canvas, model, look, lowBitAmbient, burnInProtection)
+            aodPainter.draw(canvas, model, lowBitAmbient, burnInProtection)
         } finally {
             canvas.restore()
         }
     }
 
-    private val aodPainter = HaloAod.Painter()
-
-    /** Offline render harness only: draws this look in ambient instead of the one the setting picks (AOD exploration). */
-    @VisibleForTesting internal var aodLookOverride: HaloAod.Look? = null
+    private val aodPainter = MonoAod.Painter()
 
     private fun drawCut(canvas: Canvas, angle: Float, rIn: Float, rOut: Float) =
         canvas.drawLine(pointX(angle, rIn), pointY(angle, rIn), pointX(angle, rOut), pointY(angle, rOut), p)

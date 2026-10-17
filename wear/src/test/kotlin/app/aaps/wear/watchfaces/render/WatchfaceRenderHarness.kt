@@ -26,16 +26,12 @@ import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.interaction.actions.QuickBolusPicker
 import app.aaps.wear.interaction.actions.QuickBolusView
 import app.aaps.wear.watchfaces.HaloWatchface
-import app.aaps.wear.watchfaces.common.AodStyle
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.BolusRequestPrefs
 import app.aaps.wear.watchfaces.common.PhoneReachability
-import app.aaps.wear.watchfaces.glass.GlassAod
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic
 import app.aaps.wear.watchfaces.glass.GlassWatchface
-import app.aaps.wear.watchfaces.halo.HaloAod
 import app.aaps.wear.watchfaces.halo.HaloLayout
-import app.aaps.wear.watchfaces.orbit.OrbitAod
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic
 import app.aaps.wear.watchfaces.orbit.OrbitWatchface
 import app.aaps.wear.watchfaces.utils.SimpleUi
@@ -107,14 +103,6 @@ class WatchfaceRenderHarness {
         val ball: Ball = Ball.OFF,
         val phoneReachable: Boolean = true,
         val clock: ZonedDateTime = SHOWN_TIME,
-        /** The shared always-on style (face_aod_style), written to the prefs before the face is built. */
-        val aod: AodStyle = AodStyle.DEFAULT,
-        /** Orbit only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
-        val orbitLook: OrbitAod.Look? = null,
-        /** Halo only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
-        val haloLook: HaloAod.Look? = null,
-        /** Glass only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
-        val glassLook: GlassAod.Look? = null,
         /** [PICKER_FACES] only: the bolus ball in "Auswahl" mode ("+ U", the double tap opens the picker); other faces skip it. */
         val picker: Boolean = false,
         /** A request sent this long ago (ms) by the picker or the ball: the shared 30 s pending lock. */
@@ -322,9 +310,9 @@ class WatchfaceRenderHarness {
         },
         RenderState("tbr_tt_ball", ball = Ball.IDLE) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, tt = "8.0", ttLevel = 2, basal = "120%")) },
         RenderState("zero_basal_kh_tt") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, cob = "24g", tt = "8.0", ttLevel = 2, basal = "0.00 U/h")) }
-    ) + aodStates() + exploreStates()
+    ) + aodStates()
 
-    /** AOD round 2: the cases every always-on style must handle, as (id, mode, ball-free data). */
+    /** The cases the always-on look must handle, as (id, mode, ball-free data). */
     private fun aodCases(): List<Triple<String, Mode, (Long) -> ComplicationData>> = listOf(
         Triple("in_range", Mode.AMBIENT, inRange),
         Triple("aging_8", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 8) },
@@ -361,26 +349,12 @@ class WatchfaceRenderHarness {
         Triple("en_in_range", Mode.AMBIENT, inRange)
     )
 
-    /** aod_<style>_<case> for each value of the shared always-on setting (the ball enabled: it never shows in ambient). */
-    private fun aodStates(): List<RenderState> = AodStyle.entries.flatMap { style ->
-        aodCases().map { (id, mode, d) ->
-            RenderState(
-                "aod_${style.prefValue}_$id", lang = if (id.startsWith("en_")) "en" else "de", mode = mode, aod = style, ball = Ball.IDLE,
-                phoneReachable = !id.endsWith("no_phone_14"), data = d
-            )
-        }
-    }
-
-    /** AOD exploration: Orbit's, Halo's and Glass's looks in in_range, urgent_low and stale (each face renders only its own). */
-    private fun exploreStates(): List<RenderState> {
-        val cases = aodCases().filter { it.first in setOf("in_range", "urgent_low", "stale") }
-        return OrbitAod.Look.entries.flatMap { look ->
-            cases.map { (id, mode, d) -> RenderState("explore_${look.name.lowercase()}_$id", mode = mode, orbitLook = look, data = d) }
-        } + HaloAod.Look.entries.flatMap { look ->
-            cases.map { (id, mode, d) -> RenderState("explore_${look.name.lowercase()}_$id", mode = mode, haloLook = look, data = d) }
-        } + GlassAod.Look.entries.flatMap { look ->
-            cases.map { (id, mode, d) -> RenderState("explore_${look.name.lowercase()}_$id", mode = mode, glassLook = look, data = d) }
-        }
+    /** aod_<case>: the one black-and-white always-on look (the ball enabled: it never shows in ambient). */
+    private fun aodStates(): List<RenderState> = aodCases().map { (id, mode, d) ->
+        RenderState(
+            "aod_$id", lang = if (id.startsWith("en_")) "en" else "de", mode = mode, ball = Ball.IDLE,
+            phoneReachable = !id.endsWith("no_phone_14"), data = d
+        )
     }
 
     // ------------------------------------------------------------------ test
@@ -397,20 +371,20 @@ class WatchfaceRenderHarness {
         out!!
         val states = states()
         val edgeHits = ArrayList<String>()
+        val colourHits = ArrayList<String>()
         for (face in Face.entries) {
             val dir = File(out, face.id).apply { mkdirs() }
             val rendered = ArrayList<Pair<String, Bitmap>>()
             val lit = StringBuilder("state\tlit_pct\n")
             for (s in states) {
-                if (s.orbitLook != null && face != Face.ORBIT) continue
                 if (s.picker && face !in PICKER_FACES) continue
-                if (s.haloLook != null && face != Face.HALO) continue
-                if (s.glassLook != null && face != Face.GLASS) continue
                 if (only?.containsMatchIn("${face.id}/${s.id}") == false) continue
                 val bmp = render(face, s)
                 FileOutputStream(File(dir, "${s.id}.png")).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 rendered += s.id to bmp
                 edgeHit(bmp)?.let { edgeHits += "${face.id}/${s.id}: $it" }
+                // the always-on look is black and white only: every lit pixel a grey (R = G = B within a tolerance)
+                if (s.mode != Mode.INTERACTIVE) colourPixel(bmp)?.let { colourHits += "${face.id}/${s.id}: $it" }
                 lit.append(s.id).append('\t').append("%.2f".format(Locale.US, 100.0 * litRatio(bmp))).append('\n')
             }
             if (rendered.isEmpty()) continue
@@ -420,6 +394,7 @@ class WatchfaceRenderHarness {
         // Glass/Orbit UX round 1: no drawn content (text, glyphs) within 14 px of the round edge (450 grid), where the
         // Watch5 Pro's raised bezel shades it. Checked after all renders are written, so a failure still leaves them.
         assertTrue("content within $EDGE_MARGIN_PX px of the bezel:\n" + edgeHits.joinToString("\n"), edgeHits.isEmpty())
+        assertTrue("colour in the always-on look:\n" + colourHits.joinToString("\n"), colourHits.isEmpty())
         assertTrue("no date drawn in:\n" + dateMisses.joinToString("\n"), dateMisses.isEmpty())
         assertTrue("date closer than ${OrbitFaceLogic.DATE_RING_CLEAR} px to the ring:\n" + dateRingHits.joinToString("\n"), dateRingHits.isEmpty())
         assertTrue("hero group closer than $HERO_SIDE_MIN_PX px to the card:\n" + heroSideHits.joinToString("\n"), heroSideHits.isEmpty())
@@ -543,6 +518,18 @@ class WatchfaceRenderHarness {
         return null
     }
 
+    /** First pixel whose channels differ by more than [GREY_TOLERANCE] (a colour, not a grey), as "(x,y) #rrggbb", or null. */
+    private fun colourPixel(bmp: Bitmap): String? {
+        for (y in 0 until bmp.height) for (x in 0 until bmp.width) {
+            val c = bmp.getPixel(x, y)
+            val r = Color.red(c)
+            val g = Color.green(c)
+            val b = Color.blue(c)
+            if (maxOf(r, g, b) - minOf(r, g, b) > GREY_TOLERANCE) return "($x,$y) #%02x%02x%02x".format(r, g, b)
+        }
+        return null
+    }
+
     /** AOD round 2: share of the round dial's pixels with a luminance above 20 (0..255), the AMOLED lit share. */
     private fun litRatio(bmp: Bitmap): Double {
         val r = bmp.width / 2.0
@@ -579,9 +566,9 @@ class WatchfaceRenderHarness {
         phoneGerman = s.lang == "de"
         val d = s.data(now)
         val guard: BolusRequestGuard = when (wf) {
-            is HaloWatchface  -> { wf.aodLookOverride = s.haloLook; wf.prepareOffline(d) }
-            is GlassWatchface -> { wf.aodLookOverride = s.glassLook; wf.prepareOffline(d) }
-            is OrbitWatchface -> { wf.aodLookOverride = s.orbitLook; wf.prepareOffline(d) }
+            is HaloWatchface  -> wf.prepareOffline(d)
+            is GlassWatchface -> wf.prepareOffline(d)
+            is OrbitWatchface -> wf.prepareOffline(d)
             else              -> error("unknown face")
         }
         // The phone's (asynchronous) reachability answer, as after the face's first lookup.
@@ -654,7 +641,6 @@ class WatchfaceRenderHarness {
     private fun prefs(context: Context, sp: SP, s: RenderState) {
         val maxBolusKey = context.getString(R.string.key_treatments_safety_max_bolus)
         sp.putDouble(maxBolusKey, 3.0)
-        sp.putString(AodStyle.KEY, s.aod.prefValue)
         when (s.ball) {
             Ball.OFF      -> sp.putBoolean(BolusRequestPrefs.KEY_ENABLED, false)
             Ball.DISABLED -> {
@@ -764,3 +750,5 @@ private const val EDGE_MARGIN_PX = 14f
 /** Glass polish round 7: glass between the hero group (digits, chip) and the card's stroke, each side (450 grid). */
 private const val HERO_SIDE_MIN_PX = 12f
 private const val EDGE_LEVEL = 110
+/** Always-on: the largest channel spread (0..255) a pixel may have and still count as grey (anti-aliasing rounds). */
+private const val GREY_TOLERANCE = 6

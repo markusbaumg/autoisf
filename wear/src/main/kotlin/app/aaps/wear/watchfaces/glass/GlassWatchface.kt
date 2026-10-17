@@ -53,7 +53,7 @@ import app.aaps.wear.watchfaces.common.FaceState.Range
 import app.aaps.wear.watchfaces.common.FaceState.Sentinel
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Tone
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Trend
-import app.aaps.wear.watchfaces.common.AodStyle
+import app.aaps.wear.watchfaces.common.MonoAod
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.FaceState
 import app.aaps.wear.watchfaces.common.LoopRunTime
@@ -216,11 +216,9 @@ class GlassWatchface : WatchFace() {
     private var iobText = "--"
     private var iobColour = TXT3
 
-    /** Always-on (Glass AOD round 1): the frame's content, rebuilt with the state; drawn by [aodPainter]. */
-    private var aod: GlassAod.Model? = null
-    private val aodPainter = GlassAod.Painter()
-    /** Render harness only: draw this look in ambient instead of the one the face_aod_style setting picks. */
-    @VisibleForTesting internal var aodLookOverride: GlassAod.Look? = null
+    /** Always-on: the frame's content ([MonoAod]), rebuilt with the state; drawn by [aodPainter]. */
+    private var aod: MonoAod.Model? = null
+    private val aodPainter = MonoAod.Painter()
 
     private var ball = BallState.HIDDEN
     private var bolusCheck = BolusRequestGuard.Check(BolusRequestGuard.State.HIDDEN, Reason.PREF_OFF)
@@ -671,27 +669,16 @@ class GlassWatchface : WatchFace() {
         layoutRow(rowRuns.filter { it.kind != GlassFaceLogic.RunKind.TT })
         buildSparkline(bg.timeStamp, bg.sgv)
 
-        // always-on: the one W1-W6 owner in words (as the footer / META row would say it), the 1 h trace for a look that
-        // draws it
+        // always-on: the one W1-W6 owner in words (as the footer / META row would say it)
         val aodOwner = owner?.takeIf { it.ambient }
         val aodRun = aodOwner?.let { GlassFaceLogic.warningText(it, footerInput.copy(warnings = warnings), slotWords) }
         aodPainter.lowWord = getString(R.string.face_low)
         aodPainter.highWord = getString(R.string.face_high)
-        aodPainter.agoFormat = getString(R.string.glass_aod_age_ago).replace("%1\$s", "%s")
         aod = GlassAod.model(
-            hero = bgText, range = range, bgAge = bgAge, trend = trend,
-            time = timeText + (amPmText?.let { " $it" } ?: ""), date = dateText, caption = caption,
-            owner = aodOwner, ownerText = aodRun?.text, ownerTone = aodRun?.tone,
-            delta = deltaText, age = GlassFaceLogic.ageText(age, ageWords), ageLevel = GlassFaceLogic.ageLevel(age),
-            spark = if (aodLook() == GlassAod.Look.BG_SPARK) aodSpark(now) else FloatArray(0)
+            hero = bgText, range = range, bgAge = bgAge, trend = trend, caption = caption,
+            owner = aodOwner, ownerText = aodRun?.text, age = GlassFaceLogic.ageText(age, ageWords),
+            agoFormat = getString(R.string.face_aod_age_ago).replace("%1\$s", "%s")
         )
-    }
-
-    private fun aodLook(): GlassAod.Look = aodLookOverride ?: GlassAod.look(AodStyle.read(sp))
-
-    private fun aodSpark(now: Long): FloatArray {
-        val pts = data.graphData.entries
-        return GlassAod.sparkPoints(LongArray(pts.size) { pts[it].timeStamp }, DoubleArray(pts.size) { pts[it].sgv }, now)
     }
 
     private fun updateBall() {
@@ -1663,12 +1650,12 @@ class GlassWatchface : WatchFace() {
     }
 
     /**
-     * Always-on (Glass AOD round 1): the family's bold, sparse look ([GlassAod]); the shared face_aod_style picks it,
-     * read once per ambient frame (once a minute). No card, chart, pills or ball: the bolus ball is never drawn here.
+     * Always-on: the family's one black-and-white look ([MonoAod]): the BG, its arrow and at most one grey line of words.
+     * No time, card, chart, pills or ball: the bolus ball is never drawn here.
      */
     private fun drawAmbient(canvas: Canvas) {
         val m = aod ?: return
-        aodPainter.draw(canvas, m, aodLook(), lowBitAmbient, burnInProtection)
+        aodPainter.draw(canvas, m, lowBitAmbient, burnInProtection)
     }
 
     private fun withAlpha(colour: Int, alpha: Int) = (colour and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)

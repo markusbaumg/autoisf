@@ -1,20 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Always-on style of the Halo, Glass and Orbit faces: ONE shared, watch-only setting (default "outline").
-     Not part of CwfMetadataKey. Key and values are mirrored in AodStyle and checked by a unit test. -->
+<!-- Always-on (MonoAod) of the Halo, Glass and Orbit faces: one black-and-white look, no setting. -->
 <resources>
-    <string name="key_face_aod_style" translatable="false">face_aod_style</string>
-    <string name="pref_face_aod_style">Always-on style</string>
-    <string name="face_aod_style_outline">Outline</string>
-    <string name="face_aod_style_minimal">Minimal</string>
-    <string name="face_aod_style_glance">Glance</string>
-    <string-array name="face_aod_style_names" translatable="false">
-        <item>@string/face_aod_style_outline</item>
-        <item>@string/face_aod_style_minimal</item>
-        <item>@string/face_aod_style_glance</item>
-    </string-array>
-    <string-array name="face_aod_style_values" translatable="false">
-        <item>outline</item>
-        <item>minimal</item>
-        <item>glance</item>
-    </string-array>
+    <!-- the data age on its own line under the BG ("8′ ago"), so it cannot pass for a number -->
+    <string name="face_aod_age_ago">%1$s ago</string>
 </resources>
