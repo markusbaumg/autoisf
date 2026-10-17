@@ -1,6 +1,7 @@
 package app.aaps.core.nssdk.networking
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonDeserializer
@@ -86,11 +87,11 @@ internal object NetworkStackBuilder {
     ): OkHttpClient {
         if (logging) {
             addNetworkInterceptor(
-                HttpLoggingInterceptor(logger).also {
+                // The HTTP log goes into the AAPS log files that get shared for support. The JWT
+                // (Authorization: Bearer <jwt>, on every request), the legacy api secret and the
+                // secrets in the token refresh call (see redactSecrets) must not be in them.
+                HttpLoggingInterceptor { message -> logger.log(redactSecrets(message)) }.also {
                     it.level = HttpLoggingInterceptor.Level.BODY
-                    // The HTTP log goes into the AAPS log files that get shared for support. The
-                    // access token (Authorization: Bearer <jwt>, on every request) and the legacy
-                    // api secret must not be in them.
                     it.redactHeader("Authorization")
                     it.redactHeader("api-secret")
                     it.redactHeader("Cookie")
@@ -103,6 +104,20 @@ internal object NetworkStackBuilder {
         writeTimeout(OK_HTTP_WRITE_TIMEOUT, TimeUnit.MILLISECONDS)
         return build()
     }
+
+    /**
+     * Masks what redactHeader cannot: the long-lived access token in the path of the JWT refresh
+     * call (GET /api/v2/authorization/request/<token>) and the fresh JWT in its response body
+     * ({"token":"eyJ..."}). Log text only; the requests are untouched.
+     */
+    @VisibleForTesting
+    internal fun redactSecrets(line: String): String =
+        line.replace(AUTH_REQUEST_PATH) { it.groupValues[1] + REDACTED }
+            .replace(JSON_TOKEN) { it.groupValues[1] + REDACTED + "\"" }
+
+    private const val REDACTED = "\u2588\u2588"
+    private val AUTH_REQUEST_PATH = Regex("(/api/v2/authorization/request/)[^\\s?\"]+")
+    private val JSON_TOKEN = Regex("(\"token\"\\s*:\\s*\")[^\"]+\"")
 
     private val deserializer: JsonDeserializer<JSONObject?> =
         JsonDeserializer<JSONObject?> { json, _, _ ->
