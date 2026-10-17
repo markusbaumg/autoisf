@@ -17,4 +17,46 @@
         <item>0.5</item>
         <item>1.0</item>
     </string-array>
+
+    <!-- Orbit only: bolus ball mode and the quick-bolus picker (QuickBolusActivity). Watch-only keys, mirrored in
+         BolusRequestPrefs (KEY_MODE, KEY_ALLOW_1_5) and checked by a unit test. -->
+    <string name="key_face_bolus_request_mode" translatable="false">face_bolus_request_mode</string>
+    <string name="key_face_bolus_request_allow_1_5" translatable="false">face_bolus_request_allow_1_5</string>
+    <string name="pref_face_bolus_request_mode">Bolus ball</string>
+    <string name="pref_face_bolus_mode_fixed">Fixed amount</string>
+    <string name="pref_face_bolus_mode_picker">Choice</string>
+    <string-array name="face_bolus_request_mode_names">
+        <item>@string/pref_face_bolus_mode_fixed</item>
+        <item>@string/pref_face_bolus_mode_picker</item>
+    </string-array>
+    <string-array name="face_bolus_request_mode_values" translatable="false">
+        <item>fixed</item>
+        <item>picker</item>
+    </string-array>
+    <string name="pref_face_bolus_request_allow_1_5">Allow 1.5 U</string>
+    <string name="pref_face_bolus_request_allow_1_5_summary">Choice only. The phone still checks every request against its max bolus.</string>
+
+    <string name="quick_bolus_title">QUICK BOLUS</string>
+    <string name="quick_bolus_iob">IOB %1$s U</string>
+    <string name="quick_bolus_age">%1$d min ago</string>
+    <string name="quick_bolus_hint">Tap an amount = request</string>
+    <string name="quick_bolus_hint_sub">nothing preselected · closes after 10 s</string>
+    <string name="quick_bolus_max">max %1$s U</string>
+    <string name="quick_bolus_max_unknown">max ? U</string>
+    <string name="quick_bolus_requested">%1$s U requested</string>
+    <string name="quick_bolus_phone_checks">Phone checks …</string>
+    <string name="quick_bolus_no_more">no further request possible</string>
+    <string name="quick_bolus_no_answer">No answer from the phone</string>
+    <string name="quick_bolus_no_answer_sub">Nothing was sent again</string>
+    <string name="quick_bolus_low">LOW – no bolus</string>
+    <string name="quick_bolus_falling">Falling fast – no bolus</string>
+    <string name="quick_bolus_over_max">%1$s U is above the max bolus</string>
+    <string name="quick_bolus_why_no_phone">Phone not connected</string>
+    <string name="quick_bolus_why_checking">Checking the phone …</string>
+    <string name="quick_bolus_why_stale">No current BG</string>
+    <string name="quick_bolus_why_max_unknown">Max bolus not synced yet</string>
+    <string name="quick_bolus_why_pending">A request is already running</string>
+    <string name="quick_bolus_why_no_wear_control">Wear control is off on the phone</string>
+    <string name="quick_bolus_why_off">Bolus request is off</string>
+    <string name="quick_bolus_close">Close</string>
 </resources>

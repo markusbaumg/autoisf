@@ -103,6 +103,10 @@ class BolusTapGesture(
         const val DEFAULT_AMOUNT = 0.5
         /** The only amounts the ball can request (watch setting 0.5 / 1.0 U). */
         val ALLOWED_AMOUNTS = listOf(0.5, 1.0)
+        /** The quick-bolus picker's optional third amount (switch "1,5 U erlauben", default off). */
+        const val AMOUNT_1_5 = 1.5
+        /** Hard ceiling of any request from a face or the quick-bolus picker, whatever a list or setting says. */
+        const val HARD_MAX_AMOUNT = 1.5
 
         /** True when (x, y) lies inside the circle at (cx, cy) with radius r. */
         fun isInside(x: Float, y: Float, cx: Float, cy: Float, r: Float): Boolean {

@@ -124,4 +124,52 @@ class BolusRequestPrefsTest {
             assertThat(xml).doesNotContain("orbit_bolus")
         }
     }
+
+    @Test fun modeDefaultsToFixedAmount() {
+        assertThat(BolusRequestPrefs.mode(sp)).isEqualTo(BolusRequestPrefs.Mode.FIXED)
+        map[BolusRequestPrefs.KEY_MODE] = "picker"
+        assertThat(BolusRequestPrefs.mode(sp)).isEqualTo(BolusRequestPrefs.Mode.PICKER)
+        map[BolusRequestPrefs.KEY_MODE] = "something"
+        assertThat(BolusRequestPrefs.mode(sp)).isEqualTo(BolusRequestPrefs.Mode.FIXED)
+        map[BolusRequestPrefs.KEY_MODE] = "fixed"
+        assertThat(BolusRequestPrefs.mode(sp)).isEqualTo(BolusRequestPrefs.Mode.FIXED)
+    }
+
+    @Test fun oneAndAHalfOffByDefault() {
+        assertThat(BolusRequestPrefs.allow15(sp)).isFalse()
+        assertThat(BolusRequestPrefs.pickerAmounts(sp)).containsExactly(0.5, 1.0).inOrder()
+        map[BolusRequestPrefs.KEY_ALLOW_1_5] = true
+        assertThat(BolusRequestPrefs.pickerAmounts(sp)).containsExactly(0.5, 1.0, 1.5).inOrder()
+        // the fixed ball's amount setting is unchanged: 1.5 is not one of its values
+        map[BolusRequestPrefs.KEY_AMOUNT] = "1.5"
+        assertThat(BolusRequestPrefs.amount(sp).isNaN()).isTrue()
+    }
+
+    @Test fun pickerKeysNotSettableFromACustomWatchface() {
+        val keys = CwfMetadataKey.entries.map { it.key }
+        assertThat(keys).containsNoneOf(BolusRequestPrefs.KEY_MODE, BolusRequestPrefs.KEY_ALLOW_1_5)
+    }
+
+    @Test fun pickerKeyConstantsMatchResources() {
+        val xml = File("src/main/res/values/strings_face_bolus.xml").readText()
+        assertThat(xml).contains("name=\"key_face_bolus_request_mode\" translatable=\"false\">${BolusRequestPrefs.KEY_MODE}<")
+        assertThat(xml).contains("name=\"key_face_bolus_request_allow_1_5\" translatable=\"false\">${BolusRequestPrefs.KEY_ALLOW_1_5}<")
+        assertThat(xml).contains("<item>${BolusRequestPrefs.MODE_FIXED}</item>")
+        assertThat(xml).contains("<item>${BolusRequestPrefs.MODE_PICKER}</item>")
+    }
+
+    @Test fun orbitOffersTheModeAndTheSwitchWithSafeDefaults() {
+        val xml = File("src/main/res/xml/watch_face_configuration_orbit.xml").readText()
+        val mode = xml.substringBefore("android:key=\"@string/key_face_bolus_request_mode\"").substringAfterLast("<ListPreference")
+        assertThat(mode).contains("android:defaultValue=\"fixed\"")
+        assertThat(mode).contains("android:dependency=\"@string/key_face_bolus_request_enabled\"")
+        val allow = xml.substringBefore("android:key=\"@string/key_face_bolus_request_allow_1_5\"").substringAfterLast("<CheckBoxPreference")
+        assertThat(allow).contains("android:defaultValue=\"false\"")
+        // Orbit only in this build
+        for (face in listOf("halo", "glass")) {
+            val other = File("src/main/res/xml/watch_face_configuration_$face.xml").readText()
+            assertThat(other).doesNotContain("key_face_bolus_request_mode")
+            assertThat(other).doesNotContain("key_face_bolus_request_allow_1_5")
+        }
+    }
 }

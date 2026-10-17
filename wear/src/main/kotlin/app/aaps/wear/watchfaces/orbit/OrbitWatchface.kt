@@ -40,6 +40,7 @@ import app.aaps.wear.comm.DataLayerListenerServiceWear
 import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
+import app.aaps.wear.interaction.actions.QuickBolusActivity
 import app.aaps.wear.interaction.menus.MainMenuActivity
 import app.aaps.wear.watchfaces.common.AodStyle
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
@@ -128,6 +129,10 @@ class OrbitWatchface : WatchFace() {
     private var bolusCheck = BolusRequestGuard.Check(State.HIDDEN, Reason.PREF_OFF)
     private var bolusAmount = BolusTapGesture.DEFAULT_AMOUNT
     private var bolusAmountText = ""
+    /** "Feste Menge" (the double tap sends [bolusAmount]) or "Auswahl" (the same double tap opens QuickBolusActivity). */
+    private var bolusMode = BolusRequestPrefs.Mode.FIXED
+    /** Time the face last became interactive; a ball tap within [WAKE_IGNORE_MS] after it is ignored (sleeve, palm), as Halo. */
+    private var interactiveSince = 0L
     private val countdownTick = object : Runnable {
         override fun run() {
             if (gesture.isArmed) {
@@ -184,6 +189,8 @@ class OrbitWatchface : WatchFace() {
     private var builtAmbient = false
     private var built24h = false
     private var builtReachable = PhoneReach.UNKNOWN
+    /** The shared pending lock as last built (the picker may set it while the face is hidden). */
+    private var builtPending = false
     private var dirty = true
 
     private var scale = 1f
@@ -409,6 +416,7 @@ class OrbitWatchface : WatchFace() {
 
     override fun onWatchModeChanged(watchMode: WatchMode) {
         // mode.transition: entering ambient clears the armed state; on exit the ages are recomputed before drawing
+        if (watchMode == WatchMode.INTERACTIVE) interactiveSince = System.currentTimeMillis()
         if (watchMode != WatchMode.INTERACTIVE) {
             disarm()
             // captions and pending graph taps are dropped
@@ -479,26 +487,36 @@ class OrbitWatchface : WatchFace() {
             bolusCheck = BolusRequestGuard.Check(State.HIDDEN, Reason.HEADLESS)
             return
         }
-        val amount = BolusRequestPrefs.amount(sp)
-        if (!amount.isNaN() && (amount != bolusAmount || bolusAmountText.isEmpty())) {
-            bolusAmount = amount
-            bolusAmountText = OrbitFaceLogic.bolusAmountText(amount, Locale.getDefault())
+        bolusMode = BolusRequestPrefs.mode(sp)
+        if (bolusMode == BolusRequestPrefs.Mode.PICKER) {
+            // "+ U": the amount is chosen in the picker
+            bolusAmountText = PICKER_BALL_TEXT
+        } else {
+            val amount = BolusRequestPrefs.amount(sp)
+            if (!amount.isNaN() && (amount != bolusAmount || bolusAmountText.isEmpty() || bolusAmountText == PICKER_BALL_TEXT)) {
+                bolusAmount = amount
+                bolusAmountText = OrbitFaceLogic.bolusAmountText(amount, Locale.getDefault())
+            }
         }
         bolusCheck = guard.check(bolusInput())
     }
 
     private fun bolusInput(): BolusRequestGuard.Input {
         val d = data
+        val picker = BolusRequestPrefs.mode(sp) == BolusRequestPrefs.Mode.PICKER
+        // picker: the ball is usable when the smallest amount is (each amount is checked again in the picker)
+        val pickerAmounts = if (picker) BolusRequestPrefs.pickerAmounts(sp) else BolusTapGesture.ALLOWED_AMOUNTS
         return BolusRequestGuard.Input(
             prefOn = BolusRequestPrefs.enabled(sp),
             ambient = isAmbient,
             wearControl = preferences.get(BooleanKey.WearControl),
-            amount = BolusRequestPrefs.amount(sp),
+            amount = if (picker) pickerAmounts.min() else BolusRequestPrefs.amount(sp),
             maxBolus = BolusRequestPrefs.maxBolus(sp, getString(R.string.key_treatments_safety_max_bolus)),
             lastPhoneMessage = d.lastUpdateTimestamp,
             bgTimeStamp = d.bgData.timeStamp,
             headless = isHeadless || !isLiveRender,
-            firstStart = OrbitFaceLogic.firstStart(d.bgData.timeStamp, LoopRunTime.of(d.statusData), d.statusData.iobSum)
+            firstStart = OrbitFaceLogic.firstStart(d.bgData.timeStamp, LoopRunTime.of(d.statusData), d.statusData.iobSum),
+            allowedAmounts = pickerAmounts
         )
     }
 
@@ -520,7 +538,7 @@ class OrbitWatchface : WatchFace() {
         val d = if (isHeadless) sampleData else data
         val key = minuteKey()
         if (!dirty && d === builtFor && key == builtMinuteKey && isAmbient == builtAmbient && is24HourFormat == built24h &&
-            guard.phoneReach == builtReachable
+            guard.phoneReach == builtReachable && guard.isPending == builtPending
         ) return
         if (key != builtMinuteKey) refreshPhoneReachable()
         refreshLoopStates()
@@ -530,6 +548,7 @@ class OrbitWatchface : WatchFace() {
         builtAmbient = isAmbient
         built24h = is24HourFormat
         builtReachable = guard.phoneReach
+        builtPending = guard.isPending
         rebuild(d, renderNow(), key)
     }
 
@@ -1781,6 +1800,15 @@ class OrbitWatchface : WatchFace() {
 
     /** The bolus amount, 26 px bold, shrunk only to the button's chord (a long "+10,5" stays inside the ring). */
     private fun drawBolusAmount(canvas: Canvas, cy: Float, colour: Int) {
+        if (bolusAmountText == PICKER_BALL_TEXT) {
+            // "Auswahl": a drawn plus (a text "+" is thin and small at 26 px)
+            setStroke(PICKER_PLUS_W, colour, true)
+            stroke.strokeCap = Paint.Cap.ROUND
+            val k = PICKER_PLUS_HALF
+            canvas.drawLine(bolusX - k, cy, bolusX + k, cy, stroke)
+            canvas.drawLine(bolusX, cy - k, bolusX, cy + k, stroke)
+            return
+        }
         setText(BOLUS_AMOUNT_SIZE, tf700)
         val size = OrbitFaceLogic.fitSize(text.measureText(bolusAmountText), BOLUS_AMOUNT_SIZE, BOLUS_AMOUNT_MAX_W)
         drawText(canvas, bolusAmountText, bolusX, cy, size, tf700, colour, true)
@@ -1854,8 +1882,12 @@ class OrbitWatchface : WatchFace() {
         // 24 dp radius whatever the screen (the family's 48 dp target)
         val hitR = max(OrbitFaceLogic.BOLUS_HIT_R, 24f * resources.displayMetrics.density / max(scale, 0.01f))
         val inside = bolusCheck.state != State.HIDDEN && BolusTapGesture.isInside(dx, dy, bolusX, bolusY, hitR)
-        // The guard re-checks every rule and drops a duplicate delivery of the same tap event.
-        val outcome = guard.onTap(eventTime, inside, bolusInput())
+        // A tap on the ball right after the face woke up is most likely a sleeve or palm: ignore it (as Halo).
+        if (inside && System.currentTimeMillis() - interactiveSince in 0 until WAKE_IGNORE_MS) return
+        // The guard re-checks every rule and drops a duplicate delivery of the same tap event. In picker mode the
+        // double tap only opens the picker: no request yet, so the 30 s pending lock does not start.
+        val pickerMode = bolusMode == BolusRequestPrefs.Mode.PICKER
+        val outcome = guard.onTap(eventTime, inside, bolusInput(), commitSend = !pickerMode)
         if (outcome.result == TapResult.DUPLICATE) return
         // a tap on the button re-checks the phone link, so a lost phone shows up without waiting for the minute
         // (on ARM this is also the fresh answer that SEND needs)
@@ -1885,7 +1917,12 @@ class OrbitWatchface : WatchFace() {
                 return
             }
 
-            TapResult.SEND      -> {
+            TapResult.SEND      -> if (pickerMode) {
+                handler.removeCallbacks(countdownTick)
+                openQuickBolus()
+                invalidate()
+                return
+            } else {
                 handler.removeCallbacks(countdownTick)
                 aapsLogger.info(LTag.WEAR, "OrbitWatchface: double-tap bolus request $bolusAmount U")
                 // Exactly as BolusActivity: the phone checks and the watch shows the confirmation screen.
@@ -1950,6 +1987,20 @@ class OrbitWatchface : WatchFace() {
         })
     }
 
+    /** "Auswahl" mode: the double tap opens the quick-bolus picker (never in ambient: taps are dropped there). */
+    private fun openQuickBolus() {
+        if (isAmbient || isHeadless) return
+        aapsLogger.info(LTag.WEAR, "OrbitWatchface: double tap opens the quick-bolus picker")
+        try {
+            // own task (taskAffinity ""), cleared: never stacked on a menu or wizard left in the app's task
+            startActivity(Intent(this, QuickBolusActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            })
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.WEAR, "OrbitWatchface: quick-bolus picker failed to open", e)
+        }
+    }
+
     private fun toast(res: Int) {
         try {
             Toast.makeText(this, res, Toast.LENGTH_SHORT).show()
@@ -1968,6 +2019,12 @@ class OrbitWatchface : WatchFace() {
 
     companion object {
 
+        /** Ball text in "Auswahl" mode ("+" over "U"). */
+        private const val PICKER_BALL_TEXT = "+"
+        private const val PICKER_PLUS_HALF = 10f
+        private const val PICKER_PLUS_W = 4.5f
+        /** As Halo: ball taps in the first second after the screen woke are ignored. */
+        private const val WAKE_IGNORE_MS = 1000L
         private const val HERO_Y = OrbitFaceLogic.HERO_Y
         /** Delta row centre: low enough that the German comma's tail of the 120 px digits stays clear of it. */
         private const val DELTA_ROW_Y = OrbitFaceLogic.DELTA_ROW_Y

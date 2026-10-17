@@ -209,4 +209,52 @@ class BolusRequestGuardTest {
         assertThat(BolusRequestGuard.isAllowedAmount(1.5)).isFalse()
         assertThat(BolusRequestGuard.isAllowedAmount(Double.NaN)).isFalse()
     }
+
+    // ---------------------------------------------------------------- quick-bolus picker (Orbit "Auswahl")
+
+    @Test fun oneAndAHalfOnlyWhenAllowedAndNeverAboveTheCeiling() {
+        // the fixed ball: 1.5 is not an allowed amount
+        assertThat(check(input(amount = 1.5))).isEqualTo(Check(State.HIDDEN, Reason.AMOUNT_INVALID))
+        val withOneAndAHalf = BolusRequestPrefs.pickerAmounts(true)
+        assertThat(check(input(amount = 1.5).copy(allowedAmounts = withOneAndAHalf))).isEqualTo(Check(State.IDLE, Reason.NONE))
+        assertThat(check(input(amount = 1.5).copy(allowedAmounts = BolusRequestPrefs.pickerAmounts(false))).reason).isEqualTo(Reason.AMOUNT_INVALID)
+        // a list with more in it never goes above 1.5 U
+        assertThat(check(input(amount = 2.0, maxBolus = 10.0).copy(allowedAmounts = listOf(0.5, 1.0, 1.5, 2.0))).reason).isEqualTo(Reason.AMOUNT_INVALID)
+        assertThat(BolusRequestGuard.isAllowedAmount(1.5, listOf(1.5))).isTrue()
+        assertThat(BolusRequestGuard.isAllowedAmount(1.6, listOf(1.6))).isFalse()
+        assertThat(BolusRequestGuard.isAllowedAmount(-0.5, listOf(-0.5))).isFalse()
+        assertThat(BolusTapGesture.HARD_MAX_AMOUNT).isEqualTo(1.5)
+        // 1.5 above the max bolus
+        assertThat(check(input(amount = 1.5, maxBolus = 1.0).copy(allowedAmounts = withOneAndAHalf))).isEqualTo(Check(State.DISABLED, Reason.OVER_MAX_BOLUS))
+    }
+
+    @Test fun doubleTapWithoutCommitDoesNotStartThePendingLock() {
+        assertThat(guard.onTap(event++, true, input(), commitSend = false).result).isEqualTo(TapResult.ARM)
+        now += 200
+        guard.onReachAnswer(true)
+        now += 200
+        assertThat(guard.onTap(event++, true, input(), commitSend = false).result).isEqualTo(TapResult.SEND)
+        assertThat(store.lastSentAt).isEqualTo(0L)
+        assertThat(check().state).isEqualTo(State.IDLE)
+        // the default still commits
+        now += BolusTapGesture.COOLDOWN_MS
+        assertThat(doubleTap().result).isEqualTo(TapResult.SEND)
+        assertThat(store.lastSentAt).isEqualTo(now)
+    }
+
+    @Test fun sendSingleChecksEverythingAndStoresTheTime() {
+        val since = now
+        // the reachable answer from setUp is not newer than [since]
+        assertThat(guard.sendSingle(input(), since)).isEqualTo(Reason.NO_PHONE)
+        now += 10
+        guard.onReachAnswer(true)
+        assertThat(guard.sendSingle(input(maxBolus = 0.3), since)).isEqualTo(Reason.OVER_MAX_BOLUS)
+        assertThat(guard.sendSingle(input(bgTime = now - 13 * 60_000L), since)).isEqualTo(Reason.STALE_DATA)
+        assertThat(guard.sendSingle(input(prefOn = false), since)).isEqualTo(Reason.PREF_OFF)
+        assertThat(store.lastSentAt).isEqualTo(0L)
+        assertThat(guard.sendSingle(input(), since)).isEqualTo(Reason.NONE)
+        assertThat(store.lastSentAt).isEqualTo(now)
+        now += 1_000
+        assertThat(guard.sendSingle(input(), since)).isEqualTo(Reason.PENDING)
+    }
 }

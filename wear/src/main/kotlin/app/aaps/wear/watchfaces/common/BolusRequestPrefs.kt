@@ -18,6 +18,15 @@ object BolusRequestPrefs {
     const val KEY_LAST_SENT_AT = "face_bolus_request_last_sent_at"
     const val DEFAULT_AMOUNT = "0.5"
 
+    /** Orbit's bolus ball mode: "fixed" (default, today's double tap sends) or "picker" (double tap opens the picker). */
+    const val KEY_MODE = "face_bolus_request_mode"
+    const val MODE_FIXED = "fixed"
+    const val MODE_PICKER = "picker"
+    /** Picker only: offer 1.5 U as a third amount. Default off. */
+    const val KEY_ALLOW_1_5 = "face_bolus_request_allow_1_5"
+
+    enum class Mode { FIXED, PICKER }
+
     /** Per-face keys of earlier iterations (enabled, amount), migrated once by [migrate]. */
     val LEGACY_KEYS = listOf(
         "halo_bolus_double_tap" to "halo_bolus_amount",
@@ -30,6 +39,18 @@ object BolusRequestPrefs {
 
     /** 0.5 or 1.0; NaN when a value is stored that is not one of them (the button then stays hidden). */
     fun amount(sp: SP): Double = parseAmountStrict(sp.getStringOrNull(KEY_AMOUNT, null))
+
+    /** Only an exact "picker" selects the picker; unset or anything else is the fixed ball (today's behaviour). */
+    fun mode(sp: SP): Mode = if (sp.getStringOrNull(KEY_MODE, null)?.trim() == MODE_PICKER) Mode.PICKER else Mode.FIXED
+
+    fun allow15(sp: SP): Boolean = sp.getBoolean(KEY_ALLOW_1_5, false)
+
+    /** The picker's amounts: 0.5 and 1.0, plus 1.5 only with [allow15]; never above the hard ceiling. */
+    fun pickerAmounts(allow15: Boolean): List<Double> =
+        (if (allow15) BolusTapGesture.ALLOWED_AMOUNTS + BolusTapGesture.AMOUNT_1_5 else BolusTapGesture.ALLOWED_AMOUNTS)
+            .filter { it <= BolusTapGesture.HARD_MAX_AMOUNT + 1e-6 }
+
+    fun pickerAmounts(sp: SP): List<Double> = pickerAmounts(allow15(sp))
 
     /** The phone's max bolus (key_treatments_safety_max_bolus); NaN when it was never synced (=> refuse). */
     fun maxBolus(sp: SP, maxBolusKey: String): Double =

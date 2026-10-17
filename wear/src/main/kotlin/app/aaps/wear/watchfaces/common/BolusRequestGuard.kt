@@ -14,7 +14,8 @@ enum class PhoneReach { UNKNOWN, REACHABLE, UNREACHABLE }
  *
  * HIDDEN (not drawn, no hit target): preference off (default OFF, a watch-only key that a CustomWatchface zip cannot
  *   set, see [BolusRequestPrefs]), headless preview, ambient (any variant), Wear control off on the phone, an amount
- *   other than 0.5 / 1.0 U, first start (nothing ever received from the phone).
+ *   other than 0.5 / 1.0 U (the quick-bolus picker: 1.5 too when its switch is on; never above 1.5 U), first start
+ *   (nothing ever received from the phone).
  * SENT: a request was sent less than [PENDING_MS] ago (its confirmation may still be open). The time is kept in
  *   [store] (SharedPreferences in the faces), so it survives a recreated service and a switch to another face.
  * DISABLED (a tap only explains why): phone not reachable or reachability not yet known ([PhoneReach] tri-state),
@@ -79,7 +80,13 @@ class BolusRequestGuard(
         /** Time stamp of the latest BG, 0 = none. */
         val bgTimeStamp: Long,
         val headless: Boolean = false,
-        val firstStart: Boolean = false
+        val firstStart: Boolean = false,
+        /**
+         * The amounts that may be requested: [BolusTapGesture.ALLOWED_AMOUNTS] for the fixed ball; the quick-bolus
+         * picker adds 1.5 only when its switch is on ([BolusRequestPrefs.pickerAmounts]). Never above
+         * [BolusTapGesture.HARD_MAX_AMOUNT], whatever the list says.
+         */
+        val allowedAmounts: List<Double> = BolusTapGesture.ALLOWED_AMOUNTS
     )
 
     enum class TapResult {
@@ -152,7 +159,7 @@ class BolusRequestGuard(
             i.headless                                                          -> Check(State.HIDDEN, Reason.HEADLESS)
             i.ambient                                                           -> Check(State.HIDDEN, Reason.AMBIENT)
             !i.wearControl                                                      -> Check(State.HIDDEN, Reason.NO_WEAR_CONTROL)
-            !isAllowedAmount(i.amount)                                          -> Check(State.HIDDEN, Reason.AMOUNT_INVALID)
+            !isAllowedAmount(i.amount, i.allowedAmounts)                        -> Check(State.HIDDEN, Reason.AMOUNT_INVALID)
             i.firstStart                                                        -> Check(State.HIDDEN, Reason.FIRST_START)
             isPending                                                           -> Check(State.SENT, Reason.PENDING)
             phoneReach != PhoneReach.REACHABLE                                  -> Check(State.DISABLED, Reason.NO_PHONE)
@@ -168,7 +175,7 @@ class BolusRequestGuard(
      * Handle one completed tap (tap-up). [insideButton]: the tap lies in the face's hit area of the button
      * (ignored while the button is HIDDEN). The verdict is computed fresh from [input] at the moment of the tap.
      */
-    fun onTap(eventTime: Long, insideButton: Boolean, input: Input): TapOutcome {
+    fun onTap(eventTime: Long, insideButton: Boolean, input: Input, commitSend: Boolean = true): TapOutcome {
         if (eventTime == lastTapEventTime) return TapOutcome(TapResult.DUPLICATE)
         lastTapEventTime = eventTime
 
@@ -188,7 +195,9 @@ class BolusRequestGuard(
             BolusTapGesture.Decision.SEND   ->
                 if (!reachConfirmedSince(armedAt, now)) TapOutcome(TapResult.REFUSED, Reason.NO_PHONE, onButton = true)
                 else {
-                    store.lastSentAt = now
+                    // [commitSend] false (picker mode): the double tap only OPENS the quick-bolus picker, nothing is
+                    // requested yet, so the 30 s pending lock does not start
+                    if (commitSend) store.lastSentAt = now
                     TapOutcome(TapResult.SEND, onButton = true)
                 }
 
@@ -196,6 +205,24 @@ class BolusRequestGuard(
             BolusTapGesture.Decision.IGNORE -> TapOutcome(TapResult.IGNORE, onButton = inside)
         }
     }
+
+    /**
+     * Quick-bolus picker: one tap on an amount = one request. Re-runs [check] for [input] and needs a "reachable"
+     * answer that arrived after [reachSince] (the picker asks when it opens) and is at most [REACH_ANSWER_FRESH_MS]
+     * old. On success the send time is stored (the 30 s pending lock shared with the face ball) and [Reason.NONE] is
+     * returned: the caller must send ActionBolusPreCheck(input.amount) now. Otherwise the refusal reason.
+     */
+    fun sendSingle(input: Input, reachSince: Long): Reason {
+        val c = check(input)
+        if (c.state != State.IDLE) return if (c.reason == Reason.NONE) Reason.PREF_OFF else c.reason
+        val now = clock()
+        if (!reachConfirmedSince(reachSince, now)) return Reason.NO_PHONE
+        store.lastSentAt = now
+        return Reason.NONE
+    }
+
+    /** True when "reachable" was answered after [since] and that answer is still fresh (see [sendSingle]). */
+    fun isReachConfirmedSince(since: Long): Boolean = reachConfirmedSince(since, clock())
 
     /** Back to IDLE (ambient, preference off, face hidden). Returns true when it was armed. */
     fun reset(): Boolean = gesture.reset()
@@ -229,7 +256,8 @@ class BolusRequestGuard(
 
         private const val EPS = 1e-6
 
-        fun isAllowedAmount(amount: Double): Boolean =
-            !amount.isNaN() && BolusTapGesture.ALLOWED_AMOUNTS.any { abs(it - amount) < EPS }
+        /** One of [allowed] and never above the hard [BolusTapGesture.HARD_MAX_AMOUNT] ceiling. */
+        fun isAllowedAmount(amount: Double, allowed: List<Double> = BolusTapGesture.ALLOWED_AMOUNTS): Boolean =
+            !amount.isNaN() && amount > 0.0 && amount <= BolusTapGesture.HARD_MAX_AMOUNT + EPS && allowed.any { abs(it - amount) < EPS }
     }
 }

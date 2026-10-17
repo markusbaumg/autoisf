@@ -21,7 +21,10 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.shared.impl.sharedPreferences.SPImpl
 import app.aaps.wear.AAPSLoggerTest
 import app.aaps.wear.R
+import android.view.View
 import app.aaps.wear.data.ComplicationData
+import app.aaps.wear.interaction.actions.QuickBolusPicker
+import app.aaps.wear.interaction.actions.QuickBolusView
 import app.aaps.wear.watchfaces.HaloWatchface
 import app.aaps.wear.watchfaces.common.AodStyle
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
@@ -109,6 +112,10 @@ class WatchfaceRenderHarness {
         val haloLook: HaloAod.Look? = null,
         /** Glass only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
         val glassLook: GlassAod.Look? = null,
+        /** Orbit only: the bolus ball in "Auswahl" mode ("+ U", the double tap opens the picker); other faces skip it. */
+        val picker: Boolean = false,
+        /** A request sent this long ago (ms) by the picker or the ball: the shared 30 s pending lock. */
+        val pendingAgoMs: Long? = null,
         val data: (now: Long) -> ComplicationData
     )
 
@@ -270,6 +277,11 @@ class WatchfaceRenderHarness {
         RenderState("ball_armed", ball = Ball.ARMED, data = inRange),
         RenderState("ball_sent", ball = Ball.SENT, data = inRange),
         RenderState("ball_disabled", ball = Ball.DISABLED, data = inRange),
+        // quick-bolus picker ("Auswahl" mode, Orbit only): "+ U", armed, and the shared lock after a picker request
+        RenderState("ball_picker", ball = Ball.IDLE, picker = true, data = inRange),
+        RenderState("ball_picker_armed", ball = Ball.ARMED, picker = true, data = inRange),
+        RenderState("ball_picker_pending", ball = Ball.IDLE, picker = true, pendingAgoMs = 5_000L, data = inRange),
+        RenderState("ball_picker_disabled", ball = Ball.DISABLED, picker = true, data = inRange),
         RenderState("ambient", mode = Mode.AMBIENT, data = inRange),
         RenderState("ambient_lowbit", mode = Mode.LOW_BIT, data = inRange),
         RenderState("ambient_burnin", mode = Mode.BURN_IN, data = inRange),
@@ -387,7 +399,7 @@ class WatchfaceRenderHarness {
             val rendered = ArrayList<Pair<String, Bitmap>>()
             val lit = StringBuilder("state\tlit_pct\n")
             for (s in states) {
-                if (s.orbitLook != null && face != Face.ORBIT) continue
+                if ((s.orbitLook != null || s.picker) && face != Face.ORBIT) continue
                 if (s.haloLook != null && face != Face.HALO) continue
                 if (s.glassLook != null && face != Face.GLASS) continue
                 if (only?.containsMatchIn("${face.id}/${s.id}") == false) continue
@@ -399,7 +411,7 @@ class WatchfaceRenderHarness {
             }
             if (rendered.isEmpty()) continue
             File(dir, "lit.tsv").writeText(lit.toString())
-            writeSheet(face, rendered, File(out, "${face.id}_sheet.png"))
+            writeSheet(face.id, rendered, File(out, "${face.id}_sheet.png"))
         }
         // Glass/Orbit UX round 1: no drawn content (text, glyphs) within 14 px of the round edge (450 grid), where the
         // Watch5 Pro's raised bezel shades it. Checked after all renders are written, so a failure still leaves them.
@@ -407,6 +419,108 @@ class WatchfaceRenderHarness {
         assertTrue("no date drawn in:\n" + dateMisses.joinToString("\n"), dateMisses.isEmpty())
         assertTrue("date closer than ${OrbitFaceLogic.DATE_RING_CLEAR} px to the ring:\n" + dateRingHits.joinToString("\n"), dateRingHits.isEmpty())
         assertTrue("hero group closer than $HERO_SIDE_MIN_PX px to the card:\n" + heroSideHits.joinToString("\n"), heroSideHits.isEmpty())
+    }
+
+    // ------------------------------------------------------------------ quick-bolus picker
+
+    /** One picker render: the picker's amounts, the phone's max bolus, the data and what happened before drawing. */
+    data class PickerState(
+        val id: String,
+        val lang: String = "de",
+        val allow15: Boolean = false,
+        val maxBolus: Double = 2.0,
+        val reachable: Boolean = true,
+        /** false: no "reachable" answer since the picker opened yet. */
+        val answered: Boolean = true,
+        /** Milliseconds since opening (the 600 ms input lock). */
+        val openForMs: Long = 1_500L,
+        /** Tap this amount (one request), then let [afterTapMs] pass. */
+        val tap: Double? = null,
+        val afterTapMs: Long = 1_200L,
+        val pendingAgoMs: Long? = null,
+        val data: (now: Long) -> ComplicationData
+    )
+
+    private val pickerIn: (Long) -> ComplicationData = { now ->
+        data(now, 9.8, "→", "+0.1", 0, ageMin = 1, st = status(now, iob = "3.66"))
+    }
+
+    private fun pickerStates(): List<PickerState> = listOf(
+        PickerState("normal_2", data = pickerIn),
+        PickerState("normal_3", allow15 = true, data = pickerIn),
+        PickerState("over_max_3", allow15 = true, maxBolus = 1.0, data = pickerIn),
+        PickerState("over_max_2", maxBolus = 0.5, data = pickerIn),
+        // max bolus 1,45: the line reads "max 1,45 U" (never rounded up to 1,5 next to a struck 1,5)
+        PickerState("over_max_145", allow15 = true, maxBolus = 1.45, data = pickerIn),
+        PickerState("urgent_low", allow15 = true) { now -> data(now, 2.9, "\u21ca", "-0.6", -1, ageMin = 1, st = status(now, iob = "0.40")) },
+        PickerState("low", allow15 = true) { now -> data(now, 3.6, "→", "-0.1", -1, ageMin = 1, st = status(now, iob = "0.40")) },
+        PickerState("falling_fast", allow15 = true) { now -> data(now, 8.2, "\u21ca", "-0.6", 0, ageMin = 1) },
+        PickerState("stale", allow15 = true) { now -> data(now, 9.8, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, iob = "3.66")) },
+        PickerState("sent_waiting", allow15 = true, tap = 1.0, data = pickerIn),
+        PickerState("no_answer", allow15 = true, tap = 1.0, afterTapMs = QuickBolusPicker.ANSWER_TIMEOUT_MS + 500L, data = pickerIn),
+        PickerState("pending_from_ball", allow15 = true, pendingAgoMs = 8_000L, data = pickerIn),
+        PickerState("no_phone", allow15 = true, reachable = false, data = pickerIn),
+        PickerState("checking_phone", allow15 = true, answered = false, data = pickerIn),
+        PickerState("input_locked", allow15 = true, openForMs = 200L, data = pickerIn),
+        PickerState("en_normal_3", lang = "en", allow15 = true, data = pickerIn),
+        PickerState("en_sent_waiting", lang = "en", allow15 = true, tap = 0.5, data = pickerIn)
+    )
+
+    @Test
+    fun renderQuickBolusPicker() {
+        val out = outDir
+        assumeTrue("set -PwatchfaceRenderOut=<dir> to render", out != null)
+        out!!
+        val dir = File(out, "picker").apply { mkdirs() }
+        val rendered = ArrayList<Pair<String, Bitmap>>()
+        val edgeHits = ArrayList<String>()
+        for (p in pickerStates()) {
+            if (only?.containsMatchIn("picker/${p.id}") == false) continue
+            val bmp = renderPicker(p)
+            FileOutputStream(File(dir, "${p.id}.png")).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            rendered += p.id to bmp
+            edgeHit(bmp)?.let { edgeHits += "picker/${p.id}: $it" }
+        }
+        if (rendered.isNotEmpty()) writeSheet("picker", rendered, File(out, "picker_sheet.png"))
+        assertTrue("content within $EDGE_MARGIN_PX px of the bezel:\n" + edgeHits.joinToString("\n"), edgeHits.isEmpty())
+    }
+
+    /** The real picker logic and view, driven by a test clock: opened, answered, maybe one tap, then drawn. */
+    private fun renderPicker(p: PickerState): Bitmap {
+        RuntimeEnvironment.setQualifiers("${if (p.lang == "de") "de-rDE" else "en-rUS"}-w225dp-h225dp-round-xhdpi")
+        Locale.setDefault(if (p.lang == "de") Locale.GERMANY else Locale.US)
+        val context: Context = RuntimeEnvironment.getApplication()
+        phoneGerman = p.lang == "de"
+        val real = System.currentTimeMillis()
+        var t = real
+        val store = BolusRequestGuard.MemoryStore()
+        p.pendingAgoMs?.let { store.lastSentAt = real - it }
+        val guard = BolusRequestGuard(clock = { t }, store = store)
+        val amounts = BolusRequestPrefs.pickerAmounts(p.allow15)
+        val picker = QuickBolusPicker({ t }, guard, amounts)
+        val d = p.data(real)
+        t += 1
+        if (p.answered) guard.onReachAnswer(p.reachable)
+        t += p.openForMs
+        val snap = { QuickBolusPicker.snapshot(d, t, prefOn = true, wearControl = true, maxBolus = p.maxBolus, amounts = amounts) }
+        p.tap?.let { amount ->
+            val r = picker.onAmountTap(amount, snap())
+            assertTrue("picker/${p.id}: tap $amount refused ($r)", r is QuickBolusPicker.TapResult.Send)
+            t += p.afterTapMs
+            picker.tick()
+        }
+        val view = QuickBolusView(context)
+        view.locale = Locale.getDefault()
+        view.spinnerDeg = -90f
+        view.header = QuickBolusView.header(d, t, view.labels, view.locale)
+        view.screen = picker.screen(snap())
+        val px = 450
+        view.measure(View.MeasureSpec.makeMeasureSpec(px, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(px, View.MeasureSpec.EXACTLY))
+        view.layout(0, 0, px, px)
+        val bmp = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+        view.draw(Canvas(bmp))
+        roundMask(bmp)
+        return bmp
     }
 
     /**
@@ -551,6 +665,12 @@ class WatchfaceRenderHarness {
                 sp.putString(BolusRequestPrefs.KEY_AMOUNT, "0.5")
             }
         }
+        if (s.picker) {
+            sp.putString(BolusRequestPrefs.KEY_MODE, BolusRequestPrefs.MODE_PICKER)
+            // picker: the ball is off when even 0,5 is above the max bolus
+            if (s.ball == Ball.DISABLED) sp.putDouble(maxBolusKey, 0.3)
+        }
+        s.pendingAgoMs?.let { sp.putLong(BolusRequestPrefs.KEY_LAST_SENT_AT, System.currentTimeMillis() - it) }
     }
 
     private fun inject(wf: HaloWatchface, sp: SP, context: Context) {
@@ -596,7 +716,7 @@ class WatchfaceRenderHarness {
 
     // ------------------------------------------------------------------ contact sheet
 
-    private fun writeSheet(face: Face, items: List<Pair<String, Bitmap>>, file: File) {
+    private fun writeSheet(name: String, items: List<Pair<String, Bitmap>>, file: File) {
         val cols = 6
         val cell = 300
         val pad = 16
@@ -609,7 +729,7 @@ class WatchfaceRenderHarness {
         val c = Canvas(sheet)
         c.drawColor(0xFF15171C.toInt())
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFE6E8EE.toInt(); textSize = 30f; typeface = Typeface.create(Typeface.DEFAULT, 600, false) }
-        c.drawText("${face.id}  ·  ${items.size} states  ·  480 px = 300 px here, all to scale", pad.toFloat(), 44f, text)
+        c.drawText("$name  ·  ${items.size} states  ·  480 px = 300 px here, all to scale", pad.toFloat(), 44f, text)
         text.textSize = 19f
         text.typeface = Typeface.create(Typeface.DEFAULT, 500, false)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
