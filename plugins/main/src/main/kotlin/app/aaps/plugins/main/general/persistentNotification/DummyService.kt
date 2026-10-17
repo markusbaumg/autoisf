@@ -39,7 +39,7 @@ class DummyService : DaggerService() {
     override fun onCreate() {
         super.onCreate()
         try {
-            aapsLogger.debug("Starting DummyService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
+            aapsLogger.debug(LTag.CORE, "Starting DummyService with ID ${notificationHolder.notificationID}")
             startForeground(notificationHolder.notificationID, notificationHolder.notification)
         } catch (e: Exception) {
             startForeground(4711, Notification())
@@ -65,7 +65,7 @@ class DummyService : DaggerService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         try {
-            aapsLogger.debug("Starting DummyService with ID ${notificationHolder.notificationID} notification ${notificationHolder.notification}")
+            aapsLogger.debug(LTag.CORE, "Starting DummyService with ID ${notificationHolder.notificationID}")
             startForeground(notificationHolder.notificationID, notificationHolder.notification)
         } catch (e: Exception) {
             startForeground(4711, Notification())

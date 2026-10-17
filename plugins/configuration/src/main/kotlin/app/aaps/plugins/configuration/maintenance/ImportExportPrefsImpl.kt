@@ -330,7 +330,9 @@ class ImportExportPrefsImpl @Inject constructor(
                 if (preferences.isExportableKey(key))
                     entries[key] = value.toString()
                 else
-                    aapsLogger.warn(LTag.CORE, "Not exportable key: $key $value")
+                    // key only: the non-exportable keys are the secrets (e.g. the Google Drive
+                    // access token), and this is logged on every settings export
+                    aapsLogger.warn(LTag.CORE, "Not exportable key: $key")
             }
             val prefs = Prefs(entries, prepareMetadata(context))
             encryptedPrefsFormat.savePreferences(newFile, prefs, password)

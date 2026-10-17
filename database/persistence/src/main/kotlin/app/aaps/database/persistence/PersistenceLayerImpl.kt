@@ -1977,12 +1977,14 @@ class PersistenceLayerImpl @Inject constructor(
             .doOnError { aapsLogger.error(LTag.DATABASE, "Error while saving APSResult", it) }
             .map { result ->
                 val transactionResult = PersistenceLayer.TransactionResult<APSResult>()
+                // id and timestamp only: the whole record (predictions included) was ~23 KB per
+                // loop run in the log, and the algorithm logs its result itself
                 result.inserted.forEach {
-                    aapsLogger.debug(LTag.DATABASE, "Inserted APSResult $it")
+                    aapsLogger.debug(LTag.DATABASE, "Inserted APSResult id=${it.id} timestamp=${it.timestamp}")
                     transactionResult.inserted.add(it.fromDb(apsResultProvider))
                 }
                 result.updated.forEach {
-                    aapsLogger.debug(LTag.DATABASE, "Updated APSResult $it")
+                    aapsLogger.debug(LTag.DATABASE, "Updated APSResult id=${it.id} timestamp=${it.timestamp}")
                     transactionResult.updated.add(it.fromDb(apsResultProvider))
                 }
                 transactionResult
