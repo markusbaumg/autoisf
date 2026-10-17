@@ -36,9 +36,14 @@ object OrbitFaceLogic {
      * each of them ([BALL_GAP_DEG]) so they read as planets on one orbit, 21 px from the glass edge; the date on the
      * ring at 6 o'clock moves up with it (16 px or more from the bezel).
      */
-    const val ORBIT_R = 172f
+    const val ORBIT_R = 170f
     const val SAT_R = ORBIT_R
-    const val BALL_R = 32f
+    /**
+     * Glass/Orbit UX round 4: r 32 -> 35 (a 70 px disc, 5.4 mm): at 32 the two-line "LOOP" label was cut by the dashed
+     * ring (the chord at the label was only 55 px; now 64). The orbit moves in 2 px (172 -> 170) so the discs keep the
+     * 20 px (1.5 mm) to the raised bezel.
+     */
+    const val BALL_R = 35f
 
     /**
      * Glass/Orbit UX round 2: the bolus button at 9 o'clock 32 -> 28 px, one rank below the four satellites (at 32 it
@@ -110,9 +115,13 @@ object OrbitFaceLogic {
      * fixed box for every state: a warning never moves the chart (no reflow). UX round 3: y 300..356 (the trace floats
      * free inside the orbit, no box is drawn).
      */
-    const val SPARK_X0 = 130f
-    const val SPARK_X_NOW = 294f
-    const val SPARK_X1 = 320f
+    /**
+     * Glass/Orbit UX round 4: x 129..321, still 16 px clear of the larger r 35 lower satellites (the orbit moved in 2 px).
+     * It stays at y 300..356: higher, a W1-W3 pill in the delta row ("Keine Daten · 17′") would touch it.
+     */
+    const val SPARK_X0 = 129f
+    const val SPARK_X_NOW = 295f
+    const val SPARK_X1 = 321f
     const val SPARK_Y_TOP = 300f
     const val SPARK_Y_BOTTOM = 356f
 
@@ -143,7 +152,7 @@ object OrbitFaceLogic {
      * Rework: text budget of a W1-W3 pill in the delta row. At [SLOT_MAX_WIDTH] its rounded ends touched the 4 and 8
      * o'clock satellites (0.7 px); 180 px keeps 8 px or more (the text shrinks to fit, the age is never cut).
      */
-    const val SLOT_IN_DELTA_MAX_WIDTH = 180f
+    const val SLOT_IN_DELTA_MAX_WIDTH = 172f // Glass/Orbit UX round 4: 180 -> 172 for the r 35 discs
 
     /** Width of the pill row at 6 o'clock (its rounded ends keep 12 px or more to the bezel). */
     const val PILL_ROW_MAX_WIDTH = 216f
@@ -416,8 +425,14 @@ object OrbitFaceLogic {
      * Red budget (states.md rule 3): the LOOP ring is muted when the BG accent and the pill are both red, and whenever
      * the pill already says the data is old (W2 / W3) or names the loop (W6), as [FaceState.loopNeutral].
      */
-    fun muteLoopRing(range: Range, slot: Slot?): Boolean =
-        (isLow(range) && slot?.tone == Tone.ALERT) || slot?.rank == 2 || slot?.rank == 3 || slot?.rank == 6
+    /**
+     * Glass/Orbit UX round 4 (safety): once the loop pill is folded into the LOOP satellite ([loopPillFolded]), the
+     * satellite is the ONLY place that says the loop is late, so it is never muted then (a dashed ring around a white
+     * "23′" under-signalled it): it draws a solid red ring and a red age. Muting stays for stale data (W2 / W3), where
+     * the loop age only repeats that the data is gone.
+     */
+    fun muteLoopRing(range: Range, slot: Slot?, loopPillFolded: Boolean = false): Boolean =
+        slot?.rank == 2 || slot?.rank == 3 || (!loopPillFolded && ((isLow(range) && slot?.tone == Tone.ALERT) || slot?.rank == 6))
 
     /** <= 5 OK, 6..14 WARN, >= 15 BAD. No loop run at all (-1) is NEVER: grey, never red. */
     fun loopHealth(ageMinutes: Long?, realRun: Boolean = true): LoopHealth =
@@ -497,10 +512,12 @@ object OrbitFaceLogic {
         val rate = leadingNumber(value)
         val zero = rate != null && abs(rate) < 1e-6
         val tbr = tbrHint || value.endsWith("%")
+        // Glass/Orbit UX round 4: the label is back on every satellite: a bare "0,85" next to IOB "1,25" was ambiguous
+        val label = if (value.endsWith("%")) "TBR" else "U/h"
         return when {
-            tbr  -> Ball(value, "", if (zero) Ring.AMBER else Ring.TEAL)
-            zero -> Ball(value, "", Ring.AMBER)
-            else -> Ball(value, "", Ring.NEUTRAL)
+            tbr  -> Ball(value, label, if (zero) Ring.AMBER else Ring.TEAL)
+            zero -> Ball(value, label, Ring.AMBER)
+            else -> Ball(value, label, Ring.NEUTRAL)
         }
     }
 
@@ -513,7 +530,8 @@ object OrbitFaceLogic {
     fun cobBall(cob: String, labels: Labels): Ball {
         val v = display(cob).replace(Regex("\\([^)]*\\)"), "")
         val n = leadingNumber(v)
-        return Ball(v, if (v == "--") labels.cob else "", if (n != null && n > 0.0) Ring.NEUTRAL else Ring.DIM)
+        // Glass/Orbit UX round 4: always labelled, so all four satellites share one two-line layout in every state
+        return Ball(v, labels.cob, if (n != null && n > 0.0) Ring.NEUTRAL else Ring.DIM)
     }
 
     /** "5,0 - 6,0" -> "5,0-6,0", "5,6" stays. */
@@ -575,7 +593,7 @@ object OrbitFaceLogic {
      * 118: "6,4→" read as one glyph at 10 px), and the arrow box never goes below [HERO_GLYPH_MIN_W]: a long value
      * shrinks its digits first, the trend stays a one-second read ("22,3+" had a tiny arrow).
      */
-    const val HERO_GLYPH_GAP_EM = 0.12f
+    const val HERO_GLYPH_GAP_EM = 0.14f // Glass/Orbit UX round 4: 0.12 -> 0.14, the BG + arrow group breathes
     const val HERO_GLYPH_W = 44f
     const val HERO_GLYPH_MIN_W = 36f
     const val HERO_MIN_SIZE = 60f
@@ -584,7 +602,7 @@ object OrbitFaceLogic {
      * Hero start size (UX round 1: 108 -> 120; Glass/Orbit UX round 1: 128). Glass/Orbit UX round 3: 118 (about an
      * 84 px cap): at 128 the LOOP satellite sat 5-8 px from the first digit. Widths are measured at [HERO_REF] px.
      */
-    const val HERO_SIZE = 118f
+    const val HERO_SIZE = 120f // Glass/Orbit UX round 4: 118 -> 120 (with the 4 px lower centre line, a narrow value grows a step)
     const val HERO_REF = 108f
 
     /** Arrow box width at hero [size] (scaled, floored at [HERO_GLYPH_MIN_W]). */
@@ -597,7 +615,7 @@ object OrbitFaceLogic {
         widthAt108 * size / HERO_REF + if (glyph) heroGlyphGap(size) + heroGlyphW(size) else 0f
 
     /** Hero centre line (the digits are centred on it). Glass/Orbit UX round 1: 190 -> 198, away from LOOP / IOB. */
-    const val HERO_Y = 198f
+    const val HERO_Y = 202f // Glass/Orbit UX round 4: 198 -> 202, more room under the larger LOOP / IOB discs
 
     /**
      * The hero group keeps this much clear space to the 10 and 2 o'clock satellites (LOOP, IOB). Glass/Orbit UX round

@@ -197,7 +197,7 @@ object GlassFaceLogic {
     const val BG_SIZE = 134f
     const val BG_SIZE_STEP = 2f
     const val BG_MIN_SIZE = 80f
-    const val BG_MAX_WIDTH = 240f
+    const val BG_MAX_WIDTH = 232f // Glass/Orbit UX round 4: 240 -> 232 (centred at 200): wide values (22,2) kept only ~20 px to the card's left edge
     const val BG_MAX_WIDTH_NO_CHIP = 300f
 
     /**
@@ -517,13 +517,13 @@ object GlassFaceLogic {
     /**
      * Glass/Orbit UX round 3: no plot plate any more (plate + band + hairlines read as an empty progress bar); the
      * values sit [SPARK_INSET] = 9 px (the now dot's 5 px glow radius plus 4) inside the plot, so a very high or urgent
-     * low trace never touches its edge. The plot is y 292..348 so the 70-180 band keeps about 28 px.
+     * low trace never touches its edge. The plot is y 294..350 (Glass/Orbit UX round 4) so the 70-180 band keeps about 28 px.
      */
     const val SPARK_X0 = 70f
     const val SPARK_X0_BALL = 128f // Glass/Orbit UX round 2: 140 -> 128, the ball sits tighter to the chart
-    const val SPARK_Y0 = 292f
+    const val SPARK_Y0 = 294f // Glass/Orbit UX round 4: y 294..350, 8 px under the taller card
     const val SPARK_X1 = 380f
-    const val SPARK_Y1 = 348f
+    const val SPARK_Y1 = 350f
     const val SPARK_INSET = 9f
     const val SPARK_HISTORY = 36
     const val SPARK_TOTAL = 48
@@ -641,8 +641,8 @@ object GlassFaceLogic {
      * UX round 4: (90, 322); Glass rework (92, 324), 10 px under the card, 30 px or more from the bezel; its hit area reaches 78 px down from
      * the card to the bezel and 88 px across, the pill row moves right of it.
      */
-    const val BALL_X = 88f // Glass/Orbit UX round 2: (92, 324) -> (88, 318): 12 px to the graph at 128, 31 px to the bezel
-    const val BALL_Y = 318f
+    const val BALL_X = 90f // Glass/Orbit UX round 4: (90, 322), 8 px under the taller card, 30 px to the bezel. Before: Glass/Orbit UX round 2: (92, 324) -> (88, 318): 12 px to the graph at 128, 31 px to the bezel
+    const val BALL_Y = 322f
     const val BALL_R = 28f
 
     /** Pill row band (UX round 4: borderless; Glass/Orbit UX round 3: text centred at y 372, 12 px lower). */
@@ -650,7 +650,7 @@ object GlassFaceLogic {
     const val PILL_Y = 372f
 
     /** Hit-area clips: 2 px under the card, 8 px left of the graph (which starts at [SPARK_X0_BALL]). */
-    const val BALL_HIT_TOP = 284f // HERO_Y1 + 2
+    const val BALL_HIT_TOP = 288f // HERO_Y1 + 2
     const val BALL_HIT_RIGHT = SPARK_X0_BALL - 8f
 
     /** Hit radius on the 450 grid at xhdpi: 48 px = 24 dp, the family's 48 dp target (the face scales it to stay 24 dp). */
@@ -680,17 +680,20 @@ object GlassFaceLogic {
     const val HERO_X0 = 63f
     const val HERO_X1 = 387f
     const val HERO_Y0 = 120f
-    const val HERO_Y1 = 282f
-    const val META_Y = 264f
+    const val HERO_Y1 = 286f // Glass/Orbit UX round 4: 282 -> 286 and the content 2 px up: the meta row (pill) had 4 px to the card's edge, the top 15
+    const val META_Y = 262f
+
+    /** Digits' centre next to the chip (Glass/Orbit UX round 4: 198 -> 200, equal optical padding left and right). */
+    const val BG_X_CHIP = 200f
 
     /** Trend chip column (UX round 4: r 18 -> 24). */
     const val CHIP_X = 352f
     const val CHIP_R = 24f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
-        showChip  -> if (metaEmpty) HeroLayout(198f, 201f, BG_MAX_WIDTH, 199f, 225f, META_Y) else HeroLayout(198f, 180f, BG_MAX_WIDTH, 178f, 225f, META_Y)
-        metaEmpty -> HeroLayout(225f, 201f, BG_MAX_WIDTH_NO_CHIP, 199f, 225f, META_Y)
-        else      -> HeroLayout(225f, 180f, BG_MAX_WIDTH_NO_CHIP, 178f, 225f, META_Y)
+        showChip  -> if (metaEmpty) HeroLayout(BG_X_CHIP, 203f, BG_MAX_WIDTH, 201f, 225f, META_Y) else HeroLayout(BG_X_CHIP, 178f, BG_MAX_WIDTH, 176f, 225f, META_Y)
+        metaEmpty -> HeroLayout(225f, 203f, BG_MAX_WIDTH_NO_CHIP, 201f, 225f, META_Y)
+        else      -> HeroLayout(225f, 178f, BG_MAX_WIDTH_NO_CHIP, 176f, 225f, META_Y)
     }
 
     /**

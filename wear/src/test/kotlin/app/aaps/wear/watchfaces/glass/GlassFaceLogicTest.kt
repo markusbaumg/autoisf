@@ -162,12 +162,12 @@ class GlassFaceLogicTest {
     private fun bgFit(s: String, max: Float = GlassFaceLogic.BG_MAX_WIDTH) = GlassFaceLogic.bgFitSize({ heroWidth(s, it) }, max)
 
     @Test fun bgSizeForMmolAndMgdlByMeasuredWidth() {
-        // Glass rework: 134 px start (Halo's ~95 px cap), 240 px next to the chip, floor 80
+        // Glass rework: 134 px start (Halo's ~95 px cap), floor 80; Glass/Orbit UX round 4: 232 px next to the chip
         assertThat(bgFit("9,4")).isEqualTo(134f)
-        assertThat(bgFit("11,8")).isEqualTo(114f)
-        assertThat(bgFit("400+")).isEqualTo(98f)
-        assertThat(bgFit("22,2+")).isEqualTo(84f)
-        assertThat(bgFit("254")).isEqualTo(134f) // three mg/dL digits keep the full size next to the chip
+        assertThat(bgFit("11,8")).isEqualTo(110f)
+        assertThat(bgFit("400+")).isEqualTo(94f)
+        assertThat(bgFit("22,2+")).isEqualTo(82f)
+        assertThat(bgFit("254")).isEqualTo(132f) // three mg/dL digits keep (nearly) the full size next to the chip
         assertThat(bgFit("---")).isEqualTo(134f)
         // the result fits, in 2 px steps from the start size
         for (v in listOf("9,4", "11,8", "400+", "254", "39")) {
@@ -554,10 +554,10 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(128f)
         assertThat(GlassFaceLogic.SPARK_X0_BALL).isGreaterThan(GlassFaceLogic.BALL_X + GlassFaceLogic.BALL_R + 8f)
         // UX round 4: values stay 4 px inside the plot (the line never meets the card or the pills)
-        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(339f)
-        assertThat(GlassFaceLogic.sparkY(220.0)).isEqualTo(301f)
-        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(339f)
-        assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(301f)
+        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(341f)
+        assertThat(GlassFaceLogic.sparkY(220.0)).isEqualTo(303f)
+        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(341f)
+        assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(303f)
         // Glass/Orbit UX round 2: the log range adapts to the visible values, a very high or urgent low trace is never
         // clamped flat at the edge; the default 60-220 keeps the 70-180 band at about 70 % of the plot
         assertThat(GlassFaceLogic.sparkRange(Double.NaN, Double.NaN)).isEqualTo(60.0 to 220.0)
@@ -566,10 +566,10 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkRange(50.0, 300.0)).isEqualTo(45.0 to 320.0)
         val (lo, hi) = GlassFaceLogic.sparkRange(100.0, 400.0)
         assertThat(GlassFaceLogic.sparkY(399.0, lo, hi)).isGreaterThan(GlassFaceLogic.sparkY(400.0, lo, hi))
-        assertThat(GlassFaceLogic.sparkY(400.0, lo, hi)).isEqualTo(301f)
-        val band = (GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)) / (339f - 301f)
+        assertThat(GlassFaceLogic.sparkY(400.0, lo, hi)).isEqualTo(303f)
+        val band = (GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)) / (341f - 303f)
         assertThat(band).isWithin(0.03f).of(0.73f)
-        assertThat((GlassFaceLogic.sparkY(70.0, lo, hi) - GlassFaceLogic.sparkY(180.0, lo, hi)) / (339f - 301f)).isAtLeast(0.45f)
+        assertThat((GlassFaceLogic.sparkY(70.0, lo, hi) - GlassFaceLogic.sparkY(180.0, lo, hi)) / (341f - 303f)).isAtLeast(0.45f)
         assertThat(GlassFaceLogic.SPARK_Y1 - GlassFaceLogic.SPARK_Y0).isAtLeast(48f)
         assertThat(GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)).isAtLeast(27f)
         assertThat(GlassFaceLogic.SPARK_Y0 - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
@@ -654,16 +654,16 @@ class GlassFaceLogicTest {
 
     @Test fun heroReflowsWithoutTheChip() {
         val chip = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = false)
-        assertThat(chip.bgX).isEqualTo(198f)
-        assertThat(chip.bgY).isEqualTo(180f)
-        assertThat(chip.chipY).isEqualTo(178f)
+        assertThat(chip.bgX).isEqualTo(GlassFaceLogic.BG_X_CHIP)
+        assertThat(chip.bgY).isEqualTo(178f)
+        assertThat(chip.chipY).isEqualTo(176f)
         // the delta line sits under the digits at full card width
         assertThat(chip.metaCentreX).isEqualTo(225f)
         assertThat(chip.metaY).isEqualTo(GlassFaceLogic.META_Y)
         assertThat(chip.bgMaxWidth).isEqualTo(GlassFaceLogic.BG_MAX_WIDTH)
         // empty meta line: digits and chip centre vertically
         val chipNoMeta = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = true)
-        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(201f to 199f)
+        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(203f to 201f)
         // the digits' left and right edges (half the budget) keep 12 px card padding and 8 px to the r 24 chip
         assertThat(chip.bgX - GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtLeast(GlassFaceLogic.HERO_X0 + 12f)
         assertThat(chip.bgX + GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtMost(GlassFaceLogic.CHIP_X - GlassFaceLogic.CHIP_R - 8f)
@@ -671,10 +671,10 @@ class GlassFaceLogicTest {
         // trend.hidden_pref: BG (225,180), meta under it, 300 px for the digits
         val noChip = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = false)
         assertThat(listOf(noChip.bgX, noChip.bgY, noChip.metaCentreX, noChip.metaY, noChip.bgMaxWidth))
-            .containsExactly(225f, 180f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
+            .containsExactly(225f, 178f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
         assertThat(GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).isAtMost(GlassFaceLogic.HERO_X1 - GlassFaceLogic.HERO_X0 - 24f)
         val noChipNoMeta = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = true)
-        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 201f)
+        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 203f)
         // the card stays inside the round screen at its corners (r 28)
         for ((x, y) in listOf(GlassFaceLogic.HERO_X0 + 8f to GlassFaceLogic.HERO_Y0 + 8f, GlassFaceLogic.HERO_X1 - 8f to GlassFaceLogic.HERO_Y1 - 8f))
             assertThat(kotlin.math.hypot(x - 225f, y - 225f)).isLessThan(215f)

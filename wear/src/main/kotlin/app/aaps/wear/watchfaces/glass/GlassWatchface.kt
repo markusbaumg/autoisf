@@ -942,11 +942,25 @@ class GlassWatchface : WatchFace() {
         // sparkline (Glass/Orbit UX round 3): no plate and no band hairlines (plate + tint + edges read as an empty
         // progress bar); the target range is a 10 % tint only, green while in range, neutral otherwise. Out of range
         // the band keeps 1 px neutral edges, so the reader still sees where the trace left it.
+        // Glass/Orbit UX round 4: the band read as a hard grey slab and the trace looked unclipped where it left it. The
+        // band now has 4 px rounded ends and fades out over its first and last 20 px; out of range its edges are 1 px
+        // hairlines with the same fade, so a trace outside them reads as "outside the range", not as overflow.
         val inBand = range == Range.IN
         fill.reset(); fill.isAntiAlias = true
-        fill.color = if (inBand) withAlpha(IN_COL, 26) else withAlpha(Color.WHITE, 14)
-        canvas.drawRect(sparkX0, highY, sparkEndX, lowY, fill)
-        drawSparkGuides(canvas, if (inBand) Color.TRANSPARENT else BAND_OUT_EDGE, withAlpha(Color.WHITE, 60), aa = true)
+        fill.color = Color.WHITE
+        fill.shader = bandFade(if (inBand) withAlpha(IN_COL, 26) else withAlpha(Color.WHITE, 12))
+        rect.set(sparkX0, highY, sparkEndX, lowY)
+        canvas.drawRoundRect(rect, BAND_CORNER, BAND_CORNER, fill)
+        fill.shader = null
+        if (!inBand) {
+            line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE; line.strokeWidth = 1f
+            line.color = Color.WHITE
+            line.shader = bandFade(BAND_OUT_EDGE)
+            canvas.drawLine(sparkX0 + BAND_CORNER, lowY, sparkEndX - BAND_CORNER, lowY, line)
+            canvas.drawLine(sparkX0 + BAND_CORNER, highY, sparkEndX - BAND_CORNER, highY, line)
+            line.shader = null
+        }
+        drawSparkGuides(canvas, Color.TRANSPARENT, withAlpha(Color.WHITE, 60), aa = true)
         if (hasHistory) {
             line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE
             line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = 3f
@@ -1082,6 +1096,20 @@ class GlassWatchface : WatchFace() {
     }
 
     /** Target band edges (solid 1 px) and, only when a forecast follows it, the dotted now line (without, now is the plot's edge). */
+    /** Horizontal fade of the target band (Glass/Orbit UX round 4): [colour] fading in and out over [BAND_FADE] px. */
+    private val bandFades = HashMap<String, Shader>()
+
+    private fun bandFade(colour: Int): Shader = bandFades.getOrPut("$sparkX0/$sparkEndX/$colour") {
+        if (bandFades.size > 8) bandFades.clear()
+        val w = (sparkEndX - sparkX0).coerceAtLeast(2f * BAND_FADE + 1f)
+        val f = BAND_FADE / w
+        val clear = colour and 0x00FFFFFF
+        LinearGradient(
+            sparkX0, 0f, sparkX0 + w, 0f, intArrayOf(clear, colour, colour, clear), floatArrayOf(0f, f, 1f - f, 1f),
+            Shader.TileMode.CLAMP
+        )
+    }
+
     private fun drawSparkGuides(canvas: Canvas, bandColour: Int, nowColour: Int, aa: Boolean) {
         line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE; line.strokeWidth = 1f
         if (Color.alpha(bandColour) > 0) {
@@ -1519,8 +1547,16 @@ class GlassWatchface : WatchFace() {
         p.strokeWidth = 1f
         p.color = withAlpha(Color.WHITE, edge)
         c.drawRoundRect(l, t, r, b, radius, radius, p)
-        p.color = withAlpha(Color.WHITE, hairline)
+        // Glass/Orbit UX round 4: the full-width highlight read as a phone widget. It is inset by the corner radius at
+        // each end, half as bright, and fades out towards its ends like light on a curved glass edge.
+        val hl = withAlpha(Color.WHITE, hairline / 2)
+        p.color = Color.WHITE
+        p.shader = LinearGradient(
+            l + radius, 0f, r - radius, 0f, intArrayOf(hl and 0x00FFFFFF, hl, hl, hl and 0x00FFFFFF), floatArrayOf(0f, 0.3f, 0.7f, 1f),
+            Shader.TileMode.CLAMP
+        )
         c.drawLine(l + radius, t + 1f, r - radius, t + 1f, p)
+        p.shader = null
     }
 
     /**
@@ -1735,7 +1771,9 @@ class GlassWatchface : WatchFace() {
         private val BG_MID = 0xFF06070D.toInt()
         private val IN_COL = 0xFF3DDC97.toInt()
         /** Sparkline target band (Glass/Orbit UX round 1): solid, 1.5:1 on black in range, neutral grey out of range. */
-        private const val BAND_OUT_EDGE = 0xFF3A414D.toInt()
+        private const val BAND_OUT_EDGE = 0xFF4A525F.toInt() // Glass/Orbit UX round 4: a faded 1 px hairline, a step lighter
+        private const val BAND_CORNER = 4f
+        private const val BAND_FADE = 20f
         /** In-range digits (Glass/Orbit UX round 2): a pale mint, the family's green at Glass's calmer strength. */
         private val IN_DIGIT_COL = 0xFFCFF5E4.toInt()
         private val HIGH_COL = 0xFFFFB547.toInt()
