@@ -595,8 +595,12 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkRange(39.0, 420.0)).isEqualTo(40.0 to 400.0)
         assertThat(GlassFaceLogic.sparkRange(395.0, 400.0)).isEqualTo(55.0 to 400.0)
         // round 3: anything below the low line puts the floor at 40 mg/dL, so hypo depth is on a fixed scale
-        assertThat(GlassFaceLogic.sparkRange(45.0, 50.0)).isEqualTo(40.0 to 195.0)
-        assertThat(GlassFaceLogic.sparkRange(63.0, 120.0)).isEqualTo(40.0 to 195.0)
+        // round 4: and the top comes from the visible values (+10) and the low line (+50), not from the high line
+        assertThat(GlassFaceLogic.sparkRange(45.0, 50.0)).isEqualTo(40.0 to 120.0)
+        assertThat(GlassFaceLogic.sparkRange(63.0, 120.0)).isEqualTo(40.0 to 130.0)
+        assertThat(GlassFaceLogic.sparkRange(63.0, 108.0)).isEqualTo(40.0 to 120.0)
+        assertThat(GlassFaceLogic.sparkRange(50.0, 395.0)).isEqualTo(40.0 to 400.0)
+        assertThat(GlassFaceLogic.sparkRange(60.0, 70.0, 80.0, 140.0)).isEqualTo(40.0 to 130.0)
         assertThat(GlassFaceLogic.sparkRange(70.0, 120.0)).isEqualTo(55.0 to 195.0)
         val (llo, lhi) = GlassFaceLogic.sparkRange(47.0, 126.0)
         assertThat(GlassFaceLogic.sparkY(47.0, llo, lhi) - GlassFaceLogic.sparkY(63.0, llo, lhi)).isAtLeast(4f)
@@ -618,12 +622,13 @@ class GlassFaceLogicTest {
             assertThat(GlassFaceLogic.sparkY(a, lo, hi)).isEqualTo(GlassFaceLogic.sparkYRaw(a, lo, hi))
             assertThat(GlassFaceLogic.sparkY(b, lo, hi)).isEqualTo(GlassFaceLogic.sparkYRaw(b, lo, hi))
         }
-        // both band edges are always inside the plot (the reference never runs off it), for any values and bands
-        for ((a, b) in listOf(40.0 to 40.0, 100.0 to 110.0, 104.0 to 104.0, 171.0 to 171.0, 40.0 to 400.0, 400.0 to 400.0))
+        // the low edge is always inside the plot; the high edge too unless a value is below the low line (round 4:
+        // the hypo scale ends above the low line, the band fades out upward)
+        for ((a, b) in listOf(40.0 to 40.0, 100.0 to 110.0, 104.0 to 104.0, 171.0 to 171.0, 40.0 to 400.0, 400.0 to 400.0, 62.0 to 62.0))
             for ((l, h) in listOf(70.0 to 180.0, 80.0 to 140.0, 63.0 to 250.0)) {
                 val (lo, hi) = GlassFaceLogic.sparkRange(a, b, l, h)
                 assertThat(GlassFaceLogic.bandEdgeVisible(GlassFaceLogic.sparkYRaw(l, lo, hi))).isTrue()
-                assertThat(GlassFaceLogic.bandEdgeVisible(GlassFaceLogic.sparkYRaw(h, lo, hi))).isTrue()
+                if (a >= l) assertThat(GlassFaceLogic.bandEdgeVisible(GlassFaceLogic.sparkYRaw(h, lo, hi))).isTrue()
             }
         assertThat(GlassFaceLogic.SPARK_Y1 - GlassFaceLogic.SPARK_Y0).isAtLeast(48f)
         assertThat(GlassFaceLogic.SPARK_Y0 - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
@@ -915,5 +920,38 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.PENDING)).isEqualTo(GlassFaceLogic.Refusal.PENDING)
         assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.NONE)).isNull()
         assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.FIRST_START)).isNull()
+    }
+
+    /**
+     * Glass polish round 4: at a hypo the sparkline separates 3,5 / 2,6 / 2,2 clearly (a fall from 6,0 to 3,5 as in
+     * the low_3_5_fall render): low edge at about y 330, 3,5 a few px under it, 2,6 10 px or more and 2,2 15 px or more.
+     */
+    @Test
+    fun sparkHypoScaleSeparatesLowValues() {
+        val low = GlassFaceLogic.DEFAULT_LOW_MGDL
+        fun mg(mmol: Double) = mmol * 18.0
+        val (lo, hi) = GlassFaceLogic.sparkRange(mg(3.5), mg(6.0))
+        assertThat(lo).isEqualTo(40.0)
+        assertThat(hi).isWithin(0.01).of(120.0)
+        val edge = GlassFaceLogic.sparkYRaw(low, lo, hi)
+        assertThat(edge).isWithin(1.5f).of(330f)
+        assertThat(GlassFaceLogic.bandEdgeVisible(edge)).isTrue()
+        val y35 = GlassFaceLogic.sparkY(mg(3.5), lo, hi)
+        val y26 = GlassFaceLogic.sparkY(mg(2.6), lo, hi)
+        val y22 = GlassFaceLogic.sparkY(mg(2.2), lo, hi)
+        assertThat(y35).isWithin(1.5f).of(333f)
+        assertThat(y35 - edge).isAtLeast(3f) // under the edge, not on it
+        assertThat(y26 - edge).isAtLeast(10f)
+        assertThat(y22 - edge).isAtLeast(15f)
+        assertThat(y26 - y35).isAtLeast(7f)
+        assertThat(y22 - y26).isAtLeast(3f)
+        // every value stays inside the plot (never clamped above the top)
+        assertThat(GlassFaceLogic.sparkY(mg(6.0), lo, hi)).isEqualTo(GlassFaceLogic.sparkYRaw(mg(6.0), lo, hi))
+        // the urgent low render (7,0 falling to 2,6): still 10 px or more between 2,6 and the low edge
+        val (ulo, uhi) = GlassFaceLogic.sparkRange(mg(2.6), mg(7.0))
+        assertThat(GlassFaceLogic.sparkY(mg(2.6), ulo, uhi) - GlassFaceLogic.sparkYRaw(low, ulo, uhi)).isAtLeast(10f)
+        // in range and high: unchanged
+        assertThat(GlassFaceLogic.sparkRange(100.0, 110.0)).isEqualTo(55.0 to 195.0)
+        assertThat(GlassFaceLogic.sparkRange(150.0, 300.0)).isEqualTo(55.0 to 300.0)
     }
 }
