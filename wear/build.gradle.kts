@@ -169,5 +169,5 @@ dependencies {
 val watchfaceRenderOut: Provider<String> = providers.gradleProperty("watchfaceRenderOut")
 tasks.withType<Test>().configureEach {
     if (watchfaceRenderOut.isPresent) systemProperty("watchface.render.out", watchfaceRenderOut.get())
-    else exclude("**/WatchfaceRenderHarness*")
+    else exclude("**/*WatchfaceRenderHarness*")
 }

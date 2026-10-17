@@ -1,22 +1,99 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Page 2 of the watch confirm screen (AcceptActivity, and the watch wizard's WizardConfirmFragment): the amount, the
+     carbs, the top warning and the confirm button. Filled by ConfirmScreen. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:layout_gravity="center"
-    android:gravity="center">
+    android:background="@color/black"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:paddingTop="16dp"
+    android:paddingBottom="22dp">
+
+    <TextView
+        android:id="@+id/confirm_ok_kind"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.08"
+        android:maxWidth="150dp"
+        android:maxLines="1"
+        android:textColor="@color/confirm_muted"
+        android:textSize="15sp"
+        android:visibility="gone"
+        tools:text="Bolus"
+        tools:visibility="visible" />
+
+    <!-- the amount: one line, never wrapped (ConfirmScreen shrinks it to fit) -->
+    <TextView
+        android:id="@+id/confirm_ok_amount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:textColor="@color/confirm_text"
+        android:textSize="34sp"
+        android:visibility="gone"
+        tools:text="0,5 U"
+        tools:visibility="visible" />
+
+    <TextView
+        android:id="@+id/confirm_ok_amount2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:textColor="@color/confirm_text_dim"
+        android:textSize="18sp"
+        android:visibility="gone"
+        tools:text="+ 45 g KH · in 15 min"
+        tools:visibility="visible" />
+
+    <TextView
+        android:id="@+id/confirm_ok_warning"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxWidth="190dp"
+        android:paddingStart="12dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="5dp"
+        android:textColor="@color/confirm_text"
+        android:textSize="16sp"
+        android:visibility="gone"
+        tools:text="TIEF 3,6 ↘"
+        tools:visibility="visible" />
 
     <ImageView
         android:id="@+id/confirmbutton"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/confirm_ring"
+        android:contentDescription="@string/action_confirm"
+        android:padding="16dp"
+        android:src="@drawable/ic_confirm"
+        android:tint="@color/confirm_ok" />
+
+    <TextView
+        android:id="@+id/confirm_ok_hint"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:layout_margin="10dp"
-        android:background="@drawable/circle"
-        android:backgroundTint="@color/white"
-        android:contentDescription="@string/action_confirm"
-        android:padding="25dp"
-        android:src="@drawable/ic_confirm"
-        app:tint="@color/white" />
+        android:layout_marginBottom="10dp"
+        android:fontFamily="sans-serif-medium"
+        android:text="@string/confirm_tap_confirm"
+        android:textColor="@color/confirm_text_dim"
+        android:textSize="16sp" />
 
 </LinearLayout>

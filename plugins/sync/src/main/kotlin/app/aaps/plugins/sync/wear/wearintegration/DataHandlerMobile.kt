@@ -808,7 +808,9 @@ class DataHandlerMobile @Inject constructor(
             tempTarget = tempTargetString,
             percentageCorrection = if (percentage != 100) percentage else null,
             totalBeforePercentage = if (percentage != 100) bolusWizard.totalBeforePercentageAdjustment else null,
-            cob = bolusWizard.cob
+            cob = bolusWizard.cob,
+            // display only: the watch's confirm page shows the amount with these warnings; the confirm is unchanged
+            details = confirmDetails(EventData.ConfirmDetails.KIND_WIZARD, bolusWizard.calculatedTotalInsulin, bolusWizard.carbs)
         )
         offerPendingConfirm(PendingWearConfirm.Kind.WIZARD, bolusWizard.calculatedTotalInsulin, bolusWizard.carbs, wizard = bolusWizard)
         rxBus.send(EventMobileToWear(wizardResult))
@@ -921,12 +923,26 @@ class DataHandlerMobile @Inject constructor(
             carbDelayMessagePart +
             eCarbsMessagePart + "\n_____________\n" + wizard.explainShort()
 
+        // the carb delay and the extended carbs go as their own fields (the watch shows them next to the carbs); the
+        // calculation without its first line, whose IC and ISF the watch already names as the estimate's source
+        val eCarbs = if (quickWizardEntry.useEcarbs() == QuickWizardEntry.YES) quickWizardEntry.carbs2() else 0
+        val details = confirmDetails(
+            EventData.ConfirmDetails.KIND_WIZARD, wizard.calculatedTotalInsulin, wizard.carbs,
+            label = quickWizardEntry.buttonText(),
+            note = wizard.explainShort().lines().drop(1).joinToString("\n"),
+            carbsDelayMin = quickWizardEntry.carbTime(),
+            carbsAlarm = quickWizardEntry.useAlarm() == QuickWizardEntry.YES,
+            eCarbs = eCarbs,
+            eCarbsDurationH = if (eCarbs > 0) quickWizardEntry.duration() else null,
+            eCarbsOffsetMin = if (eCarbs > 0) quickWizardEntry.time() else null
+        )
         offerPendingConfirm(PendingWearConfirm.Kind.WIZARD, wizard.calculatedTotalInsulin, wizard.carbs, wizard = wizard, quickWizardEntry = quickWizardEntry)
         rxBus.send(
             EventMobileToWear(
                 EventData.ConfirmAction(
                     rh.gs(app.aaps.core.ui.R.string.confirm).uppercase(), message,
-                    returnCommand = EventData.ActionWizardConfirmed(wizard.timeStamp)
+                    returnCommand = EventData.ActionWizardConfirmed(wizard.timeStamp),
+                    details = details
                 )
             )
         )
@@ -952,12 +968,17 @@ class DataHandlerMobile @Inject constructor(
         message += rh.gs(app.aaps.core.ui.R.string.carbs) + ": " + carbsAfterConstraints + rh.gs(R.string.grams_short)
         if (insulinAfterConstraints - command.insulin != 0.0 || carbsAfterConstraints - command.carbs != 0)
             message += "\n" + rh.gs(app.aaps.core.ui.R.string.constraint_applied)
+        val details = confirmDetails(
+            if (insulinAfterConstraints > 0) EventData.ConfirmDetails.KIND_BOLUS else EventData.ConfirmDetails.KIND_CARBS,
+            insulinAfterConstraints, carbsAfterConstraints, requestedInsulin = command.insulin, requestedCarbs = command.carbs
+        )
         val requestId = offerPendingConfirm(PendingWearConfirm.Kind.BOLUS, insulinAfterConstraints, carbsAfterConstraints)
         rxBus.send(
             EventMobileToWear(
                 EventData.ConfirmAction(
                     rh.gs(app.aaps.core.ui.R.string.confirm).uppercase(), message,
-                    returnCommand = EventData.ActionBolusConfirmed(insulinAfterConstraints, carbsAfterConstraints, requestId)
+                    returnCommand = EventData.ActionBolusConfirmed(insulinAfterConstraints, carbsAfterConstraints, requestId),
+                    details = details
                 )
             )
         )
@@ -983,12 +1004,17 @@ class DataHandlerMobile @Inject constructor(
             sendError(rh.gs(app.aaps.core.ui.R.string.carb_equal_zero_no_action))
             return
         }
+        val details = confirmDetails(
+            EventData.ConfirmDetails.KIND_ECARBS, 0.0, carbsAfterConstraints, requestedCarbs = command.carbs,
+            carbsStart = startTimeStamp, carbsDurationH = command.duration
+        )
         offerPendingConfirm(PendingWearConfirm.Kind.ECARBS, 0.0, carbsAfterConstraints, carbsTime = startTimeStamp, duration = command.duration)
         rxBus.send(
             EventMobileToWear(
                 EventData.ConfirmAction(
                     rh.gs(app.aaps.core.ui.R.string.confirm).uppercase(), message,
-                    returnCommand = EventData.ActionECarbsConfirmed(carbsAfterConstraints, startTimeStamp, command.duration)
+                    returnCommand = EventData.ActionECarbsConfirmed(carbsAfterConstraints, startTimeStamp, command.duration),
+                    details = details
                 )
             )
         )
@@ -1006,12 +1032,14 @@ class DataHandlerMobile @Inject constructor(
         val insulinAfterConstraints = constraintChecker.applyBolusConstraints(ConstraintObject(amount, aapsLogger)).value()
         var message = rh.gs(app.aaps.core.ui.R.string.prime_fill) + ": " + insulinAfterConstraints + rh.gs(R.string.units_short)
         if (insulinAfterConstraints - amount != 0.0) message += "\n" + rh.gs(app.aaps.core.ui.R.string.constraint_applied)
+        val details = confirmDetails(EventData.ConfirmDetails.KIND_FILL, insulinAfterConstraints, 0, requestedInsulin = amount)
         val requestId = offerPendingConfirm(PendingWearConfirm.Kind.FILL, insulinAfterConstraints, 0)
         rxBus.send(
             EventMobileToWear(
                 EventData.ConfirmAction(
                     rh.gs(app.aaps.core.ui.R.string.confirm).uppercase(), message,
-                    returnCommand = EventData.ActionFillConfirmed(insulinAfterConstraints, requestId)
+                    returnCommand = EventData.ActionFillConfirmed(insulinAfterConstraints, requestId),
+                    details = details
                 )
             )
         )
@@ -1023,12 +1051,14 @@ class DataHandlerMobile @Inject constructor(
         val insulinAfterConstraints = constraintChecker.applyBolusConstraints(ConstraintObject(command.insulin, aapsLogger)).value()
         var message = rh.gs(app.aaps.core.ui.R.string.prime_fill) + ": " + insulinAfterConstraints + rh.gs(R.string.units_short)
         if (insulinAfterConstraints - command.insulin != 0.0) message += "\n" + rh.gs(app.aaps.core.ui.R.string.constraint_applied)
+        val details = confirmDetails(EventData.ConfirmDetails.KIND_FILL, insulinAfterConstraints, 0, requestedInsulin = command.insulin)
         val requestId = offerPendingConfirm(PendingWearConfirm.Kind.FILL, insulinAfterConstraints, 0)
         rxBus.send(
             EventMobileToWear(
                 EventData.ConfirmAction(
                     rh.gs(app.aaps.core.ui.R.string.confirm).uppercase(), message,
-                    returnCommand = EventData.ActionFillConfirmed(insulinAfterConstraints, requestId)
+                    returnCommand = EventData.ActionFillConfirmed(insulinAfterConstraints, requestId),
+                    details = details
                 )
             )
         )
@@ -2071,6 +2101,58 @@ class DataHandlerMobile @Inject constructor(
 
     private fun clearPendingConfirm() {
         synchronized(wearConfirmLock) { pendingWearConfirm = null }
+    }
+
+    /** [block], or null when it throws (one missing input must not cost the rest of the confirm screen). */
+    private inline fun <T> orNull(block: () -> T?): T? = try {
+        block()
+    } catch (e: Exception) {
+        aapsLogger.debug(LTag.WEAR, "Confirm details input unavailable: $e")
+        null
+    }
+
+    /**
+     * Display-only extras of a treatment confirm for the watch (see [WearConfirmDetails]). Reads current values only,
+     * changes nothing, and is never needed for the confirm: any failure yields null and the confirm is sent as before.
+     */
+    private fun confirmDetails(
+        kind: String, insulin: Double, carbs: Int, requestedInsulin: Double? = null, requestedCarbs: Int? = null,
+        label: String = "", note: String = "", carbsStart: Long? = null, carbsDurationH: Int? = null,
+        carbsDelayMin: Int? = null, carbsAlarm: Boolean = false, eCarbs: Int? = null, eCarbsDurationH: Int? = null, eCarbsOffsetMin: Int? = null
+    ): EventData.ConfirmDetails? = try {
+        val now = dateUtil.now()
+        val units = orNull { profileFunction.getUnits() } ?: GlucoseUnit.MGDL
+        val profile = orNull { profileFunction.getProfile() }
+        val lastBg = orNull { iobCobCalculator.ads.lastBg() }
+        val glucoseStatus = orNull { glucoseStatusProvider.glucoseStatusData }
+        val lastBolus = orNull { persistenceLayer.getNewestBolusOfType(BS.Type.NORMAL) }?.takeIf { it.isValid }
+        WearConfirmDetails.build(
+            WearConfirmDetails.Inputs(
+                kind = kind, insulin = insulin, carbs = carbs, requestedInsulin = requestedInsulin, requestedCarbs = requestedCarbs,
+                label = label, note = note, unitsMgdl = units == GlucoseUnit.MGDL, now = now,
+                bgMgdl = lastBg?.recalculated, bgTimestamp = lastBg?.timestamp,
+                // the delta belongs to the newest reading only
+                deltaMgdl = glucoseStatus?.takeIf { lastBg != null && abs(it.date - lastBg.timestamp) < 60_000L }?.delta,
+                arrow = orNull { trendCalculator.getTrendArrow(iobCobCalculator.ads)?.symbol } ?: "",
+                lowMarkMgdl = orNull { profileUtil.convertToMgdl(preferences.get(UnitDoubleKey.OverviewLowMark), units) },
+                isfMgdl = orNull { profile?.getIsfMgdl("DataHandlerMobile confirm") },
+                ic = orNull { profile?.getIc() },
+                iobNow = orNull {
+                    iobCobCalculator.calculateIobFromBolus().round().iob + iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().round().basaliob
+                },
+                cobNow = orNull { iobCobCalculator.getCobInfo("DataHandlerMobile confirm").displayCob },
+                secondsPerUnit = orNull { wearBolusSecondsPerUnit(activePlugin.activePump.pumpDescription.pumpType) },
+                insulinPeakMin = orNull { activePlugin.activeInsulin.peak },
+                lastBolusAt = lastBolus?.timestamp, lastBolusAmount = lastBolus?.amount,
+                maxBolus = orNull { constraintChecker.getMaxBolusAllowed().value() },
+                carbsStart = carbsStart, carbsDurationH = carbsDurationH,
+                carbsDelayMin = carbsDelayMin, carbsAlarm = carbsAlarm,
+                eCarbs = eCarbs, eCarbsDurationH = eCarbsDurationH, eCarbsOffsetMin = eCarbsOffsetMin
+            )
+        )
+    } catch (e: Exception) {
+        aapsLogger.error(LTag.WEAR, "Confirm details not built", e)
+        null
     }
 
     private sealed class ConfirmOutcome {

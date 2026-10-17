@@ -30,6 +30,7 @@ class WizardResultActivity : DaggerAppCompatActivity() {
     private var percentage: Int = 100
     private var totalBeforePercentage: Double? = null
     private var cob: Double = 0.0
+    private var details: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,6 +69,7 @@ class WizardResultActivity : DaggerAppCompatActivity() {
         totalBeforePercentage = if (!beforePctValue.isNaN()) beforePctValue else null
 
         cob = intent.getDoubleExtra("cob", 0.0)
+        details = intent.getStringExtra(ConfirmScreen.KEY_DETAILS)
 
         // Setup ViewPager
         viewPager = findViewById(R.id.wizard_view_pager)
@@ -116,7 +118,7 @@ class WizardResultActivity : DaggerAppCompatActivity() {
                     insulinBg, insulinCob, insulinBolusIob, insulinBasalIob,
                     insulinTrend, tempTarget, percentage, totalBeforePercentage, cob
                 )
-                1 -> WizardConfirmFragment.newInstance(timestamp, totalInsulin, carbs)
+                1 -> WizardConfirmFragment.newInstance(timestamp, totalInsulin, carbs, details)
                 else -> throw IllegalStateException("Invalid position: $position")
             }
         }

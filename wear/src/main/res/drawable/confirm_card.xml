@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Card of the watch confirm screen: dark glass like the Halo dial, a faint vertical gradient under a 1 px top
+     hairline. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/confirm_card_hairline" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+    <item android:top="1px">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:endColor="@color/confirm_card_bottom"
+                android:startColor="@color/confirm_card_top" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+</layer-list>

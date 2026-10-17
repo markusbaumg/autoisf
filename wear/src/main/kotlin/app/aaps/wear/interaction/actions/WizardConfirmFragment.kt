@@ -8,7 +8,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
-import android.widget.TextView
 import androidx.wear.activity.ConfirmationActivity
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventWearToMobile
@@ -17,14 +16,12 @@ import app.aaps.wear.R
 import dagger.android.support.AndroidSupportInjection
 import dagger.android.support.DaggerFragment
 import io.reactivex.rxjava3.disposables.CompositeDisposable
-import java.text.DecimalFormat
 import javax.inject.Inject
 
 class WizardConfirmFragment : DaggerFragment() {
 
     @Inject lateinit var rxBus: RxBus
 
-    private val decimalFormat = DecimalFormat("0.00")
     private val disposable = CompositeDisposable()
     private var timestamp: Long = 0
     private var confirmationSent = false
@@ -33,13 +30,16 @@ class WizardConfirmFragment : DaggerFragment() {
         private const val ARG_TIMESTAMP = "timestamp"
         private const val ARG_TOTAL_INSULIN = "total_insulin"
         private const val ARG_CARBS = "carbs"
+        private const val ARG_DETAILS = "details"
 
-        fun newInstance(timestamp: Long, totalInsulin: Double, carbs: Int): WizardConfirmFragment {
+        /** [details]: the phone's display-only ConfirmDetails as JSON (ConfirmScreen.KEY_DETAILS), or null. */
+        fun newInstance(timestamp: Long, totalInsulin: Double, carbs: Int, details: String? = null): WizardConfirmFragment {
             return WizardConfirmFragment().apply {
                 arguments = Bundle().apply {
                     putLong(ARG_TIMESTAMP, timestamp)
                     putDouble(ARG_TOTAL_INSULIN, totalInsulin)
                     putInt(ARG_CARBS, carbs)
+                    putString(ARG_DETAILS, details)
                 }
             }
         }
@@ -51,7 +51,8 @@ class WizardConfirmFragment : DaggerFragment() {
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
-        return inflater.inflate(R.layout.fragment_wizard_confirm, container, false)
+        // the same confirm page as the other watch confirms (AcceptActivity): amount, carbs, top warning, button
+        return inflater.inflate(R.layout.action_confirm_ok, container, false)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -63,12 +64,16 @@ class WizardConfirmFragment : DaggerFragment() {
         val totalInsulin = args.getDouble(ARG_TOTAL_INSULIN)
         val carbs = args.getInt(ARG_CARBS)
 
-        view.findViewById<TextView>(R.id.confirm_total_insulin).text =
-            getString(R.string.wizard_insulin_format, decimalFormat.format(totalInsulin))
-        view.findViewById<TextView>(R.id.confirm_carbs).text =
-            getString(R.string.wizard_carbs_format, carbs)
+        // display only: the amount shown is the result's own (details only when they name exactly it), the tap below
+        // sends the same ActionWizardConfirmed(timestamp) as before
+        try {
+            val details = ConfirmScreen.wizardDetails(ConfirmScreen.decode(args.getString(ARG_DETAILS)), totalInsulin, carbs)
+            ConfirmScreen(requireContext()).bindConfirmPage(view, details, isError = false)
+        } catch (_: Exception) {
+            // never lose the confirm over its looks
+        }
 
-        view.findViewById<ImageView>(R.id.confirm_button).setOnClickListener { button ->
+        view.findViewById<ImageView>(R.id.confirmbutton).setOnClickListener { button ->
             if (confirmationSent) return@setOnClickListener
             confirmationSent = true
             button.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
