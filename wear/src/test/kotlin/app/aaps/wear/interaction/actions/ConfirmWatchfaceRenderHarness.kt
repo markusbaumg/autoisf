@@ -157,7 +157,8 @@ class ConfirmWatchfaceRenderHarness {
                 warnings = listOf(
                     ConfirmWarning(ConfirmWarning.W_BG_LOW, ConfirmWarning.LEVEL_DANGER, 68.0),
                     ConfirmWarning(ConfirmWarning.W_BG_FALLING, ConfirmWarning.LEVEL_DANGER, -6.0),
-                    ConfirmWarning(ConfirmWarning.W_RECENT_BOLUS, ConfirmWarning.LEVEL_CAUTION, 12.0, 0.5)
+                    ConfirmWarning(ConfirmWarning.W_RECENT_BOLUS, ConfirmWarning.LEVEL_CAUTION, 12.0, 0.5),
+                    ConfirmWarning(ConfirmWarning.W_NEAR_MAX_BOLUS, ConfirmWarning.LEVEL_CAUTION, 3.0)
                 )
             ), fontScale = 1.15f
         ),
@@ -165,6 +166,7 @@ class ConfirmWatchfaceRenderHarness {
             "fs130_wizard", bolus.copy(
                 kind = ConfirmDetails.KIND_WIZARD, label = "Abendessen", insulin = 3.85, carbs = 45, bgEffectMgdl = -173.25, carbsCovered = 50.05,
                 iobNow = 0.35, iobAfter = 4.2, deliverySeconds = 154, carbsDelayMin = 15, eCarbs = 20, eCarbsDurationH = 2, eCarbsOffsetMin = 0,
+                note = "Kohlenhydrate: 3,46U\nCOB: 12g 0,92U\nBZ: 0,52U\nIOB: -0,35U\n15' Trend: 0,10U\nProzent: 4,28U x 90% ≈ 3,85U",
                 warnings = listOf(ConfirmWarning(ConfirmWarning.W_BG_STALE, ConfirmWarning.LEVEL_CAUTION, 18.0))
             ), fontScale = 1.3f
         ),
@@ -302,6 +304,14 @@ class ConfirmWatchfaceRenderHarness {
         // (a line may only end at a newline or a normal space: Android breaks at a non-breaking space only by force)
         if ((v.tag == ConfirmScreen.TAG_VALUE || v.tag == ConfirmScreen.TAG_AMOUNT) && layout.lineCount != 1)
             textProblems += "page ${page + 1} ${v.tag} \"${v.text}\" wraps"
+        // a view given less height than its text needs (page 2 runs out of room): its last line is cut
+        if (v.height + 1 < layout.height + v.compoundPaddingTop + v.compoundPaddingBottom)
+            textProblems += "page ${page + 1} \"${v.text.toString().replace('\n', '|')}\" squeezed (height ${v.height} < ${layout.height + v.compoundPaddingTop + v.compoundPaddingBottom})"
+        // a warning chip's word (its first line) is one line: "NAHE MAX", not "NAHE MAX-" / "BOLUS"
+        if (v.tag == ConfirmScreen.TAG_CHIP) {
+            val titleEnd = v.text.indexOf('\n').let { if (it < 0) v.text.length else it }
+            if (layout.getLineEnd(0) < titleEnd) textProblems += "page ${page + 1} chip title \"${v.text.subSequence(0, titleEnd)}\" takes more than one line"
+        }
         for (i in 0 until layout.lineCount - 1) {
             val end = layout.getLineEnd(i)
             if (end > 0 && end < v.text.length && v.text[end - 1] != ' ' && v.text[end - 1] != '\n')
@@ -316,6 +326,7 @@ class ConfirmWatchfaceRenderHarness {
             if (layout.getLineWidth(i) > avail + 1f || layout.getEllipsisCount(i) > 0) textProblems += "page ${page + 1} \"$line\" cut (width ${layout.getLineWidth(i)} > $avail, ellipsis ${layout.getEllipsisCount(i)})"
             if (layout.getLineWidth(i) > MAX_LINE_PX) textProblems += "page ${page + 1} \"$line\" wider than $MAX_LINE_PX px"
             if (line.endsWith("/")) textProblems += "page ${page + 1} \"$line\" ends with '/'"
+            if (line.endsWith("·") && i < layout.lineCount - 1) textProblems += "page ${page + 1} \"$line\" ends with '·'"
             val lineTop = loc[1] + v.extendedPaddingTop + layout.getLineTop(i) + 4f
             val lineBottom = loc[1] + v.extendedPaddingTop + layout.getLineBottom(i) - 4f
             val top = maxOf(lineTop, zoneTop)

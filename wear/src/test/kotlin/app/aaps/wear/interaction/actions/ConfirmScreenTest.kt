@@ -198,9 +198,13 @@ class ConfirmScreenTest {
         assertThat(ConfirmScreen.prettyNumbers("-0,35U")).isEqualTo("−0,35\u00A0U")
         assertThat(ConfirmScreen.prettyNumbers("+20g/2h(+30m)")).isEqualTo("+20\u00A0g/2\u00A0h(+30\u00A0m)")
         assertThat(ConfirmScreen.prettyNumbers("5,5 mmol/L")).isEqualTo("5,5 mmol/L")
-        assertThat(ConfirmScreen.prettyNumbers("4,28U x 90%")).isEqualTo("4,28\u00A0U × 90%")
+        assertThat(ConfirmScreen.prettyNumbers("4,28U x 90%")).isEqualTo("4,28\u00A0U × 90\u00A0%")
         // two values apart, and the dose after the % is exact: "→", not "≈"
         assertThat(ConfirmScreen.noteValue("0g 0,00U")).isEqualTo("0\u00A0g · 0,00\u00A0U")
-        assertThat(ConfirmScreen.noteValue("4,28U x 90% ≈ 3,85U")).isEqualTo("4,28\u00A0U × 90% → 3,85\u00A0U")
+        assertThat(ConfirmScreen.noteValue("4,28U x 90% ≈ 3,85U")).isEqualTo("4,28\u00A0U × 90\u00A0% → 3,85\u00A0U")
+        // the grid's cells: one amount per value, the grams of "COB: 0g 0,00U" go to the label
+        assertThat(ConfirmScreen.noteGridCells("COB", "0g 0,00U")).isEqualTo("COB 0\u00A0g" to "0,00\u00A0U")
+        assertThat(ConfirmScreen.noteGridCells("Kohlenhydrate", "3,46U")).isEqualTo("KH" to "3,46\u00A0U")
+        assertThat(ConfirmScreen.noteGridCells("IOB", "-0,35U")).isEqualTo("IOB" to "−0,35\u00A0U")
     }
 }

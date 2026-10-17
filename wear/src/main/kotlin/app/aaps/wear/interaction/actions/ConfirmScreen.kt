@@ -20,6 +20,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.annotation.ColorRes
 import androidx.core.content.ContextCompat
+import androidx.core.widget.NestedScrollView
 import app.aaps.core.interfaces.rx.weardata.EventData
 import app.aaps.core.interfaces.rx.weardata.EventData.ConfirmDetails
 import app.aaps.core.interfaces.rx.weardata.EventData.ConfirmWarning
@@ -69,6 +70,7 @@ class ConfirmScreen(private val context: Context) {
         errorIcon.visibility = if (isError) View.VISIBLE else View.GONE
         hint.visibility = if (isError) View.GONE else View.VISIBLE
         hint.text = context.getString(if (hasAction) R.string.confirm_swipe_hint else R.string.confirm_swipe_close)
+        bindScrollCue(page)
 
         if (details == null || details.kind == ConfirmDetails.KIND_OTHER) {
             // legacy / status / error: the phone's title and text
@@ -114,11 +116,25 @@ class ConfirmScreen(private val context: Context) {
 
         sections.removeAllViews()
         effectRows(details).takeIf { it.isNotEmpty() }?.let {
-            sections.addView(card(context.getString(R.string.confirm_section_effect), it, sourceLine(details)))
+            sections.addView(card(context.getString(R.string.confirm_section_effect), it, sourceParts(details)))
         }
         timingRows(details).takeIf { it.isNotEmpty() }?.let { sections.addView(card(context.getString(R.string.confirm_section_timing), it, null)) }
         details.note.trim().takeIf { it.isNotEmpty() }?.let { sections.addView(noteCard(it)) }
         sections.visibility = if (sections.childCount > 0) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * The chevron above the page dots while the page can scroll further down: on the round screen the content below
+     * runs into the bottom shade, and the chevron says there is more to read before "Weiter zum Bestätigen".
+     */
+    private fun bindScrollCue(page: View) {
+        val scroll = page.findViewById<NestedScrollView>(R.id.message_scroll) ?: return
+        val cue = page.findViewById<View>(R.id.confirm_scroll_cue) ?: return
+        if (scroll.getTag(R.id.confirm_scroll_cue) != null) return
+        scroll.setTag(R.id.confirm_scroll_cue, true)
+        val update = { cue.visibility = if (scroll.canScrollVertically(1)) View.VISIBLE else View.INVISIBLE }
+        scroll.setOnScrollChangeListener(NestedScrollView.OnScrollChangeListener { _, _, _, _, _ -> update() })
+        scroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> update() }
     }
 
     // ------------------------------------------------------------------ page 2
@@ -189,16 +205,17 @@ class ConfirmScreen(private val context: Context) {
             // BG value or under a dose would read as mmol/L or U.
             warning.visibility = View.VISIBLE
             warning.tag = TAG_CHIP
+            // the same sizes as page 1's chips: the word 18 sp, the line below it 17 sp (not the smallest text here)
+            warning.setTextSize(TypedValue.COMPLEX_UNIT_SP, CHIP_DETAIL_SP)
             warning.text = SpannableStringBuilder().apply {
                 append(confirmChipText(d, top))
+                setSpan(RelativeSizeSpan(CHIP_WORD_SP / CHIP_DETAIL_SP), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 val more = shown.size - 1
                 if (more > 0) {
                     append("\n")
                     val start = length
                     append(if (more == 1) context.getString(R.string.confirm_warnings_one_more) else context.getString(R.string.confirm_warnings_more, more))
                     setSpan(ForegroundColorSpan(color(R.color.confirm_text_dim)), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    setSpan(RelativeSizeSpan(14f / 16f), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    setSpan(TypefaceSpan("sans-serif"), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
             }
             warning.setLineSpacing(dp(3).toFloat(), 1f)
@@ -210,7 +227,13 @@ class ConfirmScreen(private val context: Context) {
             smallButton(button, dp(if (largeFont()) 50 else 54))
             val extraLines = (second?.lines()?.size ?: 0) + (if (shown.size > 1) 1 else 0)
             if (extraLines > 1 || largeFont()) hint.visibility = View.GONE
-            else fitText(hint, dp(145), minSp = 12f, bold = false)
+            else {
+                fitText(hint, dp(145), minSp = 12f, bold = false)
+                // the chip's two lines (18 / 17 sp) leave no room for the hint's margin: closer to the button and the
+                // page dots instead of a cut last line
+                (hint.layoutParams as LinearLayout.LayoutParams).bottomMargin = 0
+                (button.layoutParams as LinearLayout.LayoutParams).apply { topMargin = dp(5); bottomMargin = dp(2) }
+            }
             amount.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
             capTextPx(amount, dp(32))
             fitText(amount, dp(130), minSp = 22f, bold = false)
@@ -369,14 +392,15 @@ class ConfirmScreen(private val context: Context) {
         }
     }
 
+    /** The parts of the estimate's source: "ISF 2,5", "IC 13" (in the user's units, number and name never apart). */
+    fun sourceParts(d: ConfirmDetails): List<String> = listOfNotNull(
+        d.isfMgdl?.takeIf { it > 0.0 }?.let { "ISF " + glucose(it, d.unitsMgdl) },
+        d.ic?.takeIf { it > 0.0 }?.let { "IC " + grams(it) }
+    )
+
     /** Where the estimate comes from: "Profil: ISF 2,5 · IC 13" (in the user's units), or null. */
-    fun sourceLine(d: ConfirmDetails): String? {
-        val parts = listOfNotNull(
-            d.isfMgdl?.takeIf { it > 0.0 }?.let { "ISF " + glucose(it, d.unitsMgdl) },
-            d.ic?.takeIf { it > 0.0 }?.let { "IC " + grams(it) }
-        )
-        return if (parts.isEmpty()) null else context.getString(R.string.confirm_source, parts.joinToString(" · "))
-    }
+    fun sourceLine(d: ConfirmDetails): String? =
+        sourceParts(d).takeIf { it.isNotEmpty() }?.let { context.getString(R.string.confirm_source, it.joinToString(" · ")) }
 
     fun timingRows(d: ConfirmDetails): List<Row> {
         val rows = ArrayList<Row>()
@@ -548,54 +572,108 @@ class ConfirmScreen(private val context: Context) {
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
     }
 
-    private fun card(header: String, rows: List<Row>, footer: String?): View = cardLayout().apply {
+    private fun card(header: String, rows: List<Row>, source: List<String>?): View = cardLayout().apply {
         addView(sectionHeader(header))
         rows.forEachIndexed { i, r -> addView(row(r, first = i == 0)) }
-        footer?.let {
-            addView(TextView(context).apply {
-                text = it
-                setTextColor(color(R.color.confirm_muted))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                gravity = Gravity.CENTER_HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
-            })
+        source?.takeIf { it.isNotEmpty() }?.let { addView(sourceFooter(it)) }
+    }
+
+    /**
+     * The card's source line: "Profil: ISF 2,5 · IC 13" on one line (14 sp, down to 12 sp); where that does not fit
+     * (large fonts) "Profil ISF 2,5" / "IC 13" on two lines, never a line ending in "·".
+     */
+    private fun sourceFooter(parts: List<String>): TextView = TextView(context).apply {
+        setTextColor(color(R.color.confirm_muted))
+        gravity = Gravity.CENTER_HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        val width = cardTextWidthPx()
+        text = context.getString(R.string.confirm_source, parts.joinToString(" · "))
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        fitText(this, width, minSp = 12f, bold = false)
+        if (Layout.getDesiredWidth(text, paint) > width * 0.97f) {
+            text = (listOf(context.getString(R.string.confirm_source_short, parts.first())) + parts.drop(1)).joinToString("\n")
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            fitText(this, width, minSp = 12f, bold = false)
         }
     }
 
     /**
-     * The wizard's calculation as a two-column grid (label right, value left, one gutter in the middle) where a line is
-     * "label: value"; other lines centred. Numbers get typographic minus signs and a space before their unit; the
-     * dose the % leads to gets "→", not "≈" (the dose is exact).
+     * The wizard's calculation as one two-column grid: every "label: value" line whose value is a single amount
+     * ("KH 3,46 U", "COB 0 g 0,00 U" as label "COB 0 g" and value "0,00 U"), the label right-aligned in a column as wide
+     * as the widest label, a 10dp gutter, the value left-aligned; the grid as a whole centred. A line with a formula
+     * ("Prozent: 4,28 U × 90 % → 3,85 U") is the card's footer under a hairline, its label and value centred. Other
+     * lines centred. Numbers get typographic minus signs and a space before their unit; the dose the % leads to gets
+     * "→", not "≈" (the dose is exact).
      */
     private fun noteCard(note: String): View = cardLayout().apply {
         addView(sectionHeader(context.getString(R.string.confirm_section_calc)))
-        note.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.all { c -> c == '_' } }.forEach { line ->
-            val split = noteSplit(line)
+        val entries = note.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.all { c -> c == '_' } }.map { line ->
+            noteSplit(line)?.let { (l, v) -> noteGridCells(l, v) } ?: (null to noteValue(line))
+        }
+        val inGrid = entries.map { (label, value) -> label != null && !value.contains('→') && !value.contains('×') }
+        // the grid's columns as measured at the size they are drawn; too wide (large fonts): smaller, down to 13 sp
+        val gutter = dp(NOTE_GUTTER_DP)
+        val avail = cardTextWidthPx() * 0.97f
+        val paint = TextPaint(noteText("", Gravity.START, R.color.confirm_text_dim).paint)
+        val minPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 13f, context.resources.displayMetrics)
+        fun widths(): Pair<Float, Float> = entries.filterIndexed { i, _ -> inGrid[i] }.let { rows ->
+            (rows.maxOfOrNull { Layout.getDesiredWidth(it.first!!, paint) } ?: 0f) to (rows.maxOfOrNull { Layout.getDesiredWidth(it.second, paint) } ?: 0f)
+        }
+        var (labelW, valueW) = widths()
+        if (labelW + gutter + valueW > avail) {
+            paint.textSize = maxOf(minPx, paint.textSize * (avail - gutter) / (labelW + valueW))
+            widths().let { labelW = it.first; valueW = it.second }
+        }
+        val grid = labelW + gutter + valueW <= avail
+        var footerStarted = false
+        entries.forEachIndexed { i, (label, value) ->
             fun centred(s: String, @ColorRes c: Int, top: Int) = noteText(s, Gravity.CENTER_HORIZONTAL, c).apply {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(top) }
             }
-            // half the card for the value, as measured at the size it is drawn
-            val column = (cardTextWidthPx() - dp(10)) / 2f * 0.97f
-            val wide = split != null && noteText(noteValue(split.second), Gravity.START, R.color.confirm_text_dim).let { Layout.getDesiredWidth(it.text, it.paint) > column }
-            if (split == null) addView(centred(noteValue(line), R.color.confirm_text_dim, 3))
-            else if (wide || split.second.length > NOTE_COLUMN_CHARS) {
-                // a long value ("4,28 U × 90 % → 3,85 U") on its own line below its label, as the card rows
-                addView(centred(noteLabel(split.first), R.color.confirm_muted, 5))
-                addView(centred(noteValue(split.second), R.color.confirm_text_dim, 0).also { fitText(it, cardTextWidthPx() - dp(4), minSp = 13f, bold = false) })
-            } else addView(
-                LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(3) }
-                    addView(noteText(noteLabel(split.first), Gravity.END, R.color.confirm_muted).apply {
-                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(5) }
-                    })
-                    addView(noteText(noteValue(split.second), Gravity.START, R.color.confirm_text_dim).apply {
-                        tag = TAG_VALUE
-                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(5) }
+            when {
+                label == null       -> addView(centred(value, R.color.confirm_text_dim, 3))
+                inGrid[i] && grid   -> addView(noteGridRow(label, value, labelW, valueW, paint.textSize))
+                else                -> {
+                    // the formula ("4,28 U × 90 % → 3,85 U") on one line, centred below its label; under a hairline
+                    // when it follows the grid
+                    if (!inGrid[i] && !footerStarted && i > 0) {
+                        footerStarted = true
+                        addView(View(context).apply {
+                            setBackgroundColor(color(R.color.confirm_card_hairline))
+                            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1).apply { topMargin = dp(9); marginStart = dp(6); marginEnd = dp(6) }
+                        })
+                    }
+                    addView(centred(label, R.color.confirm_muted, if (footerStarted) 6 else 5))
+                    addView(centred(value, R.color.confirm_text_dim, 0).also {
+                        val width = cardTextWidthPx() - dp(4)
+                        fitText(it, width, minSp = 13f, bold = false)
+                        if (Layout.getDesiredWidth(it.text, it.paint) <= width * 0.97f) it.tag = TAG_VALUE
+                        else if (value.contains(" → ")) {
+                            // large fonts: the result on its own line, "4,28 U × 90 %" / "→ 3,85 U"
+                            it.text = value.replace(" → ", "\n→ ")
+                            it.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                            fitText(it, width, minSp = 13f, bold = false)
+                        }
                     })
                 }
-            )
+            }
         }
+    }
+
+    /** One line of the calculation grid: the label right-aligned in its column, the gutter, the value left-aligned. */
+    private fun noteGridRow(label: String, value: String, labelW: Float, valueW: Float, sizePx: Float): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(3) }
+        fun cell(s: String, g: Int, @ColorRes c: Int, w: Float) = noteText(s, g, c).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, sizePx)
+            maxLines = 1
+            // the measured width and 2 px: a laid out line can come out a fraction wider than measured
+            layoutParams = LinearLayout.LayoutParams(kotlin.math.ceil(w).toInt() + 2, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        addView(cell(label, Gravity.END, R.color.confirm_muted, labelW))
+        addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(dp(NOTE_GUTTER_DP) - 4, 1) })
+        addView(cell(value, Gravity.START, R.color.confirm_text_dim, valueW).apply { tag = TAG_VALUE })
     }
 
     private fun noteText(s: String, g: Int, @ColorRes c: Int) = TextView(context).apply {
@@ -751,6 +829,9 @@ class ConfirmScreen(private val context: Context) {
         private const val CHIP_WORD_SP = 18f
         private const val CHIP_DETAIL_SP = 17f
 
+        /** The gutter between the calculation grid's label and value columns. */
+        private const val NOTE_GUTTER_DP = 10
+
         /** Up to this share of the carbs, a covered amount is shown as "≈ x von y g". */
         private const val COVERS_OF_MAX = 1.05
 
@@ -818,9 +899,20 @@ class ConfirmScreen(private val context: Context) {
         }
 
 
-        /** Typographic numbers in the phone's calculation text: "-0,35U" -> "−0,35 U", "20g" -> "20 g", " x " -> " × ". */
+        /**
+         * A calculation line's two grid cells, as shown. Two amounts in one value ("COB: 0g 0,00U") give the grams to
+         * the label: "COB 0 g" and "0,00 U", so that every value in the grid is one amount.
+         */
+        fun noteGridCells(label: String, value: String): Pair<String, String> {
+            val v = noteValue(value)
+            val m = Regex("^(\\S+\u00A0g) · (\\S+\u00A0U)$").find(v) ?: return noteLabel(label) to v
+            return noteLabel(label) + " " + m.groupValues[1] to m.groupValues[2]
+        }
+
+        /** Typographic numbers in the phone's calculation text: "-0,35U" -> "−0,35 U", "20g" -> "20 g", " x " -> " × ", "90%" -> "90 %". */
         fun prettyNumbers(s: String): String =
             s.replace(Regex("(?<![\\w])-(?=\\d)"), "−").replace(Regex("(\\d)(U|g|h|m)(?![\\w])"), "$1 $2").replace(" x ", " × ")
+                .replace(Regex("(\\d)%"), "$1\u00A0%")
 
         /**
          * A calculation value as shown: typographic numbers, two values apart ("0 g 0,00 U" -> "0 g · 0,00 U") and "→"

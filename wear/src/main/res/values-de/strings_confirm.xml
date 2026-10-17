@@ -51,8 +51,8 @@
     <string name="confirm_w_no_bg">KEIN BZ</string>
     <string name="confirm_w_no_bg_detail">Kein aktueller Wert</string>
     <string name="confirm_w_recent_bolus">NACH BOLUS</string>
-    <string name="confirm_w_near_max">NAHE MAX-BOLUS</string>
-    <string name="confirm_w_near_max_detail">Max&#160;%1$s&#160;U</string>
+    <string name="confirm_w_near_max">NAHE MAX</string>
+    <string name="confirm_w_near_max_detail">Max-Bolus&#160;%1$s&#160;U</string>
     <string name="confirm_w_constraint">BEGRENZT</string>
     <string name="confirm_w_constraint_detail">Angefragt %1$s</string>
     <string name="confirm_w_other">HINWEIS</string>
@@ -70,4 +70,6 @@
     <string name="confirm_ecarbs_when">über %1$d&#160;Std, ab in&#160;%2$d&#160;min</string>
     <string name="confirm_ecarbs_when_now">über %1$d&#160;Std, ab jetzt</string>
     <string name="confirm_ecarbs_short">+ %1$d&#160;g verzögert</string>
+    <!-- the source line on two lines (large fonts): "Profil ISF 2,5" / "IC 13" -->
+    <string name="confirm_source_short">Profil %1$s</string>
 </resources>
