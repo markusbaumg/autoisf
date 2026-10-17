@@ -29,6 +29,8 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mock
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import org.mockito.kotlin.doNothing
+import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.whenever
 import java.util.concurrent.TimeUnit
 
@@ -132,6 +134,20 @@ class PersistentNotificationPluginTest : TestBase() {
         rxBus.send(EventPreferenceChange(BooleanKey.GeneralSimpleMode.key))
         io.triggerActions()
         verify(dummyServiceHelper, times(3)).startService(context)
+    }
+
+    @Test fun `an exception in one rebuild does not stop the next`() {
+        val failure = IllegalStateException("startForegroundService not allowed")
+        doThrow(failure).doNothing().whenever(dummyServiceHelper).startService(context)
+        rxBus.send(EventRefreshOverview("fails"))
+        io.triggerActions()
+        verify(dummyServiceHelper, times(1)).startService(context)
+        verify(fabricPrivacy, times(1)).logException(failure)
+        advance(PersistentNotificationPlugin.UPDATE_WINDOW_MS)
+        rxBus.send(EventRefreshOverview("next"))
+        io.triggerActions()
+        verify(dummyServiceHelper, times(2)).startService(context)
+        verify(fabricPrivacy, times(1)).logException(failure)
     }
 
     @Test fun `the preference keys the text depends on are pinned`() {

@@ -23,7 +23,8 @@ import app.aaps.plugins.sync.nsShared.events.EventNSClientUpdateGuiStatus
 import app.aaps.plugins.sync.nsShared.extensions.onlyNsIdAdded
 import app.aaps.plugins.sync.nsclientV3.keys.NsclientBooleanKey
 import app.aaps.plugins.sync.nsclientV3.keys.NsclientLongKey
-import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -96,13 +97,38 @@ class DataSyncSelectorV3 @Inject constructor(
      * also upstream's retry path for failed uploads. Worst case after a process death mid-walk:
      * up to [CONFIRM_EVERY] - 1 already skipped records are skipped again, without a network call.
      * The confirmLast*IdIfGreater functions keep writing at once.
+     *
+     * Every pointer write of a walk keeps the old confirmLast*IdIfGreater semantics: it only moves
+     * the stored pointer forward. And it is dropped when a Full sync happened since the walk read
+     * the pointer ([fullSyncGeneration] changed) or the stored value moved below the value the
+     * pending pointer was built on. Check and write run under [pointerLock], as does
+     * [resetToNextFullSync], so a Full sync cannot slip in between and be overwritten.
+     *
+     * The walk state ([pendingPointers], [pendingConfirms], [walkUploaded], [readGenerations]) is
+     * owned by one walk at a time: [doUpload] holds [walkMutex] for the whole walk.
      */
-    private val pendingPointers = ConcurrentHashMap<NsclientLongKey, PendingPointer>()
+    private val pendingPointers = HashMap<NsclientLongKey, PendingPointer>()
     private var pendingConfirms = 0
     private var walkUploaded = false
 
-    /** A pointer that moved on in memory: [id], built on the stored value [storedBase]. */
-    private class PendingPointer(val storedBase: Long, val id: Long)
+    /** The [fullSyncGeneration] at which the walk last read each pointer (see lastSyncedId). */
+    private val readGenerations = HashMap<NsclientLongKey, Long>()
+
+    /** Guards the pointer check-and-write against [resetToNextFullSync] (called from the UI). */
+    private val pointerLock = Any()
+
+    /** Incremented by every [resetToNextFullSync]; a pending or uploaded pointer from an older generation is stale. */
+    private var fullSyncGeneration = 0L
+
+    /** One sync walk at a time: overlapping [doUpload] calls wait for the running one. */
+    private val walkMutex = Mutex()
+
+    /** A pointer that moved on in memory: [id], built on the stored value [storedBase] in Full sync [generation]. */
+    private class PendingPointer(val storedBase: Long, val id: Long, val generation: Long)
+
+    /** True if [pending] was overtaken by a Full sync or the stored value moved below its base. Under [pointerLock]. */
+    private fun isStale(pending: PendingPointer, stored: Long) =
+        pending.generation != fullSyncGeneration || stored < pending.storedBase
 
     /**
      * The id a walk continues from: the pending one, unless the stored value moved backwards since
@@ -111,18 +137,23 @@ class DataSyncSelectorV3 @Inject constructor(
      * record was written at once.
      */
     private fun lastSyncedId(key: NsclientLongKey): Long {
-        val stored = preferences.get(key)
-        val pending = pendingPointers[key] ?: return stored
-        if (stored < pending.storedBase) {
-            pendingPointers.remove(key)
-            return stored
+        synchronized(pointerLock) {
+            readGenerations[key] = fullSyncGeneration
+            val stored = preferences.get(key)
+            val pending = pendingPointers[key] ?: return stored
+            if (isStale(pending, stored)) {
+                pendingPointers.remove(key)
+                return stored
+            }
+            return maxOf(pending.id, stored)
         }
-        return pending.id
     }
 
     private fun resetPointer(key: NsclientLongKey) {
-        pendingPointers.remove(key)
-        preferences.put(key, 0)
+        synchronized(pointerLock) {
+            pendingPointers.remove(key)
+            preferences.put(key, 0)
+        }
     }
 
     /** The client for an upload; the record handled next was not a local skip. */
@@ -132,93 +163,116 @@ class DataSyncSelectorV3 @Inject constructor(
     }
 
     private fun confirmInWalk(key: NsclientLongKey, lastSynced: Long) {
-        val uploaded = walkUploaded
-        walkUploaded = false
-        val current = lastSyncedId(key)
-        if (lastSynced <= current) return
-        if (uploaded) {
-            // written at once, as before; it covers the skipped records before it as well
-            pendingPointers.remove(key)
-            pendingConfirms = 0
-            preferences.put(key, lastSynced)
-            return
+        synchronized(pointerLock) {
+            val uploaded = walkUploaded
+            walkUploaded = false
+            // A Full sync since this record was read: drop it, the next round restarts from the stored value
+            if (readGenerations[key] != fullSyncGeneration) {
+                pendingPointers.remove(key)
+                return
+            }
+            val stored = preferences.get(key)
+            val pending = pendingPointers[key]?.takeUnless { isStale(it, stored) }
+            if (pending == null) pendingPointers.remove(key)
+            if (lastSynced <= maxOf(stored, pending?.id ?: stored)) return
+            if (uploaded) {
+                // written at once, as before (stored < lastSynced checked above); it covers the skipped records before it as well
+                pendingPointers.remove(key)
+                pendingConfirms = 0
+                preferences.put(key, lastSynced)
+                return
+            }
+            pendingPointers[key] = PendingPointer(pending?.storedBase ?: stored, lastSynced, fullSyncGeneration)
+            if (++pendingConfirms >= CONFIRM_EVERY) flushPointers()
         }
-        pendingPointers[key] = PendingPointer(pendingPointers[key]?.storedBase ?: current, lastSynced)
-        if (++pendingConfirms >= CONFIRM_EVERY) flushPointers()
     }
 
-    /** Writes the pending pointers to the preferences, unless the stored value moved backwards meanwhile (see lastSyncedId). */
+    /**
+     * Writes the pending pointers to the preferences: only forward (id > stored), and not when a
+     * Full sync happened or the stored value moved backwards meanwhile (see lastSyncedId).
+     */
     @VisibleForTesting internal fun flushPointers() {
-        pendingConfirms = 0
-        walkUploaded = false
-        if (pendingPointers.isEmpty()) return
-        val pointers = pendingPointers.toMap()
-        pendingPointers.clear()
-        pointers.forEach { (key, pending) -> if (preferences.get(key) >= pending.storedBase) preferences.put(key, pending.id) }
+        synchronized(pointerLock) {
+            pendingConfirms = 0
+            walkUploaded = false
+            if (pendingPointers.isEmpty()) return
+            val pointers = pendingPointers.toMap()
+            pendingPointers.clear()
+            pointers.forEach { (key, pending) ->
+                val stored = preferences.get(key)
+                if (!isStale(pending, stored) && pending.id > stored) preferences.put(key, pending.id)
+            }
+        }
     }
 
     override suspend fun doUpload() {
-        rxBus.send(EventNSClientUpdateGuiStatus())
-        if ((config.AAPSCLIENT || preferences.get(BooleanKey.NsClientUploadData)) && !isPaused) {
-            queueCounter.bolusesRemaining = (persistenceLayer.getLastBolusId() ?: 0L) - preferences.get(NsclientLongKey.BolusLastSyncedId)
-            queueCounter.carbsRemaining = (persistenceLayer.getLastCarbsId() ?: 0L) - preferences.get(NsclientLongKey.CarbsLastSyncedId)
-            queueCounter.bcrRemaining = (persistenceLayer.getLastBolusCalculatorResultId() ?: 0L) - preferences.get(NsclientLongKey.BolusCalculatorLastSyncedId)
-            queueCounter.ttsRemaining = (persistenceLayer.getLastTemporaryTargetId() ?: 0L) - preferences.get(NsclientLongKey.TemporaryTargetLastSyncedId)
+        walkMutex.withLock {
+            rxBus.send(EventNSClientUpdateGuiStatus())
+            if ((config.AAPSCLIENT || preferences.get(BooleanKey.NsClientUploadData)) && !isPaused) {
+                queueCounter.bolusesRemaining = (persistenceLayer.getLastBolusId() ?: 0L) - preferences.get(NsclientLongKey.BolusLastSyncedId)
+                queueCounter.carbsRemaining = (persistenceLayer.getLastCarbsId() ?: 0L) - preferences.get(NsclientLongKey.CarbsLastSyncedId)
+                queueCounter.bcrRemaining = (persistenceLayer.getLastBolusCalculatorResultId() ?: 0L) - preferences.get(NsclientLongKey.BolusCalculatorLastSyncedId)
+                queueCounter.ttsRemaining = (persistenceLayer.getLastTemporaryTargetId() ?: 0L) - preferences.get(NsclientLongKey.TemporaryTargetLastSyncedId)
 // NSCv3 doesn't support food update
 //            queueCounter.foodsRemaining = (persistenceLayer.getLastFoodId() ?: 0L) - preferences.get(NsclientLongKey.FoodLastSyncedId)
-            queueCounter.gvsRemaining = (persistenceLayer.getLastGlucoseValueId() ?: 0L) - preferences.get(NsclientLongKey.GlucoseValueLastSyncedId)
-            queueCounter.tesRemaining = (persistenceLayer.getLastTherapyEventId() ?: 0L) - preferences.get(NsclientLongKey.TherapyEventLastSyncedId)
-            queueCounter.dssRemaining = (persistenceLayer.getLastDeviceStatusId() ?: 0L) - preferences.get(NsclientLongKey.DeviceStatusLastSyncedId)
-            queueCounter.tbrsRemaining = (persistenceLayer.getLastTemporaryBasalId() ?: 0L) - preferences.get(NsclientLongKey.TemporaryBasalLastSyncedId)
-            queueCounter.ebsRemaining = (persistenceLayer.getLastExtendedBolusId() ?: 0L) - preferences.get(NsclientLongKey.ExtendedBolusLastSyncedId)
-            queueCounter.pssRemaining = (persistenceLayer.getLastProfileSwitchId() ?: 0L) - preferences.get(NsclientLongKey.ProfileSwitchLastSyncedId)
-            queueCounter.epssRemaining = (persistenceLayer.getLastEffectiveProfileSwitchId() ?: 0L) - preferences.get(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
-            queueCounter.rmsRemaining = (persistenceLayer.getLastRunningModeId() ?: 0L) - preferences.get(NsclientLongKey.RunningModeLastSyncedId)
-            rxBus.send(EventNSClientUpdateGuiQueue())
-            try {
-                processChangedGlucoseValues()
-                processChangedBoluses()
-                processChangedCarbs()
-                processChangedBolusCalculatorResults()
-                processChangedTemporaryBasals()
-                processChangedExtendedBoluses()
-                processChangedProfileSwitches()
-                processChangedEffectiveProfileSwitches()
-                processChangedTempTargets()
+                queueCounter.gvsRemaining = (persistenceLayer.getLastGlucoseValueId() ?: 0L) - preferences.get(NsclientLongKey.GlucoseValueLastSyncedId)
+                queueCounter.tesRemaining = (persistenceLayer.getLastTherapyEventId() ?: 0L) - preferences.get(NsclientLongKey.TherapyEventLastSyncedId)
+                queueCounter.dssRemaining = (persistenceLayer.getLastDeviceStatusId() ?: 0L) - preferences.get(NsclientLongKey.DeviceStatusLastSyncedId)
+                queueCounter.tbrsRemaining = (persistenceLayer.getLastTemporaryBasalId() ?: 0L) - preferences.get(NsclientLongKey.TemporaryBasalLastSyncedId)
+                queueCounter.ebsRemaining = (persistenceLayer.getLastExtendedBolusId() ?: 0L) - preferences.get(NsclientLongKey.ExtendedBolusLastSyncedId)
+                queueCounter.pssRemaining = (persistenceLayer.getLastProfileSwitchId() ?: 0L) - preferences.get(NsclientLongKey.ProfileSwitchLastSyncedId)
+                queueCounter.epssRemaining = (persistenceLayer.getLastEffectiveProfileSwitchId() ?: 0L) - preferences.get(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
+                queueCounter.rmsRemaining = (persistenceLayer.getLastRunningModeId() ?: 0L) - preferences.get(NsclientLongKey.RunningModeLastSyncedId)
+                rxBus.send(EventNSClientUpdateGuiQueue())
+                try {
+                    processChangedGlucoseValues()
+                    processChangedBoluses()
+                    processChangedCarbs()
+                    processChangedBolusCalculatorResults()
+                    processChangedTemporaryBasals()
+                    processChangedExtendedBoluses()
+                    processChangedProfileSwitches()
+                    processChangedEffectiveProfileSwitches()
+                    processChangedTempTargets()
 // NSCv3 doesn't support food update
 //            processChangedFoods()
-                processChangedTherapyEvents()
-                processChangedDeviceStatuses()
-                processChangedRunningModes()
-                processChangedProfileStore()
-            } finally {
-                flushPointers()
+                    processChangedTherapyEvents()
+                    processChangedDeviceStatuses()
+                    processChangedRunningModes()
+                    processChangedProfileStore()
+                } finally {
+                    flushPointers()
+                }
+                storeDataForDb.updateNsIds()
+                aapsLogger.debug(LTag.NSCLIENT, "Remaining: $queueCounter")
             }
-            storeDataForDb.updateNsIds()
-            aapsLogger.debug(LTag.NSCLIENT, "Remaining: $queueCounter")
+            rxBus.send(EventNSClientUpdateGuiStatus())
         }
-        rxBus.send(EventNSClientUpdateGuiStatus())
     }
 
     override fun resetToNextFullSync() {
-        pendingPointers.clear()
-        preferences.remove(NsclientLongKey.GlucoseValueLastSyncedId)
-        preferences.remove(NsclientLongKey.TemporaryBasalLastSyncedId)
-        preferences.remove(NsclientLongKey.TemporaryTargetLastSyncedId)
-        preferences.remove(NsclientLongKey.ExtendedBolusLastSyncedId)
-        preferences.remove(NsclientLongKey.FoodLastSyncedId)
-        preferences.remove(NsclientLongKey.BolusLastSyncedId)
-        preferences.remove(NsclientLongKey.CarbsLastSyncedId)
-        preferences.remove(NsclientLongKey.BolusCalculatorLastSyncedId)
-        preferences.remove(NsclientLongKey.TherapyEventLastSyncedId)
-        preferences.remove(NsclientLongKey.ProfileSwitchLastSyncedId)
-        preferences.remove(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
-        preferences.remove(NsclientLongKey.RunningModeLastSyncedId)
-        preferences.remove(NsclientLongKey.ProfileStoreLastSyncedId)
+        synchronized(pointerLock) {
+            // a running walk sees the new generation and neither writes its pending nor its next uploaded pointer back
+            fullSyncGeneration++
+            pendingPointers.clear()
+            preferences.remove(NsclientLongKey.GlucoseValueLastSyncedId)
+            preferences.remove(NsclientLongKey.TemporaryBasalLastSyncedId)
+            preferences.remove(NsclientLongKey.TemporaryTargetLastSyncedId)
+            preferences.remove(NsclientLongKey.ExtendedBolusLastSyncedId)
+            preferences.remove(NsclientLongKey.FoodLastSyncedId)
+            preferences.remove(NsclientLongKey.BolusLastSyncedId)
+            preferences.remove(NsclientLongKey.CarbsLastSyncedId)
+            preferences.remove(NsclientLongKey.BolusCalculatorLastSyncedId)
+            preferences.remove(NsclientLongKey.TherapyEventLastSyncedId)
+            preferences.remove(NsclientLongKey.ProfileSwitchLastSyncedId)
+            preferences.remove(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
+            preferences.remove(NsclientLongKey.RunningModeLastSyncedId)
+            preferences.remove(NsclientLongKey.ProfileStoreLastSyncedId)
 
-        val lastDeviceStatusDbId = persistenceLayer.getLastDeviceStatusId()
-        if (lastDeviceStatusDbId != null) preferences.put(NsclientLongKey.DeviceStatusLastSyncedId, lastDeviceStatusDbId)
-        else preferences.remove(NsclientLongKey.DeviceStatusLastSyncedId)
+            val lastDeviceStatusDbId = persistenceLayer.getLastDeviceStatusId()
+            if (lastDeviceStatusDbId != null) preferences.put(NsclientLongKey.DeviceStatusLastSyncedId, lastDeviceStatusDbId)
+            else preferences.remove(NsclientLongKey.DeviceStatusLastSyncedId)
+        }
     }
 
     @OpenForTesting

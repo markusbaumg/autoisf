@@ -116,8 +116,15 @@ class PersistentNotificationPlugin @Inject constructor(
     }
 
     private fun triggerNotificationUpdate() {
-        updateNotification()
-        dummyServiceHelper.startService(context)
+        // An exception reaching the subscriber would dispose the merged, throttled stream and stop
+        // every later rebuild (e.g. ForegroundServiceStartNotAllowedException from startService
+        // while the app is in the background). Log it and keep the stream alive.
+        try {
+            updateNotification()
+            dummyServiceHelper.startService(context)
+        } catch (e: Exception) {
+            fabricPrivacy.logException(e)
+        }
     }
 
     private fun updateNotification() {
