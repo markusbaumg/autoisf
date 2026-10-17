@@ -72,3 +72,6 @@ No changes to dosing math, limits or constraints. Phone and watch APKs must be i
 - Battery: the watch no longer asks all 16 complications to update on every reading (was 32 broadcasts/min).
 - Safety: confirm details read the profile ISF without running AutoISF (no loop-input side effect); trend only for a
   current reading. Renders: `renders/polish-2026-10-17/`.
+
+- Glass round 8 (4aab6ee178, built, watch-only update pending): sparkline never clamps the current reading, recent 30 min or forecast; older off-scale history shown as faint "^"; "<2,2" low sentinel; even card padding. Panel 8.5 x3. Plus: watch resend requests debounced (3 s), cancelled Glass bake not logged as error.
+- Live screenshots after the 12:36 install in screenshots/ (orbit_live_1239, glass_live_1239, halo_live_1240, settings_bolus_checkbox_1239).
