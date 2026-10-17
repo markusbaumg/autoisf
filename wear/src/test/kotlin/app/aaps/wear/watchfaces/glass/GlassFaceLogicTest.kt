@@ -348,7 +348,7 @@ class GlassFaceLogicTest {
         // UX round 3 (26 px footer): three runs no longer fit, KH (keep 40) goes before the basal (50) and the TT (90)
         assertThat(tt.map { it.text }).containsExactly("TT 5,6", "0,85 U/h").inOrder()
         assertThat(tt[0].tone).isEqualTo(Tone.TT)
-        assertThat(footer(cob = "20(30)g").map { it.text }).contains("KH 20(30)g")       // shown as sent
+        assertThat(footer(cob = "20(30)g", basal = "").map { it.text }).contains("KH 20(30)g")       // shown as sent
         assertThat(footer(cob = "--g").map { it.text }).contains("KH --")
         assertThat(footer(ttLevel = 1).map { it.kind }).doesNotContain(RunKind.TT)          // APS-adjusted target: hidden
         assertThat(footer(basal = "0%").first().tone).isEqualTo(Tone.WARN)
@@ -368,7 +368,8 @@ class GlassFaceLogicTest {
 
     @Test fun footerLowerWarningsLeadTheRuns() {
         val res = footer(warnings = listOf(Warning.RES_CRITICAL), res = "5U", resLevel = 2)
-        assertThat(res.map { it.text }).containsExactly("Reservoir 5U", "0,85 U/h").inOrder()
+        // Glass/Orbit UX round 3: the footer sits lower (188 px chord), the basal run goes before the warning shrinks
+        assertThat(res.map { it.text }).containsExactly("Reservoir 5U")
         assertThat(res[0].tone).isEqualTo(Tone.ALERT)
         val batt = footer(warnings = listOf(Warning.PHONE_BATTERY), batt = "18", battLevel = 0)
         assertThat(batt[0].text).isEqualTo("Tel 18 %")
@@ -377,6 +378,19 @@ class GlassFaceLogicTest {
         assertThat(footer(warnings = listOf(Warning.RES_LOW), res = "18U", resLevel = 1)[0].tone).isEqualTo(Tone.WARN)
         // W10 is a glyph only
         assertThat(footer(warnings = listOf(Warning.PHONE_LOST_FRESH)).map { it.text }).containsExactly("0,85 U/h")
+    }
+
+    @Test fun badLoopIsSaidOnceAndBasalOnlyWhenItMatters() {
+        // Glass/Orbit UX round 3: interactive, the red loop glyph + age own a bad loop; the next warning takes the footer
+        assertThat(GlassFaceLogic.footerWarnings(listOf(Warning.LOOP_BAD, Warning.RES_CRITICAL), ambient = false))
+            .containsExactly(Warning.RES_CRITICAL)
+        assertThat(GlassFaceLogic.footerWarnings(listOf(Warning.LOOP_OFF), ambient = false)).containsExactly(Warning.LOOP_OFF)
+        assertThat(GlassFaceLogic.footerWarnings(listOf(Warning.LOOP_BAD), ambient = true)).containsExactly(Warning.LOOP_BAD)
+        assertThat(GlassFaceLogic.footerWarnings(listOf(Warning.NO_DATA, Warning.LOOP_BAD), ambient = false)).isEmpty()
+        assertThat(GlassFaceLogic.basalInFooter(true, "0,85U/h")).isFalse()
+        assertThat(GlassFaceLogic.basalInFooter(true, "120%")).isTrue()
+        assertThat(GlassFaceLogic.basalInFooter(true, "0,00U/h")).isTrue()
+        assertThat(GlassFaceLogic.basalInFooter(false, "120%")).isFalse()
     }
 
     @Test fun ambientKeepsW1ToW6AndTtOnly() {
@@ -397,7 +411,7 @@ class GlassFaceLogicTest {
         // UX round 3 (26 px footer): every info run goes before the warning would shrink, TT last
         assertThat(roboto.map { it.kind }).containsExactly(RunKind.WARNING)
         assertThat(GlassFaceLogic.lineWidth(roboto, sep, this.roboto)).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
-        val ttOnly = footer(warnings = listOf(Warning.RES_CRITICAL), res = "5U", resLevel = 2, tt = "5,6", ttLevel = 2, cob = "20(30)g", basal = "12,35U/h", m = this.roboto)
+        val ttOnly = footer(warnings = listOf(Warning.RES_CRITICAL), res = "5U", resLevel = 2, tt = "6", ttLevel = 2, cob = "20(30)g", basal = "12,35U/h", m = this.roboto)
         assertThat(ttOnly.map { it.kind }).containsExactly(RunKind.WARNING, RunKind.TT).inOrder()
         // at a wider worst-case font even the TT goes, the warning stays
         val wide = runs(measure)
@@ -427,17 +441,19 @@ class GlassFaceLogicTest {
         // real German / French status texts at a worst-case 10 px per character (at FOOTER_SIZE)
         // Glass/Orbit UX round 1: the footer budget is the bezel-safe chord (216 px); the French "Téléphone déconnecté ·
         // 23 h" (270 px) is now cut at the 22 px floor, its age kept (see below)
+        // Glass/Orbit UX round 3: the lower footer's chord is 188 px; at this worst-case font the 25-character texts are
+        // cut at the floor, their age always kept (W2/W3 sit in the card's META row on the face anyway)
         for (s in listOf("Telefon getrennt · 23 Std", "Keine Daten · 3 Std", "Pas de données · 23 h", "Boucle désactivée")) {
             val (size, drawn, width) = fitOwner(s)
             assertThat(size).isAtLeast(GlassFaceLogic.FOOTER_MIN_SIZE)
             assertThat(width).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH + 0.01f)
-            assertThat(drawn).isEqualTo(s) // these fit without cutting
+            if (s.contains(" · ")) assertThat(drawn).endsWith(" · " + s.substringAfterLast(" · ")) else assertThat(drawn).isEqualTo(s)
         }
         // "Kein Profil" = 110 px: full size
         assertThat(fitOwner("Kein Profil").first).isEqualTo(GlassFaceLogic.FOOTER_SIZE)
-        // "Telefon getrennt · 23 Std" = 250 px: shrinks, above the floor
-        assertThat(fitOwner("Telefon getrennt · 23 Std").first)
-            .isWithin(0.01f).of(GlassFaceLogic.FOOTER_SIZE * GlassFaceLogic.FOOTER_MAX_WIDTH / 250f)
+        // "Keine Daten · 3 Std" = 190 px: shrinks, above the floor
+        assertThat(fitOwner("Keine Daten · 3 Std").first)
+            .isWithin(0.01f).of(GlassFaceLogic.FOOTER_SIZE * GlassFaceLogic.FOOTER_MAX_WIDTH / 190f)
         val fr = fitOwner("Téléphone déconnecté · 23 h")
         assertThat(fr.second).endsWith(" · 23 h")
         assertThat(fr.first).isEqualTo(GlassFaceLogic.FOOTER_MIN_SIZE)
@@ -490,7 +506,7 @@ class GlassFaceLogicTest {
 
     @Test fun worstCaseStatusStringsFit() {
         // German worst cases fit the slot at the floor or above, never cut
-        for (s in listOf("Telefon getrennt · 59′", "Keine Daten · 3 Std", "Warte auf AAPS", "Reservoir 120U  ·  12,35 U/h")) {
+        for (s in listOf("Telefon getrennt · 59′", "Keine Daten · 3 Std", "Warte auf AAPS", "Reservoir 120U  ·  120%")) {
             val fit = GlassFaceLogic.fitFooter(listOf(GlassFaceLogic.Run(s, RunKind.WARNING, Tone.ALERT, 100)), sep, roboto)
             assertThat(fit.size).isAtLeast(GlassFaceLogic.FOOTER_MIN_SIZE)
             assertThat(fit.runs.single().text).isEqualTo(s)
@@ -538,10 +554,10 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(128f)
         assertThat(GlassFaceLogic.SPARK_X0_BALL).isGreaterThan(GlassFaceLogic.BALL_X + GlassFaceLogic.BALL_R + 8f)
         // UX round 4: values stay 4 px inside the plot (the line never meets the card or the pills)
-        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(338f)
-        assertThat(GlassFaceLogic.sparkY(220.0)).isEqualTo(298f)
-        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(338f)
-        assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(298f)
+        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(339f)
+        assertThat(GlassFaceLogic.sparkY(220.0)).isEqualTo(301f)
+        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(339f)
+        assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(301f)
         // Glass/Orbit UX round 2: the log range adapts to the visible values, a very high or urgent low trace is never
         // clamped flat at the edge; the default 60-220 keeps the 70-180 band at about 70 % of the plot
         assertThat(GlassFaceLogic.sparkRange(Double.NaN, Double.NaN)).isEqualTo(60.0 to 220.0)
@@ -550,10 +566,10 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkRange(50.0, 300.0)).isEqualTo(45.0 to 320.0)
         val (lo, hi) = GlassFaceLogic.sparkRange(100.0, 400.0)
         assertThat(GlassFaceLogic.sparkY(399.0, lo, hi)).isGreaterThan(GlassFaceLogic.sparkY(400.0, lo, hi))
-        assertThat(GlassFaceLogic.sparkY(400.0, lo, hi)).isEqualTo(298f)
-        val band = (GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)) / (338f - 298f)
+        assertThat(GlassFaceLogic.sparkY(400.0, lo, hi)).isEqualTo(301f)
+        val band = (GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)) / (339f - 301f)
         assertThat(band).isWithin(0.03f).of(0.73f)
-        assertThat((GlassFaceLogic.sparkY(70.0, lo, hi) - GlassFaceLogic.sparkY(180.0, lo, hi)) / (338f - 298f)).isAtLeast(0.45f)
+        assertThat((GlassFaceLogic.sparkY(70.0, lo, hi) - GlassFaceLogic.sparkY(180.0, lo, hi)) / (339f - 301f)).isAtLeast(0.45f)
         assertThat(GlassFaceLogic.SPARK_Y1 - GlassFaceLogic.SPARK_Y0).isAtLeast(48f)
         assertThat(GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)).isAtLeast(27f)
         assertThat(GlassFaceLogic.SPARK_Y0 - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
@@ -732,8 +748,8 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.pillRowFrame(ballShown = false)).isEqualTo(225f to GlassFaceLogic.PILL_ROW_MAX_WIDTH)
         val (c, w) = GlassFaceLogic.pillRowFrame(ballShown = true)
         assertThat(c - w / 2f).isAtLeast(GlassFaceLogic.BALL_HIT_RIGHT + 8f)
-        // Glass/Orbit UX round 1: both ends 16 px or more inside the round edge at the row's lower edge (y 372)
-        val half = GlassFaceLogic.chordWidth(372f, 16f) / 2f
+        // Glass/Orbit UX round 3: both ends 16 px or more inside the round edge at the row's lower edge (y 384)
+        val half = GlassFaceLogic.chordWidth(GlassFaceLogic.PILL_Y + 12f, 16f) / 2f
         assertThat(c + w / 2f).isAtMost(225f + half)
         assertThat(GlassFaceLogic.PILL_ROW_MAX_WIDTH / 2f).isAtMost(half)
     }

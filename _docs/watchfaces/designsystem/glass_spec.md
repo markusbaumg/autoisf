@@ -602,3 +602,15 @@ Unit-test rows: every line of the §7 test table, plus `ballVerdict(LOW, DOWN45)
 - **Q2** Should the 54 / 250 mg/dL limits (urgent low / very high) become watch settings (gap G1)?
 - **Q3** (resolved by F11) The stale hero age is grey while W2/W3 owns the slot. Confirm.
 - **Q4** Should REFUSED_LOW_BG also cover a plain low that is not falling (stricter), or stay as designed (falling only)?
+
+## 16. Implementation amendments, Glass/Orbit UX round 3
+
+These override the sections above where they differ (code: `GlassFaceLogic`, `GlassWatchface`).
+
+- **Five text tiers, as on Halo:** time, date, BG, delta, then the stats row. The footer line (y 402, 188 px chord) appears only when it has something to say: a non-numeric W-level warning, a TT, or a non-default basal (TBR % or a zero rate). A healthy reservoir and phone battery are no longer always-on runs.
+- **One owner per fact:** interactive, a bad loop is said only by the red loop glyph and its red age. The footer keeps "Loop aus", "Kein Profil" and "Reservoir 5 U". Ambient keeps the "Loop 23′" footer.
+- **Sparkline:** no plate. In range, the band is a 10 % tint with no hairlines. Values sit 9 px inside y 292..348. The trace is coloured by the value zone of each point (amber / green / red, never the insulin blue), and the history fades from 45 % to 100 %.
+- **Stats row:** y 372 (12 px lower), x 90..360.
+- **Trend chip:** a 12 % disc with a 1 px rim at 30 % of the state colour.
+- **Card:** the neutral frost is 30 % fainter (top 24, bottom 8).
+- **Date:** 22 px in TXT2, at y 99.

@@ -6,10 +6,12 @@ import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ComposeShader
 import android.graphics.DashPathEffect
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PorterDuff
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
@@ -538,7 +540,8 @@ class GlassWatchface : WatchFace() {
                 loopValueColour = when (loopHealth) {
                     LoopHealth.WARN    -> WARN_COL
                     LoopHealth.NEUTRAL -> TXT2
-                    else               -> TXT1 // OK, and BAD: the footer carries the alert (rule 3.3)
+                    LoopHealth.BAD     -> ALERT_COL // Glass/Orbit UX round 3: the glyph and its age say it once (no footer line)
+                    else               -> TXT1
                 }
             }
         }
@@ -569,7 +572,7 @@ class GlassWatchface : WatchFace() {
         loopMuted = GlassFaceLogic.loopGlyphMuted(owner)
         if (loopMuted) loopValueColour = TXT2
         val footerInput = GlassFaceLogic.FooterInput(
-            warnings = GlassFaceLogic.footerWarnings(warnings),
+            warnings = GlassFaceLogic.footerWarnings(warnings, ambient = false),
             dataAgeMinutes = GlassFaceLogic.ageMinutes(data.lastUpdateTimestamp, now),
             bgAgeMinutes = age,
             loopAgeMinutes = loopAge,
@@ -581,14 +584,16 @@ class GlassWatchface : WatchFace() {
             phoneBattery = st.battery, phoneBatteryLevel = st.batteryLevel,
             showTt = sp.getBoolean(R.string.key_show_temp_target, true),
             showCob = false, // UX round 2: KH has its own pill
-            showBasal = sp.getBoolean(R.string.key_show_temp_basal, true),
+            showBasal = GlassFaceLogic.basalInFooter(sp.getBoolean(R.string.key_show_temp_basal, true), if (noProfile) "" else st.currentBasal),
             showBgi = sp.getBoolean(R.string.key_show_bgi, false),
-            showReservoir = sp.getBoolean(R.string.key_show_reservoir_level, true),
-            showPhoneBattery = sp.getBoolean(R.string.key_show_uploader_battery, true)
+            // Glass/Orbit UX round 3 (five tiers, as Halo): a healthy reservoir or phone battery is no longer an always-on
+            // footer run ("Tel 78 %" took the basal's place); low and critical levels still come as W7-W9 warnings
+            showReservoir = false,
+            showPhoneBattery = false
         )
         footer = if (firstStart && warnings.isEmpty()) emptyList() else layoutFooter(footerInput, footerX)
         footerSize = lastFooterSize
-        footerAmbient = layoutFooter(footerInput.copy(ambient = true), footerAmbientX)
+        footerAmbient = layoutFooter(footerInput.copy(ambient = true, warnings = GlassFaceLogic.footerWarnings(warnings, ambient = true)), footerAmbientX)
         footerAmbientSize = lastFooterSize
 
         // Glass/Orbit UX round 2 (as Halo): a W2/W3 owner is said ONCE, in the card's META row under the struck digits
@@ -914,10 +919,14 @@ class GlassWatchface : WatchFace() {
 
         // trend chip (a struck reading has none: its age sits under the digits, in alert)
         if (showChip) {
-            // Glass/Orbit UX round 2: a filled disc (18 % of the state colour, no ring: the ring read as a button) and a
-            // 4 px arrow with the weight of the bold digits
-            fill.reset(); fill.isAntiAlias = true; fill.color = withAlpha(rangeColour, 46)
+            // Glass/Orbit UX round 2: a filled disc and a 4 px arrow with the weight of the bold digits.
+            // Glass/Orbit UX round 3: the 18 % disc read muddy; a fainter 12 % disc with a crisp 1 px rim at 30 % of the
+            // state colour (as the ambient chip, which looked cleaner)
+            fill.reset(); fill.isAntiAlias = true; fill.color = withAlpha(rangeColour, 30)
             canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, fill)
+            stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1f
+            stroke.color = withAlpha(rangeColour, 77)
+            canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R - 0.5f, stroke)
             drawArrow(canvas, rangeColour, aa = true, maxWidth = 4.6f)
         }
 
@@ -930,21 +939,19 @@ class GlassWatchface : WatchFace() {
         }, aa = true)
         if (link == PhoneLink.LOST_FRESH) drawPhoneOff(canvas, min(metaX + metaWidth + 20f, HERO_X1 - 20f), hero.metaY, TXT2)
 
-        // sparkline (Glass/Orbit UX round 2): the plot area as a very faint plate (an out-of-band trace keeps a
-        // container), the target range as a 10 % tint between two hairlines (a solid band read as a progress bar);
-        // green only while in range, neutral otherwise
+        // sparkline (Glass/Orbit UX round 3): no plate and no band hairlines (plate + tint + edges read as an empty
+        // progress bar); the target range is a 10 % tint only, green while in range, neutral otherwise. Out of range
+        // the band keeps 1 px neutral edges, so the reader still sees where the trace left it.
         val inBand = range == Range.IN
-        fill.reset(); fill.isAntiAlias = true; fill.color = PLATE_COL
-        rect.set(sparkX0 - 4f, GlassFaceLogic.SPARK_Y0, sparkEndX + 4f, GlassFaceLogic.SPARK_Y1)
-        canvas.drawRoundRect(rect, 8f, 8f, fill)
+        fill.reset(); fill.isAntiAlias = true
         fill.color = if (inBand) withAlpha(IN_COL, 26) else withAlpha(Color.WHITE, 14)
         canvas.drawRect(sparkX0, highY, sparkEndX, lowY, fill)
-        drawSparkGuides(canvas, if (inBand) withAlpha(GREEN_BAND_EDGE, 120) else BAND_OUT_EDGE, withAlpha(Color.WHITE, 60), aa = true)
+        drawSparkGuides(canvas, if (inBand) Color.TRANSPARENT else BAND_OUT_EDGE, withAlpha(Color.WHITE, 60), aa = true)
         if (hasHistory) {
             line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE
             line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = 3f
             line.shader = historyShader(range)
-            if (!stale) line.setShadowLayer(4f, 0f, 0f, withAlpha(rangeColour, 180))
+            if (!stale) line.setShadowLayer(4f, 0f, 0f, withAlpha(rangeColour, 120))
             canvas.drawPath(history, line)
             line.shader = null
             line.clearShadowLayer()
@@ -1077,9 +1084,11 @@ class GlassWatchface : WatchFace() {
     /** Target band edges (solid 1 px) and, only when a forecast follows it, the dotted now line (without, now is the plot's edge). */
     private fun drawSparkGuides(canvas: Canvas, bandColour: Int, nowColour: Int, aa: Boolean) {
         line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE; line.strokeWidth = 1f
-        line.color = bandColour
-        canvas.drawLine(sparkX0, lowY, sparkEndX, lowY, line)
-        canvas.drawLine(sparkX0, highY, sparkEndX, highY, line)
+        if (Color.alpha(bandColour) > 0) {
+            line.color = bandColour
+            canvas.drawLine(sparkX0, lowY, sparkEndX, lowY, line)
+            canvas.drawLine(sparkX0, highY, sparkEndX, highY, line)
+        }
         if (sparkForecast) {
             line.color = nowColour
             line.pathEffect = dash24
@@ -1359,15 +1368,33 @@ class GlassWatchface : WatchFace() {
 
     private fun withAlpha(colour: Int, alpha: Int) = (colour and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)
 
+    /**
+     * Glass/Orbit UX round 3 (colour semantics): the trace is coloured by the VALUE zone of each point, the hues of the
+     * BG state (amber above the high line, green in the band, red below the low line; blue is the insulin colour and
+     * is never used), and the history fades in from 45 % to full strength at now instead of shifting hue. Stale: grey.
+     * A vertical zone gradient with hard stops at the band lines, masked by a horizontal alpha ramp.
+     */
     private fun historyShader(r: Range): Shader {
-        val key = "$sparkX0/$nowX"
+        val key = "$sparkX0/$nowX/$highY/$lowY"
         if (key != shaderKey) {
             historyShaders.fill(null)
             shaderKey = key
         }
-        return historyShaders[r.ordinal] ?: LinearGradient(
-            sparkX0, 0f, nowX, 0f, if (r == Range.STALE) STALE_COL else HIST_START, colourOf(r), Shader.TileMode.CLAMP
-        ).also { historyShaders[r.ordinal] = it }
+        return historyShaders[r.ordinal] ?: run {
+            val y0 = GlassFaceLogic.SPARK_Y0
+            val y1 = GlassFaceLogic.SPARK_Y1
+            val zones = if (r == Range.STALE) LinearGradient(0f, y0, 0f, y1, STALE_COL, STALE_COL, Shader.TileMode.CLAMP)
+            else {
+                val fh = ((highY - y0) / (y1 - y0)).coerceIn(0f, 1f)
+                val fl = ((lowY - y0) / (y1 - y0)).coerceIn(fh, 1f)
+                LinearGradient(
+                    0f, y0, 0f, y1, intArrayOf(HIGH_COL, HIGH_COL, IN_COL, IN_COL, LOW_COL, LOW_COL),
+                    floatArrayOf(0f, fh, fh, fl, fl, 1f), Shader.TileMode.CLAMP
+                )
+            }
+            val fade = LinearGradient(sparkX0, 0f, nowX, 0f, withAlpha(Color.WHITE, 115), Color.WHITE, Shader.TileMode.CLAMP)
+            ComposeShader(zones, fade, PorterDuff.Mode.DST_IN)
+        }.also { historyShaders[r.ordinal] = it }
     }
 
     // ---------------------------------------------------------------- baked bitmaps (software canvas: blur works)
@@ -1467,7 +1494,9 @@ class GlassWatchface : WatchFace() {
         c.drawCircle(CX, CX, 225f - 3f, p)
         // low cards: a darker pane (less white lift behind the red digits)
         if (r == Range.LOW || r == Range.URGENT_LOW) glass(c, p, HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, 16, 6, 60, 90)
-        else glass(c, p, HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, 35, 11, 60, 100)
+        // Glass/Orbit UX round 3: the neutral frost 30 % fainter (it read grey-green and dull next to Halo's black);
+        // the state bloom carries the tint
+        else glass(c, p, HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, 24, 8, 60, 100)
         return bmp
     }
 
@@ -1652,8 +1681,9 @@ class GlassWatchface : WatchFace() {
         private const val AM_PM_GAP = 4f
         /** 12 h suffix: at the 18 px text floor (was 17). */
         private const val AM_PM_SIZE = 18f
-        private const val DATE_Y = 96f // Glass/Orbit UX round 2: 1 px up, 15 px of air above the card's highlight
-        private const val DATE_SIZE = 24f
+        // Glass/Orbit UX round 3: 22 px in TXT2 (Halo's rhythm) and 3 px further from the time: one calm top block
+        private const val DATE_Y = 99f
+        private const val DATE_SIZE = 22f
         /** Physical text floor (Halo's [app.aaps.wear.watchfaces.halo.HaloLayout.MIN_TEXT_PX]): 384 px screens keep it. */
         private const val MIN_TEXT_PX = 18f
         private const val HERO_X0 = GlassFaceLogic.HERO_X0
@@ -1676,7 +1706,7 @@ class GlassWatchface : WatchFace() {
         private const val META_MIN_SIZE = 24f
         private const val META_SEP = " · "
         // UX round 4: borderless pills (text 26 px, units 20 px), a dot in the 22 px gap
-        private const val PILL_Y = 360f // Glass/Orbit UX round 1: 4 px up, 11 px or more above the raised footer
+        private const val PILL_Y = GlassFaceLogic.PILL_Y // Glass/Orbit UX round 3: 12 px lower, the chart gets air
         private const val PILL_PAD = 4f
         private const val PILL_GAP = 22f
         private const val PILL_INNER_GAP = 7f
@@ -1706,11 +1736,8 @@ class GlassWatchface : WatchFace() {
         private val IN_COL = 0xFF3DDC97.toInt()
         /** Sparkline target band (Glass/Orbit UX round 1): solid, 1.5:1 on black in range, neutral grey out of range. */
         private const val BAND_OUT_EDGE = 0xFF3A414D.toInt()
-        /** Plot plate (Glass/Orbit UX round 2): about 5 % white, the out-of-band trace keeps a container. */
-        private const val PLATE_COL = 0x0DFFFFFF
         /** In-range digits (Glass/Orbit UX round 2): a pale mint, the family's green at Glass's calmer strength. */
         private val IN_DIGIT_COL = 0xFFCFF5E4.toInt()
-        private const val GREEN_BAND_EDGE = 0xFF3DDC97.toInt()
         private val HIGH_COL = 0xFFFFB547.toInt()
         private val LOW_COL = 0xFFFF5A6E.toInt()
         private val LOW_TEXT_COL = 0xFFFFD6DC.toInt()
@@ -1731,7 +1758,6 @@ class GlassWatchface : WatchFace() {
         private val TT_COL = 0xFFB388FF.toInt()
         private val LOOP_OK = 0xFF40D68C.toInt()
         private val PRED_COL = 0xFFAA82FF.toInt()
-        private val HIST_START = 0xFF5AAAFF.toInt()
         private val BALL_COL = 0xFF7888FF.toInt()
         private val BALL_ARMED_COL = 0xFF5B63F5.toInt()
         private val BALL_UNIT_COL = 0xFFE3E6FF.toInt()

@@ -90,28 +90,31 @@ object OrbitFaceLogic {
     const val FAST_DELTA_MGDL = FaceState.FAST_DELTA_MGDL
 
     /**
-     * Fill arcs (Glass/Orbit UX round 2, orbit_spec.md §4.6): the two ON-BOARD quantities carry an arc on their rim,
-     * IOB full at 6 U, COB (KH) full at 80 g. Rates (basal) and ages (loop) have none.
-     */
-    const val IOB_ARC_FULL_U = 6.0
-    const val COB_ARC_FULL_G = 80.0
-
-    /**
      * Sparkline. Glass/Orbit UX round 1: a log scale over 2.2..22.2 mmol/L (40..400 mg/dL), so very high and urgent
      * low readings stay inside the plot (no clamp chevrons); box x 117..333, 8 px clear of the 4 and 8 o'clock
      * satellites, y 300..352 (the whole lower stack moved 6-10 px down with the larger hero).
      */
-    const val SPARK_MIN_MGDL = 40.0
-    const val SPARK_MAX_MGDL = 400.0
+    /**
+     * Glass/Orbit UX round 3: the fixed 40-400 log scale left the 70-180 band about 15 px tall (an in-range trend drew
+     * flat). The range now adapts as Glass's: at least 60-220 mg/dL, widened to (visible min - 5, visible max + 20)
+     * within 40-400 ([sparkRange]); values sit [SPARK_INSET] px inside the plot so the trace and the now dot never
+     * leave it.
+     */
+    const val SPARK_MIN_MGDL = 60.0
+    const val SPARK_MAX_MGDL = 220.0
+    const val SPARK_FLOOR_MGDL = 40.0
+    const val SPARK_CEIL_MGDL = 400.0
+    const val SPARK_INSET = 8f
     /**
      * Glass/Orbit UX round 2: no plot plate, x 130..320 (16 px or more clear of the 4 and 8 o'clock satellites) and ONE
-     * fixed box y 306..354 for every state: a warning never moves the chart (no reflow).
+     * fixed box for every state: a warning never moves the chart (no reflow). UX round 3: y 300..356 (the trace floats
+     * free inside the orbit, no box is drawn).
      */
     const val SPARK_X0 = 130f
     const val SPARK_X_NOW = 294f
     const val SPARK_X1 = 320f
-    const val SPARK_Y_TOP = 306f
-    const val SPARK_Y_BOTTOM = 354f
+    const val SPARK_Y_TOP = 300f
+    const val SPARK_Y_BOTTOM = 356f
 
     /**
      * Delta row centre and the pill row under it (its own row, 8 px or more below the delta baseline: never over the
@@ -383,7 +386,7 @@ object OrbitFaceLogic {
 
     /**
      * One status ball. [pause] draws a pause glyph in place of the value (loop off), [dashed] a dashed ring
-     * (unknown loop), [arc] an IOB arc fraction 0..1 on the rim, [dimValue] dims only the value.
+     * (unknown loop), [dimValue] dims only the value. An empty [label] centres the value.
      */
     data class Ball(
         val value: String,
@@ -391,7 +394,6 @@ object OrbitFaceLogic {
         val ring: Ring,
         val pause: Boolean = false,
         val dashed: Boolean = false,
-        val arc: Float = 0f,
         val dimValue: Boolean = false
     )
 
@@ -460,12 +462,14 @@ object OrbitFaceLogic {
         return m.value.replace(',', '.').toDoubleOrNull()
     }
 
-    /** IOB: cyan ring, arc = value / 6 U (capped, empty for <= 0), value dim when zero or unknown. */
+    /**
+     * IOB: cyan value, value dim when zero or unknown. Glass/Orbit UX round 3: no fill arc (its fraction had no legend
+     * and read as a progress or alarm cue); the rim stays neutral.
+     */
     fun iobBall(iobSum: String): Ball {
         val v = display(iobSum)
         val n = leadingNumber(v)
-        val arc = if (n == null || n <= 0.0) 0f else min(1.0, n / IOB_ARC_FULL_U).toFloat()
-        return Ball(v, "IOB", Ring.CYAN, arc = arc, dimValue = n == null || abs(n) < 1e-6)
+        return Ball(v, "IOB", Ring.CYAN, dimValue = n == null || abs(n) < 1e-6)
     }
 
     /** "0.00 U/h" -> "0.00", "120%" stays. */
@@ -482,6 +486,11 @@ object OrbitFaceLogic {
      * TBR (a "%" rate, or a temp basal covering now) > 0 teal, = 0 amber (the loop is withholding insulin);
      * an absolute 0,00 without a known TBR is amber as well (basal.zero_abs); otherwise neutral.
      */
+    /**
+     * Glass/Orbit UX round 3: a known rate shows the value alone, vertically centred (the "U/h" and "TBR" labels at the
+     * floor competed with the values; the 4 o'clock rate and a "%" are self-evident). Only the unknown "--" keeps its
+     * "U/h" label, so an empty satellite still says what is missing.
+     */
     fun basalBall(currentBasal: String, tbrHint: Boolean): Ball {
         val value = basalValue(currentBasal)
         if (value == "--") return Ball(value, "U/h", Ring.DIM)
@@ -489,24 +498,22 @@ object OrbitFaceLogic {
         val zero = rate != null && abs(rate) < 1e-6
         val tbr = tbrHint || value.endsWith("%")
         return when {
-            // Glass/Orbit UX round 1: an absolute rate keeps its unit (the teal value marks the TBR); only a "%" rate,
-            // which is not a rate in U/h, is labelled TBR
-            tbr  -> Ball(value, if (value.endsWith("%")) "TBR" else "U/h", if (zero) Ring.AMBER else Ring.TEAL)
-            zero -> Ball(value, "U/h", Ring.AMBER)
-            else -> Ball(value, "U/h", Ring.NEUTRAL)
+            tbr  -> Ball(value, "", if (zero) Ring.AMBER else Ring.TEAL)
+            zero -> Ball(value, "", Ring.AMBER)
+            else -> Ball(value, "", Ring.NEUTRAL)
         }
     }
 
     /**
      * COB > 0 neutral (spec v2: amber means "look soon"), else dim. "12(3)g" counts as 12 and shows as "12g"
      * (Glass/Orbit UX round 1: the bracket did not fit the satellite at the 18 px floor). Label "KH" in German.
-     * Glass/Orbit UX round 2: arc = value / 80 g, the IOB arc's twin.
+     * Glass/Orbit UX round 3: no fill arc, and a known value ("12g", its unit says it) drops the "KH" label; "--"
+     * keeps it.
      */
     fun cobBall(cob: String, labels: Labels): Ball {
         val v = display(cob).replace(Regex("\\([^)]*\\)"), "")
         val n = leadingNumber(v)
-        val arc = if (n == null || n <= 0.0) 0f else min(1.0, n / COB_ARC_FULL_G).toFloat()
-        return Ball(v, labels.cob, if (n != null && n > 0.0) Ring.NEUTRAL else Ring.DIM, arc = arc)
+        return Ball(v, if (v == "--") labels.cob else "", if (n != null && n > 0.0) Ring.NEUTRAL else Ring.DIM)
     }
 
     /** "5,0 - 6,0" -> "5,0-6,0", "5,6" stays. */
@@ -528,7 +535,7 @@ object OrbitFaceLogic {
     /** Ball value size (UX round 1: 22 -> 24) and the step-down size for wide values; labels 15 -> 18 (UX round 2, short words). */
     const val BALL_VALUE_SIZE = 24f
     const val BALL_VALUE_SMALL = 19f
-    const val BALL_LABEL_SIZE = 18f
+    const val BALL_LABEL_SIZE = 19f // Glass/Orbit UX round 3: 18 -> 19, a 13.5 px cap (above the floor, not at it)
 
     /** Family text floor (design px on the 450 grid; the face keeps it as physical px on smaller screens). */
     const val MIN_TEXT_PX = 18f
@@ -563,26 +570,41 @@ object OrbitFaceLogic {
      */
     /** Glass/Orbit UX round 1: 224 -> 250 with the 44 px arrow; [heroClear] keeps the group off the satellites. */
     const val HERO_GROUP_MAX = 250f
-    /** Glass/Orbit UX round 2: 10 px to the shaft end = about 5 px visible after the 9.5 px arrow's round cap (was ~7.5). */
-    const val HERO_GLYPH_GAP = 10f
+    /**
+     * Glass/Orbit UX round 3: the gap between the last digit and the arrow scales with the digits (0.12 em, 14 px at
+     * 118: "6,4→" read as one glyph at 10 px), and the arrow box never goes below [HERO_GLYPH_MIN_W]: a long value
+     * shrinks its digits first, the trend stays a one-second read ("22,3+" had a tiny arrow).
+     */
+    const val HERO_GLYPH_GAP_EM = 0.12f
     const val HERO_GLYPH_W = 44f
+    const val HERO_GLYPH_MIN_W = 36f
     const val HERO_MIN_SIZE = 60f
 
     /**
-     * Hero start size (UX round 1: 108 -> 120; Glass/Orbit UX round 1: 128, closer to Halo's cap height). Widths are
-     * measured at [HERO_REF] px.
+     * Hero start size (UX round 1: 108 -> 120; Glass/Orbit UX round 1: 128). Glass/Orbit UX round 3: 118 (about an
+     * 84 px cap): at 128 the LOOP satellite sat 5-8 px from the first digit. Widths are measured at [HERO_REF] px.
      */
-    const val HERO_SIZE = 128f
+    const val HERO_SIZE = 118f
     const val HERO_REF = 108f
 
+    /** Arrow box width at hero [size] (scaled, floored at [HERO_GLYPH_MIN_W]). */
+    fun heroGlyphW(size: Float): Float = max(HERO_GLYPH_W * size / HERO_REF, HERO_GLYPH_MIN_W)
+
+    /** Gap between the digits and the arrow box at hero [size]. */
+    fun heroGlyphGap(size: Float): Float = HERO_GLYPH_GAP_EM * size
+
     fun heroGroupWidth(widthAt108: Float, size: Float, glyph: Boolean): Float =
-        widthAt108 * size / HERO_REF + if (glyph) HERO_GLYPH_GAP + HERO_GLYPH_W * size / HERO_REF else 0f
+        widthAt108 * size / HERO_REF + if (glyph) heroGlyphGap(size) + heroGlyphW(size) else 0f
 
     /** Hero centre line (the digits are centred on it). Glass/Orbit UX round 1: 190 -> 198, away from LOOP / IOB. */
     const val HERO_Y = 198f
 
-    /** UX round 4: the hero group keeps this much clear space to the 10 and 2 o'clock satellites (LOOP, IOB). */
-    const val SAT_CLEAR = 16f // Glass/Orbit UX round 1: 20 -> 16 (the corner test is already 0.1 em inside the digits)
+    /**
+     * The hero group keeps this much clear space to the 10 and 2 o'clock satellites (LOOP, IOB). Glass/Orbit UX round
+     * 3: 14 px measured at the digits' box corner only 0.04 em inside (the old 0.1 em inset let a 5-8 px gap pass).
+     */
+    const val SAT_CLEAR = 14f
+    const val HERO_CORNER_INSET_EM = 0.04f
 
     /**
      * True when the hero group at [size] keeps [SAT_CLEAR] to the LOOP and IOB satellites: the digits' top corners
@@ -595,14 +617,15 @@ object OrbitFaceLogic {
         val digitsRight = left + widthAt108 * size / HERO_REF
         val minD = BALL_R + SAT_CLEAR
         // digits' outer top corners, 0.1 em inside the box (the bowls of 6/8/9/0 and the stems of 1/4 are round or inset)
-        val inset = 0.10f * size
+        val inset = HERO_CORNER_INSET_EM * size
         val capTop = HERO_Y - 0.37f * size + inset
         fun clear(x: Float, y: Float, deg: Float) =
             kotlin.math.hypot(x - pointX(SAT_R, deg), y - pointY(SAT_R, deg)) >= minD
         if (!clear(left + inset, capTop, DEG_LOOP) || !clear(digitsRight - inset, capTop, DEG_IOB)) return false
         if (!glyph) return true
-        val glyphCentre = digitsRight + HERO_GLYPH_GAP + HERO_GLYPH_W * size / HERO_REF / 2f
-        return clear(glyphCentre + 0.14f * size, HERO_Y - 0.14f * size, DEG_IOB)
+        val gw = heroGlyphW(size)
+        val glyphCentre = digitsRight + heroGlyphGap(size) + gw / 2f
+        return clear(glyphCentre + 0.34f * gw, HERO_Y - 0.34f * gw, DEG_IOB)
     }
 
     /**
@@ -643,6 +666,16 @@ object OrbitFaceLogic {
         else DateTimeFormatter.ofPattern(bestPattern, locale).format(d)
         if (weekFormat == null) return base
         return base + " · " + String.format(Locale.ROOT, weekFormat, d.get(WeekFields.ISO.weekOfWeekBasedYear()))
+    }
+
+    /**
+     * Glass/Orbit UX round 3 (time/date in every state): the short date kept next to a W4-W9 pill at 6 o'clock, "Sa 17."
+     * in German, "Sat 17" elsewhere.
+     */
+    fun shortDate(year: Int, month1: Int, day: Int, locale: Locale = Locale.GERMANY): String {
+        val d = LocalDate.of(year, month1, day)
+        return if (locale.language == "de") "${WEEKDAY.format(d).trimEnd('.')} $day."
+        else "${DateTimeFormatter.ofPattern("EEE", locale).format(d).trimEnd('.')} $day"
     }
 
     /** "00:40" (24 h) or "12:40" (12 h; the AM/PM suffix is [amPm]) from the renderer's time. */
@@ -698,6 +731,9 @@ object OrbitFaceLogic {
     /** Text margin on each side of a track gap (UX round 1: the cut is the text width ±8 px, centred on it). */
     const val GAP_MARGIN = 8f
 
+    /** Glass/Orbit UX round 3: one constant 6 px break between the ring and every satellite / the bolus button. */
+    const val SAT_GAP_MARGIN = 6f
+
     /** Half angle (deg) of the track gap that holds a text of [textWidth]: (w + 16) / 2 / r rad, capped at [maxDeg]. */
     fun gapHalfDeg(textWidth: Float, maxDeg: Float = MAX_GAP_DEG): Float =
         min(Math.toDegrees(((textWidth + 2f * GAP_MARGIN) / 2f / ORBIT_R).toDouble()).toFloat(), maxDeg)
@@ -711,8 +747,8 @@ object OrbitFaceLogic {
      * Glass/Orbit UX round 1: half angle of the track break around a satellite (the ring stops [GAP_MARGIN] px before
      * its shell) and around the bolus button.
      */
-    val BALL_GAP_DEG: Float = Math.toDegrees(2.0 * kotlin.math.asin(((BALL_R + GAP_MARGIN) / (2f * ORBIT_R)).toDouble())).toFloat()
-    val BOLUS_GAP_DEG: Float = Math.toDegrees(2.0 * kotlin.math.asin(((BOLUS_HALF + GAP_MARGIN) / (2f * ORBIT_R)).toDouble())).toFloat()
+    val BALL_GAP_DEG: Float = Math.toDegrees(2.0 * kotlin.math.asin(((BALL_R + SAT_GAP_MARGIN) / (2f * ORBIT_R)).toDouble())).toFloat()
+    val BOLUS_GAP_DEG: Float = Math.toDegrees(2.0 * kotlin.math.asin(((BOLUS_HALF + SAT_GAP_MARGIN) / (2f * ORBIT_R)).toDouble())).toFloat()
 
     /** The time and date gaps may grow until they meet the break of the nearest ball (60 deg away from 0 and 180). */
     val MAX_GAP_DEG: Float = 60f - BALL_GAP_DEG - 0.5f
@@ -754,18 +790,23 @@ object OrbitFaceLogic {
 
     // ------------------------------------------------------------------ sparkline
 
-    /** Log scale (Glass/Orbit UX round 1): equal ratios get equal heights, so lows keep their resolution. */
-    fun sparkY(mgdl: Double, top: Float = SPARK_Y_TOP, bottom: Float = SPARK_Y_BOTTOM): Float {
-        val c = mgdl.coerceIn(SPARK_MIN_MGDL, SPARK_MAX_MGDL)
-        val f = kotlin.math.ln(c / SPARK_MIN_MGDL) / kotlin.math.ln(SPARK_MAX_MGDL / SPARK_MIN_MGDL)
-        return (bottom - f * (bottom - top)).toFloat()
+    /** (lo, hi) of the plot for the visible values [minMgdl]..[maxMgdl] (NaN when there are none), as Glass. */
+    fun sparkRange(minMgdl: Double, maxMgdl: Double): Pair<Double, Double> {
+        val lo = if (minMgdl.isNaN()) SPARK_MIN_MGDL else min(SPARK_MIN_MGDL, minMgdl - 5.0).coerceAtLeast(SPARK_FLOOR_MGDL)
+        val hi = if (maxMgdl.isNaN()) SPARK_MAX_MGDL else max(SPARK_MAX_MGDL, maxMgdl + 20.0).coerceAtMost(SPARK_CEIL_MGDL)
+        return lo to hi
     }
 
-    /** -1 below the plot, +1 above, 0 inside. A clamped reading stays flat at the edge (no chevron marks). */
-    fun sparkClamp(mgdl: Double): Int = when {
-        mgdl < SPARK_MIN_MGDL -> -1
-        mgdl > SPARK_MAX_MGDL -> 1
-        else                  -> 0
+    /**
+     * Log scale (Glass/Orbit UX round 1): equal ratios get equal heights, so lows keep their resolution. [lo]..[hi]
+     * from [sparkRange]; the values sit [SPARK_INSET] px inside [top]..[bottom].
+     */
+    fun sparkY(mgdl: Double, lo: Double = SPARK_MIN_MGDL, hi: Double = SPARK_MAX_MGDL, top: Float = SPARK_Y_TOP, bottom: Float = SPARK_Y_BOTTOM): Float {
+        val c = mgdl.coerceIn(lo, hi)
+        val t = top + SPARK_INSET
+        val b = bottom - SPARK_INSET
+        val f = kotlin.math.ln(c / lo) / kotlin.math.ln(hi / lo)
+        return (b - f * (b - t)).toFloat()
     }
 
     /** x of a reading [t] when the right end of the history (x 265) is [now] and the window is [windowMs]. */

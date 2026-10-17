@@ -586,3 +586,16 @@ Ambient does no hit testing.
 | §4.6 ball | Add the verdicts LOW_BG, NO_PROFILE and LOOP_OFF, with order and toasts as in §4.12. MAX_BOLUS is disabled. Phone lost or stale is disabled, never hidden. The visuals are the shape table in §4.12: idle hollow, disabled dashed with a slash, sent "…" with a static arc, armed solid fill. The amount is "+0,5" over the unit, and armed shows "nochmal" (or "2×"). |
 | §4.9 multi | The secondary low shape cue (doubled outline + down arrow; urgent mini-badge) and the two escalations. |
 | §2.16 gaps | **G7 (priority):** the phone should send a real last-loop-run timestamp. Until then, loop age = openApsStatus = last TBR, amber 15–29′. |
+
+## 16. Implementation amendments, Glass/Orbit UX round 3
+
+These override the sections above where they differ (code: `OrbitFaceLogic`, `OrbitWatchface`).
+
+- **Hero:** 118 px (about an 84 px cap). At 128 px the LOOP satellite sat 5-8 px from the first digit. `heroClear` now measures 14 px at the digits' box corner, 0.04 em inside. The arrow sits 0.12 em from the digits, and its box never goes below 36 px. The digits shrink first, and the stroke never goes below 7 px.
+- **Satellites:** hairline rings (1 px #465064) on true black. Only an alarm (amber, red) keeps a 2 px coloured rim. **No fill arcs:** the IOB 6 U / COB 80 g fractions had no legend and read as progress or alarm cues. A known basal or KH value shows without a label ("0,85", "12g"). "--" keeps its label. LOOP and IOB keep theirs at 19 px.
+- **Track:** a constant 6 px break before every satellite and the bolus button.
+- **Sparkline:** no box. It uses Glass's adaptive log range: at least 60-220 mg/dL, widened to the visible values, clamped at 40/400. Values sit 8 px inside y 300..356. The target band is a 10 % tint with no edges.
+- **Corona:** non-urgent alpha 150 (was 200).
+- **Date:** 22 px in TXT2. A W4-W9 pill at 6 o'clock keeps the short date ("Sa 17.", 18 px) to its left, so the date never disappears.
+- **Bolus button:** idle is the family's filled indigo sphere with white text. Armed is solid #5B63F5 with the white countdown rim. Disabled has a dashed rim and a faint slash under the text, with no text halo. Its 48 px hit circle never overlaps LOOP or KH (unit test).
+- **Ambient:** all four satellites show as values (no discs). Under burn-in protection the in-range or stale ring is not drawn, and the urgent low ring is long-dashed.

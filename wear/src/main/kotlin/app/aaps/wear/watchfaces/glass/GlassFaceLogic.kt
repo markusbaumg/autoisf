@@ -62,9 +62,14 @@ object GlassFaceLogic {
      * margin to the round edge on each side (the Watch5 Pro's raised bezel shades the outer 1 mm; at 236 px the "%"
      * ended 6 px from the edge). See [chordWidth].
      */
-    const val FOOTER_Y = 394f
+    /**
+     * Glass/Orbit UX round 3: the footer is no longer an always-on line (the default basal left it, see
+     * [basalInFooter]); it moves 8 px down to y 402 so the stats row above can drop 12 px and the chart gets air. Its
+     * width is the chord at the new cap bottom (about y 411) less the 16 px margin.
+     */
+    const val FOOTER_Y = 402f
     const val EDGE_MARGIN = 16f
-    const val FOOTER_MAX_WIDTH = 216f
+    const val FOOTER_MAX_WIDTH = 188f
 
     /** Width of the screen chord at [y] (450 grid) less [margin] to the round edge on each side. */
     fun chordWidth(y: Float, margin: Float = EDGE_MARGIN): Float {
@@ -509,12 +514,17 @@ object GlassFaceLogic {
      * UX round 4: the plot is wider (70..380) and starts 8 px right of the ball's hit area ([BALL_HIT_RIGHT]); the band
      * fill is gone, values are drawn inside a [SPARK_INSET] px inset so the line never touches the card or the pills.
      */
+    /**
+     * Glass/Orbit UX round 3: no plot plate any more (plate + band + hairlines read as an empty progress bar); the
+     * values sit [SPARK_INSET] = 9 px (the now dot's 5 px glow radius plus 4) inside the plot, so a very high or urgent
+     * low trace never touches its edge. The plot is y 292..348 so the 70-180 band keeps about 28 px.
+     */
     const val SPARK_X0 = 70f
     const val SPARK_X0_BALL = 128f // Glass/Orbit UX round 2: 140 -> 128, the ball sits tighter to the chart
-    const val SPARK_Y0 = 294f
+    const val SPARK_Y0 = 292f
     const val SPARK_X1 = 380f
-    const val SPARK_Y1 = 342f
-    const val SPARK_INSET = 4f
+    const val SPARK_Y1 = 348f
+    const val SPARK_INSET = 9f
     const val SPARK_HISTORY = 36
     const val SPARK_TOTAL = 48
     const val SLOT_MS = 5 * MINUTE_MS
@@ -635,8 +645,9 @@ object GlassFaceLogic {
     const val BALL_Y = 318f
     const val BALL_R = 28f
 
-    /** Pill row band (UX round 4: borderless; Glass/Orbit UX round 1: text centred at y 360). */
-    const val PILL_Y0 = 350f
+    /** Pill row band (UX round 4: borderless; Glass/Orbit UX round 3: text centred at y 372, 12 px lower). */
+    const val PILL_Y0 = 362f
+    const val PILL_Y = 372f
 
     /** Hit-area clips: 2 px under the card, 8 px left of the graph (which starts at [SPARK_X0_BALL]). */
     const val BALL_HIT_TOP = 284f // HERO_Y1 + 2
@@ -713,8 +724,23 @@ object GlassFaceLogic {
      */
     fun metaWarning(owner: Warning?): Warning? = owner?.takeIf { it.dataOld }
 
-    /** Warnings for the footer: none while a W2/W3 owner sits in the META row ([metaWarning]). */
-    fun footerWarnings(warnings: List<Warning>): List<Warning> = if (metaWarning(warnings.firstOrNull()) != null) emptyList() else warnings
+    /**
+     * Warnings for the footer: none while a W2/W3 owner sits in the META row ([metaWarning]).
+     * Glass/Orbit UX round 3 (one owner per fact): interactive, a bad loop ("Loop 23′") is said once, by the red loop
+     * glyph and its red age in the stats row right above; the footer keeps only non-numeric states ("Loop aus", "Kein
+     * Profil", "Reservoir 5 U"). Ambient has no hue, so there the footer keeps it.
+     */
+    fun footerWarnings(warnings: List<Warning>, ambient: Boolean = true): List<Warning> = when {
+        metaWarning(warnings.firstOrNull()) != null -> emptyList()
+        ambient                                     -> warnings
+        else                                        -> warnings.filter { it != Warning.LOOP_BAD }
+    }
+
+    /**
+     * Glass/Orbit UX round 3 (seven text tiers were too many): the basal joins the footer only when it says something,
+     * a TBR in percent or a zero rate; the plain profile rate ("0,85 U/h") is no longer always on.
+     */
+    fun basalInFooter(pref: Boolean, basal: String): Boolean = pref && basalTone(basal).let { it == Tone.TBR || it == Tone.WARN }
 
     /** Text of a W2/W3 [owner] for the META row, as the footer would have shown it. */
     fun warningText(owner: Warning, i: FooterInput, words: SlotWords): Run? = warningRun(owner, i, words)
@@ -729,14 +755,14 @@ object GlassFaceLogic {
     fun loopLabelAllowed(health: LoopHealth): Boolean = health != LoopHealth.OPEN
 
     /** Pill row width budget on the 450 grid (the chord at the pill row's lower edge less the rounded ends). */
-    const val PILL_ROW_MAX_WIDTH = 296f // Glass/Orbit UX round 1: 320 -> 296, x 77..373 (16 px from the edge at y 372)
+    const val PILL_ROW_MAX_WIDTH = 270f // Glass/Orbit UX round 3: the row is 12 px lower: x 90..360 (16 px from the edge at y 384)
 
     /**
      * UX round 4: with the ball shown the pill row moves right of its hit area: x 140..392 (the chord at the row's
      * lower edge), centred at 266.
      */
     const val PILL_ROW_BALL_X0 = SPARK_X0_BALL
-    const val PILL_ROW_BALL_X1 = 372f // Glass/Orbit UX round 1: 392 -> 372, 16 px from the round edge (the harness checks 14)
+    const val PILL_ROW_BALL_X1 = 360f // Glass/Orbit UX round 3: 372 -> 360 with the lower row, 16 px from the round edge
 
     /** (centre, max width) of the pill row with or without the ball. */
     fun pillRowFrame(ballShown: Boolean): Pair<Float, Float> =
