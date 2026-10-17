@@ -308,6 +308,12 @@ class WatchfaceRenderHarness {
         Triple("burnin_loop_off", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 8, external = "Loop disabled\n")) },
         // the Watch5 Pro most likely runs with burn-in protection: these are what the owner sees
         Triple("burnin_stale", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        // panel round 3: the struck old value must stay readable (8 / 0 / 6 / 9 differ at the digits' waist)
+        Triple("stale_8_0", Mode.AMBIENT) { now -> data(now, 8.0, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("stale_6_8", Mode.AMBIENT) { now -> data(now, 6.8, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("stale_9_8", Mode.AMBIENT) { now -> data(now, 9.8, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("stale_mgdl_180", Mode.AMBIENT) { now -> data(now, 10.0, "→", "+0.1", 0, ageMin = 17, mgdl = true, st = status(now, loopAgeMin = 17)) },
+        Triple("lowbit_stale_8_0", Mode.LOW_BIT) { now -> data(now, 8.0, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
         Triple("burnin_no_phone_14", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14)) }
     )
 

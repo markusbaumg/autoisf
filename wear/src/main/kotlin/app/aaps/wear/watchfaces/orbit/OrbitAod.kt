@@ -183,11 +183,11 @@ object OrbitAod {
 
     fun spec(look: Look): Spec = when (look) {
         Look.BG_ONLY    -> Spec(0f, 0f, 0, heroY = 212f, heroSize = 172f, heroMaxW = 330f, lineY = 334f)
-        Look.BG_TIME    -> Spec(98f, 40f, 600, heroY = 220f, heroSize = 156f, heroMaxW = 320f, lineY = 330f)
+        Look.BG_TIME    -> Spec(98f, 40f, 600, heroY = 220f, heroSize = 156f, heroMaxW = 320f, lineY = 335f)
         Look.TIME_BELOW -> Spec(338f, 40f, 600, heroY = 182f, heroSize = 156f, heroMaxW = 320f, lineY = 284f)
         Look.BIG_TIME   -> Spec(160f, 104f, 500, heroY = 280f, heroSize = 84f, heroMaxW = 250f, lineY = 350f)
         Look.BG_SPARK   -> Spec(98f, 40f, 600, heroY = 210f, heroSize = 140f, heroMaxW = 310f, lineY = 352f, sparkY = 304f)
-        Look.BG_DELTA   -> Spec(98f, 40f, 600, heroY = 216f, heroSize = 150f, heroMaxW = 320f, lineY = 322f)
+        Look.BG_DELTA   -> Spec(98f, 40f, 600, heroY = 216f, heroSize = 150f, heroMaxW = 320f, lineY = 327f)
     }
 
     /** Half chord of the dial at [y] (450 grid, radius 225), less [margin] on each side. */
@@ -210,6 +210,9 @@ object OrbitAod {
         /** Labels of the TIEF / HOCH badge (the model carries LOW / HIGH). */
         var lowWord = "TIEF"
         var highWord = "HOCH"
+
+        /** The age on its own ("Nur BZ" from 6′): "vor %s" / "%s ago". */
+        var agoFormat = "vor %s"
 
         private fun tf(weight: Int): Typeface = faces.getOrPut(weight) { Typeface.create(Typeface.DEFAULT, weight, false) }
 
@@ -301,24 +304,29 @@ object OrbitAod {
             val x0 = OrbitFaceLogic.CX - gw / 2f
             val by = baseline(s.heroY)
             // digits' optical centre: the cap height (about 0.71 em) above the baseline
-            val cy = by - 0.355f * size
+            val cy = by - CAP_K / 2f * size
             canvas.drawText(m.hero, x0, by, text)
             heroBox.set(x0, by - 0.72f * size, x0 + gw, by)
             if (m.struck) {
-                // a heavy bar, cut out of the digits by a black gap so it never melts into the strokes (low-bit too)
+                // a bar cut out of the digits by a thin black gap, so it never melts into the strokes (low-bit too). It
+                // sits above the digits' middle (STRIKE_Y of the cap height), not across their waist, where 8 / 0 / 6 /
+                // 9 / 5 / 3 differ: the last value must stay readable (panel round 3)
                 val bar = max(STRIKE_MIN, STRIKE_K * size)
+                val sy = by - STRIKE_Y * CAP_K * size
                 setStroke(bar + 2f * STRIKE_GAP, Color.BLACK, aa)
                 stroke.strokeCap = Paint.Cap.BUTT
-                canvas.drawLine(x0 - STRIKE_OVER, cy, x0 + digitsW + STRIKE_OVER, cy, stroke)
+                canvas.drawLine(x0 - STRIKE_OVER, sy, x0 + digitsW + STRIKE_OVER, sy, stroke)
                 setStroke(bar, colour, aa)
                 stroke.strokeCap = Paint.Cap.BUTT
-                canvas.drawLine(x0 - STRIKE_OVER, cy, x0 + digitsW + STRIKE_OVER, cy, stroke)
+                canvas.drawLine(x0 - STRIKE_OVER, sy, x0 + digitsW + STRIKE_OVER, sy, stroke)
             }
             if (arrowOn) {
                 val box = ARROW_BOX * size
                 val ax = x0 + digitsW + ARROW_GAP * size + box / 2f
                 buildArrow(m.trend, box)
-                setStroke(max(5f, ARROW_STROKE * size), colour, aa)
+                // a double arrow's two shafts need air between them, so it draws a little lighter
+                val k = if (m.trend.heads > 1) ARROW_STROKE_DOUBLE else ARROW_STROKE
+                setStroke(max(5f, k * size), colour, aa)
                 canvas.save()
                 canvas.translate(ax, cy)
                 canvas.drawPath(arrow, stroke)
@@ -333,8 +341,8 @@ object OrbitAod {
             val dy = -cos(rad).toFloat()
             val shaft = 0.84f * box
             val heads = trend.heads.coerceAtLeast(1)
-            val spread = if (heads > 1) 0.25f * box else 0f
-            val headLen = if (heads > 1) 0.28f * box else 0.36f * box
+            val spread = if (heads > 1) 0.30f * box else 0f
+            val headLen = if (heads > 1) 0.26f * box else 0.36f * box
             for (k in 0 until heads) {
                 val off = if (heads > 1) (k - (heads - 1) / 2f) * 2f * spread else 0f
                 val ox = -dy * off
@@ -377,6 +385,8 @@ object OrbitAod {
             val maxW = 2f * halfChord(y, 44f)
             when (line) {
                 Line.DELTA -> {
+                    // "Nur BZ": the age alone reads "vor 8′", so it cannot pass for a number
+                    val age = if (ageOnly && m.age.isNotEmpty()) agoFormat.format(m.age) else m.age
                     val d = when {
                         ageOnly && m.age.isNotEmpty() -> ""
                         m.age.isEmpty()               -> m.delta
@@ -385,7 +395,7 @@ object OrbitAod {
                     var size = DELTA_SIZE
                     setText(size, if (burnIn) 500 else 600, if (lowBit) Color.WHITE else TIME_D, aa)
                     val wd = text.measureText(d)
-                    val wa = text.measureText(m.age)
+                    val wa = text.measureText(age)
                     if (wd + wa > maxW) size *= maxW / (wd + wa)
                     text.textSize = size
                     val k = size / DELTA_SIZE
@@ -393,7 +403,7 @@ object OrbitAod {
                     val by = baseline(y)
                     canvas.drawText(d, x, by, text)
                     text.color = if (m.ageAmber) level(Level.WARN, lowBit) else text.color
-                    canvas.drawText(m.age, x + wd * k, by, text)
+                    canvas.drawText(age, x + wd * k, by, text)
                 }
 
                 Line.WARNING -> drawWarning(canvas, m, y, maxW, lowBit, burnIn)
@@ -426,15 +436,20 @@ object OrbitAod {
                 val by = baseline(y)
                 if (m.badgeBoxed) {
                     // urgent low (red) / very high (amber): a small solid pill with black words (the one fill in AOD,
-                    // about 2 % of the dial and only at a danger level): it must out-shout every other state
+                    // about 2 % of the dial and only at a danger level): it must out-shout every other state. In burn-in
+                    // mode it is a thick outline with coloured words, so no filled area is left
                     val h = BADGE_H * k
                     box.set(x, y - h / 2f, x + bw * k, y + h / 2f)
                     stroke.reset()
                     stroke.isAntiAlias = aa
-                    stroke.style = Paint.Style.FILL
                     stroke.color = badgeColour
-                    canvas.drawRoundRect(box, h / 2f, h / 2f, stroke)
-                    text.color = Color.BLACK
+                    if (burnIn) {
+                        stroke.style = Paint.Style.STROKE
+                        stroke.strokeWidth = BADGE_RING
+                        box.inset(BADGE_RING / 2f, BADGE_RING / 2f)
+                    } else stroke.style = Paint.Style.FILL
+                    canvas.drawRoundRect(box, box.height() / 2f, box.height() / 2f, stroke)
+                    text.color = if (burnIn) badgeColour else Color.BLACK
                     canvas.drawText(word, x + BADGE_PAD * k, by, text)
                 } else canvas.drawText(word, x, by, text)
                 x += (bw + gap) * k
@@ -448,7 +463,9 @@ object OrbitAod {
 
     const val ARROW_BOX = 0.46f
     const val ARROW_GAP = 0.06f
-    const val ARROW_STROKE = 0.08f
+    /** Close to the digits' stroke at weight 700 (about 0.14 em), so the arrow is as heavy as the number. */
+    const val ARROW_STROKE = 0.13f
+    const val ARROW_STROKE_DOUBLE = 0.10f
     const val SPARK_W = 150f
     const val SPARK_H = 34f
     const val DELTA_SIZE = 36f
@@ -456,11 +473,16 @@ object OrbitAod {
     const val BADGE_SIZE = 34f
     const val BADGE_H = 50f
     const val STALE_K = 0.75f
-    const val STRIKE_K = 0.08f
-    const val STRIKE_MIN = 12f
-    const val STRIKE_GAP = 4f
+    /** Cap height of the digits in em (Roboto about 0.71). */
+    const val CAP_K = 0.71f
+    /** The strike's centre as a share of the cap height above the baseline (off the digits' waist). */
+    const val STRIKE_Y = 0.64f
+    const val STRIKE_K = 0.06f
+    const val STRIKE_MIN = 8f
+    const val STRIKE_GAP = 2f
     const val STRIKE_OVER = 20f
     const val BADGE_PAD = 14f
+    const val BADGE_RING = 4f
     const val LINE_GAP = 14f
     const val MIN_K = 0.72f
 }

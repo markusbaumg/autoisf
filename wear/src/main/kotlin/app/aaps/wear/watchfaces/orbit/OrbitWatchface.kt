@@ -360,6 +360,7 @@ class OrbitWatchface : WatchFace() {
             reservoirFormat = getString(R.string.orbit_reservoir).replace("%1\$s", "%s"),
             phoneBatteryFormat = getString(R.string.orbit_phone_battery).replace("%1\$s", "%s")
         )
+        aodPainter.agoFormat = getString(R.string.orbit_aod_age_ago).replace("%1\$s", "%s")
         buildShapes()
         readPrefs()
     }
