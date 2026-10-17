@@ -238,11 +238,12 @@ class NSClientV3Service : DaggerService() {
     private val onDataCreateUpdate = Emitter.Listener { args ->
         stayAwake()
         val response = args[0] as JSONObject
+        // before the getters, so a malformed message still leaves a trace; the document itself
+        // goes to the log a few lines down, via EventNSClientNewLog
+        aapsLogger.debug(LTag.NSCLIENT, "onDataCreateUpdate: ${response.optString("colName")} ${response.optJSONObject("doc")?.optString("identifier")} ${response.optString("doc").length} B")
         val collection = response.getString("colName")
         val docJson = response.getJSONObject("doc")
         val docString = response.getString("doc")
-        // the document itself goes to the log a few lines down, via EventNSClientNewLog
-        aapsLogger.debug(LTag.NSCLIENT, "onDataCreateUpdate: $collection ${docJson.optString("identifier")} ${docString.length} B")
         rxBus.send(EventNSClientNewLog("◄ WS CREATE/UPDATE", "$collection <i>$docString</i>"))
         val srvModified = docJson.getLong("srvModified")
         // Don't advance the high-water-mark until the initial catch-up load chain

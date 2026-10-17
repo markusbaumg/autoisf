@@ -94,8 +94,8 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 
-/** The caller string IobCobOref1Worker passes when it asks for the ISF of every 5 min bucket. */
-internal const val IOB_COB_WORKER_CALLER = "iobCobOref1Worker"
+/** The callers that ask for the ISF of every 5 min bucket: the IobCob workers and their carb path. */
+internal val AVERAGE_ISF_BULK_CALLERS = setOf("iobCobOref1Worker", "IobCobOrefWorker", "fromCarbs")
 
 @Singleton
 open class OpenAPSAutoISFPlugin @Inject constructor(
@@ -230,9 +230,9 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
             }
         }
         val sensitivity = if (count == 0) null else sum / count
-        // The IobCob worker asks once per 5 min bucket of the whole window (10,000 lines in an hour
+        // The IobCob workers ask once per 5 min bucket of the whole window (10,000 lines in an hour
         // without BG); that trace goes to the AUTOISF tag, the loop's and overview's calls stay in APS.
-        val tag = if (caller == IOB_COB_WORKER_CALLER) LTag.AUTOISF else LTag.APS
+        val tag = if (caller in AVERAGE_ISF_BULK_CALLERS) LTag.AUTOISF else LTag.APS
         aapsLogger.debug(tag, "getAverageIsfMgdl() $sensitivity from $count values ${dateUtil.dateAndTimeAndSecondsString(timestamp)} $caller")
         return sensitivity
     }
