@@ -592,14 +592,15 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkRange(Double.NaN, Double.NaN)).isEqualTo(60.0 to 190.0)
         assertThat(GlassFaceLogic.sparkRange(100.0, 110.0)).isEqualTo(55.0 to 195.0)
         assertThat(GlassFaceLogic.sparkRange(90.0, 200.0)).isEqualTo(55.0 to 200.0)
-        assertThat(GlassFaceLogic.sparkRange(39.0, 420.0)).isEqualTo(40.0 to 400.0)
+        // with a value below the low line the window is fixed (the 420 peak runs along the plot top, the low stays readable)
+        assertThat(GlassFaceLogic.sparkRange(39.0, 420.0)).isEqualTo(40.0 to 120.0)
         assertThat(GlassFaceLogic.sparkRange(395.0, 400.0)).isEqualTo(55.0 to 400.0)
         // round 3: anything below the low line puts the floor at 40 mg/dL, so hypo depth is on a fixed scale
-        // round 4: and the top comes from the visible values (+10) and the low line (+50), not from the high line
+        // round 5: and the top is fixed at the low line + 50, whatever the earlier peak
         assertThat(GlassFaceLogic.sparkRange(45.0, 50.0)).isEqualTo(40.0 to 120.0)
-        assertThat(GlassFaceLogic.sparkRange(63.0, 120.0)).isEqualTo(40.0 to 130.0)
+        assertThat(GlassFaceLogic.sparkRange(63.0, 120.0)).isEqualTo(40.0 to 120.0)
         assertThat(GlassFaceLogic.sparkRange(63.0, 108.0)).isEqualTo(40.0 to 120.0)
-        assertThat(GlassFaceLogic.sparkRange(50.0, 395.0)).isEqualTo(40.0 to 400.0)
+        assertThat(GlassFaceLogic.sparkRange(50.0, 395.0)).isEqualTo(40.0 to 120.0)
         assertThat(GlassFaceLogic.sparkRange(60.0, 70.0, 80.0, 140.0)).isEqualTo(40.0 to 130.0)
         assertThat(GlassFaceLogic.sparkRange(70.0, 120.0)).isEqualTo(55.0 to 195.0)
         val (llo, lhi) = GlassFaceLogic.sparkRange(47.0, 126.0)
@@ -613,14 +614,19 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkYRaw(180.0, flo, fhi) - (GlassFaceLogic.SPARK_Y0 + GlassFaceLogic.SPARK_INSET)).isWithin(0.5f).of(4.7f)
         // a flat 5,8 is well clear of the low edge (readable as "in range, not near low")
         assertThat(GlassFaceLogic.sparkYRaw(70.0, flo, fhi) - GlassFaceLogic.sparkY(104.0, flo, fhi)).isAtLeast(8f)
-        // safety: every visible value is inside the range, so a trace is never clamped flat at the edge
+        // safety: the lowest visible value is never clamped; without a low every visible value is inside the range.
+        // With a value below the low line the window is fixed (40 .. low + 50) and a higher earlier peak runs along the
+        // plot top: the depth of the low wins over the height of the peak (Glass polish round 5).
         for ((a, b) in listOf(40.0 to 60.0, 50.0 to 300.0, 100.0 to 400.0, 180.0 to 181.0, 41.0 to 41.0, 400.0 to 400.0)) {
             val (lo, hi) = GlassFaceLogic.sparkRange(a, b)
             assertThat(lo).isAtMost(a.coerceAtLeast(40.0))
-            assertThat(hi).isAtLeast(b.coerceAtMost(400.0))
-            // not clamped: the drawn y of the extremes equals the unclamped y
             assertThat(GlassFaceLogic.sparkY(a, lo, hi)).isEqualTo(GlassFaceLogic.sparkYRaw(a, lo, hi))
-            assertThat(GlassFaceLogic.sparkY(b, lo, hi)).isEqualTo(GlassFaceLogic.sparkYRaw(b, lo, hi))
+            if (a < GlassFaceLogic.DEFAULT_LOW_MGDL) {
+                assertThat(hi).isEqualTo(GlassFaceLogic.DEFAULT_LOW_MGDL + GlassFaceLogic.SPARK_HYPO_LOW_HEADROOM_MGDL)
+            } else {
+                assertThat(hi).isAtLeast(b.coerceAtMost(400.0))
+                assertThat(GlassFaceLogic.sparkY(b, lo, hi)).isEqualTo(GlassFaceLogic.sparkYRaw(b, lo, hi))
+            }
         }
         // the low edge is always inside the plot; the high edge too unless a value is below the low line (round 4:
         // the hypo scale ends above the low line, the band fades out upward)
@@ -950,6 +956,16 @@ class GlassFaceLogicTest {
         // the urgent low render (7,0 falling to 2,6): still 10 px or more between 2,6 and the low edge
         val (ulo, uhi) = GlassFaceLogic.sparkRange(mg(2.6), mg(7.0))
         assertThat(GlassFaceLogic.sparkY(mg(2.6), ulo, uhi) - GlassFaceLogic.sparkYRaw(low, ulo, uhi)).isAtLeast(10f)
+        // a low after a meal peak (180 then down to 61 / 47 / 39 mg/dL): same fixed window, same distances
+        for (peak in listOf(180.0, 250.0)) {
+            val (plo, phi) = GlassFaceLogic.sparkRange(39.0, peak)
+            assertThat(plo to phi).isEqualTo(lo to hi)
+            val pedge = GlassFaceLogic.sparkYRaw(low, plo, phi)
+            assertThat(GlassFaceLogic.sparkY(61.0, plo, phi) - pedge).isAtLeast(3f)
+            assertThat(GlassFaceLogic.sparkY(47.0, plo, phi) - pedge).isAtLeast(10f)
+            assertThat(GlassFaceLogic.sparkY(39.0, plo, phi) - pedge).isAtLeast(15f)
+            assertThat(GlassFaceLogic.bandEdgeVisible(GlassFaceLogic.sparkYRaw(GlassFaceLogic.DEFAULT_HIGH_MGDL, plo, phi))).isFalse()
+        }
         // in range and high: unchanged
         assertThat(GlassFaceLogic.sparkRange(100.0, 110.0)).isEqualTo(55.0 to 195.0)
         assertThat(GlassFaceLogic.sparkRange(150.0, 300.0)).isEqualTo(55.0 to 300.0)

@@ -90,6 +90,15 @@ class WearConfirmDetailsTest {
         assertThat(WearConfirmDetails.build(inputs().copy(bgTimestamp = minAgo(11))).warnings).isEmpty()
     }
 
+    @Test fun `stale reading sends no trend arrow or delta, a fresh one does`() {
+        val stale = WearConfirmDetails.build(inputs().copy(bgTimestamp = minAgo(40), deltaMgdl = -12.0, arrow = "↘"))
+        assertThat(stale.arrow).isEmpty()
+        assertThat(stale.deltaMgdl).isNull()
+        val fresh = WearConfirmDetails.build(inputs().copy(deltaMgdl = -3.0, arrow = "↘"))
+        assertThat(fresh.arrow).isEqualTo("↘")
+        assertThat(fresh.deltaMgdl).isEqualTo(-3.0)
+    }
+
     @Test fun `no BG at all warns`() {
         val d = WearConfirmDetails.build(inputs().copy(bgMgdl = null, bgTimestamp = null, deltaMgdl = null))
         assertThat(d.warnings.map { it.code }).containsExactly(ConfirmWarning.W_NO_BG)

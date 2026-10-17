@@ -570,13 +570,12 @@ object GlassFaceLogic {
      * and below), and as soon as a visible value is below the low line the range starts at [SPARK_FLOOR_MGDL], so the
      * depth under the low edge is on a fixed scale (2,6 and 3,5 look clearly different, a hypo is never understated).
      * Glass polish round 4: in that hypo case the top no longer includes the high line ([highMgdl] + 15 squeezed
-     * 40-70 mg/dL into about 8 px, 3,5 / 2,6 / 2,2 ended 4-7 px apart). The top is the highest visible value plus
-     * [SPARK_HYPO_TOP_MARGIN_MGDL], at least the low line plus [SPARK_HYPO_LOW_HEADROOM_MGDL] (about 120 mg/dL), and the
-     * minimum span does not apply: with the default band the low edge sits at about y 330, 3,5 at 333, 2,6 at 342 and
+     * 40-70 mg/dL into about 8 px, 3,5 / 2,6 / 2,2 ended 4-7 px apart). The top is fixed at the low line plus
+     * [SPARK_HYPO_LOW_HEADROOM_MGDL] (about 120 mg/dL), whatever the earlier peak (a low after a meal must not be squeezed
+     * again; higher points are clamped to the plot top), and the minimum span does not apply: with the default band the low edge sits at about y 330, 3,5 at 333, 2,6 at 342 and
      * 2,2 at 346. The high edge is then above the plot (not drawn, the band fades out upward). In range and high: as before.
      */
     const val SPARK_BAND_MARGIN_MGDL = 15.0
-    const val SPARK_HYPO_TOP_MARGIN_MGDL = 10.0
     const val SPARK_HYPO_LOW_HEADROOM_MGDL = 50.0
     const val SPARK_MIN_SPAN_MGDL = 90.0
     const val SPARK_FLOOR_MGDL = 40.0
@@ -593,9 +592,9 @@ object GlassFaceLogic {
     ): Pair<Double, Double> {
         if (minMgdl.isNaN() || maxMgdl.isNaN()) return SPARK_EMPTY_LO to SPARK_EMPTY_HI
         if (minMgdl < lowMgdl) {
-            // hypo scale (round 4): floor 40, top from the visible values and the low line only
-            val top = max(maxMgdl + SPARK_HYPO_TOP_MARGIN_MGDL, lowMgdl + SPARK_HYPO_LOW_HEADROOM_MGDL)
-            return SPARK_FLOOR_MGDL to top.coerceAtMost(SPARK_CEIL_MGDL)
+            // hypo scale: a fixed window 40 .. low line + headroom, so an earlier peak (e.g. after a meal) cannot squeeze
+            // the low values together again; higher history points are clamped to the plot top
+            return SPARK_FLOOR_MGDL to (lowMgdl + SPARK_HYPO_LOW_HEADROOM_MGDL).coerceAtMost(SPARK_CEIL_MGDL)
         }
         var lo = min(minMgdl, lowMgdl - SPARK_BAND_MARGIN_MGDL).coerceAtLeast(SPARK_FLOOR_MGDL)
         var hi = max(maxMgdl, highMgdl + SPARK_BAND_MARGIN_MGDL).coerceAtMost(SPARK_CEIL_MGDL).coerceAtLeast(lo)

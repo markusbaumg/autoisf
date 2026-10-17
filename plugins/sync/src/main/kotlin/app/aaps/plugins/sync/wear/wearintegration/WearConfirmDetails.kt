@@ -145,8 +145,9 @@ internal object WearConfirmDetails {
             unitsMgdl = i.unitsMgdl,
             bgMgdl = i.bgMgdl,
             bgAgeMin = bgAgeMin,
-            deltaMgdl = i.deltaMgdl,
-            arrow = i.arrow,
+            // trend only for a current reading: an old arrow or delta would look like the present trend
+            deltaMgdl = i.deltaMgdl.takeIf { bgAgeMin != null && bgAgeMin < STALE_MIN },
+            arrow = if (bgAgeMin != null && bgAgeMin < STALE_MIN) i.arrow else "",
             bgEffectMgdl = bgEffect,
             carbsCovered = carbsCovered,
             // the profile values the estimates come from, shown as their source

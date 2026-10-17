@@ -809,7 +809,7 @@ class ConfirmScreen(private val context: Context) {
     companion object {
 
         /** Same factor as the phone (Constants.MGDL_TO_MMOLL). */
-        const val MGDL_TO_MMOL = 0.0555
+        const val MGDL_TO_MMOL = 1.0 / 18.0
         /** Same as FaceState.FAST_DELTA_MGDL. */
         const val FALLING_FAST_MGDL = 10.0
 
