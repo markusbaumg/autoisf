@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "AAPS Halo" watch face (HaloWatchface). Kept in its own file so Crowdin updates of strings.xml do not touch it. -->
+<resources>
+    <string name="label_watchface_halo" translatable="false">AAPS Halo</string>
+    <!-- The bolus request setting is shared by the Halo, Glass and Orbit faces: see strings_face_bolus.xml. -->
+    <string name="halo_bolus_again">again</string>
+    <string name="halo_bolus_sent">Bolus request sent. Confirm on the watch.</string>
+    <string name="halo_bolus_refused_max">%1$s U is above the max bolus (%2$s U)</string>
+    <string name="halo_bolus_refused_phone">Phone not connected. No request sent.</string>
+    <string name="halo_bolus_refused_stale">No current data from the phone. No request sent.</string>
+    <string name="halo_bolus_refused_pending">A request is already pending. Check the watch.</string>
+    <string name="halo_bolus_refused_wear_control">Wear control is off on the phone.</string>
+</resources>

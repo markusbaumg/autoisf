@@ -18,6 +18,7 @@ import android.graphics.Canvas
 import android.graphics.Rect
 import android.text.format.DateFormat
 import android.view.SurfaceHolder
+import androidx.annotation.VisibleForTesting
 import androidx.wear.watchface.CanvasType
 import androidx.wear.watchface.ComplicationSlotsManager
 import androidx.wear.watchface.DrawMode
@@ -26,6 +27,7 @@ import androidx.wear.watchface.WatchFace
 import androidx.wear.watchface.WatchFaceService
 import androidx.wear.watchface.WatchFaceType
 import androidx.wear.watchface.WatchState
+import androidx.wear.watchface.style.WatchFaceLayer
 import androidx.wear.watchface.style.CurrentUserStyleRepository
 import androidx.wear.watchface.TapEvent
 import androidx.wear.watchface.ComplicationSlot
@@ -51,8 +53,20 @@ abstract class WatchFace : WatchFaceService() {
     protected var isAmbient = false
     protected var lowBitAmbient = false
     protected var burnInProtection = false
+
+    /**
+     * False while the renderer draws for an editor / complication preview or screenshot
+     * (renderParameters other than the default interactive ones). Faces can skip interactive-only elements then.
+     */
+    protected var isLiveRender = true
     protected var watchShape = WatchShape.UNKNOWN
     protected var layoutComplete = false
+
+    /** True for the headless instance (watch face picker / editor preview); known from [onWatchStateKnown] on. */
+    protected var isHeadless = false
+
+    /** Epoch millis of the time being rendered (the renderer's ZonedDateTime), so ages and the clock share one time source. */
+    protected var latestEpochMillis = 0L
 
     protected val currentWatchMode: WatchMode
         get() = when {
@@ -186,6 +200,9 @@ abstract class WatchFace : WatchFaceService() {
      */
     protected open fun onTapCommand(tapType: Int, x: Int, y: Int, eventTime: Long) {}
 
+    /** Called once the WatchState is known (after onCreate), with [isHeadless] set. Default: no-op. */
+    protected open fun onWatchStateKnown() {}
+
     // Renderer instance
     private var renderer: WatchFaceRenderer? = null
 
@@ -195,6 +212,8 @@ abstract class WatchFace : WatchFaceService() {
         complicationSlotsManager: ComplicationSlotsManager,
         currentUserStyleRepository: CurrentUserStyleRepository
     ): WatchFace {
+        isHeadless = watchState.isHeadless
+        onWatchStateKnown()
         // Create renderer that delegates to abstract methods
         renderer = WatchFaceRenderer(
             context = applicationContext,
@@ -292,6 +311,8 @@ abstract class WatchFace : WatchFaceService() {
                 onWatchModeChanged(currentWatchMode)
             }
 
+            isLiveRender = renderParameters.highlightLayer == null &&
+                renderParameters.watchFaceLayers == WatchFaceLayer.ALL_WATCH_FACE_LAYERS
             lowBitAmbient = wState.hasLowBitAmbient
             burnInProtection = wState.hasBurnInProtection
 
@@ -322,6 +343,7 @@ abstract class WatchFace : WatchFaceService() {
             latestTime.minute = zonedDateTime.minute
             latestTime.second = zonedDateTime.second
             latestTime.timezone = zonedDateTime.zone.id
+            latestEpochMillis = zonedDateTime.toInstant().toEpochMilli()
 
             onTimeChanged(previousTime, latestTime)
 
@@ -337,6 +359,7 @@ abstract class WatchFace : WatchFaceService() {
             previousTime.set(latestTime)
             latestTime.setToNow()
             latestTime.timezone = TimeZone.getDefault().id
+            latestEpochMillis = System.currentTimeMillis()
 
             onTimeChanged(previousTime, latestTime)
 
@@ -358,6 +381,51 @@ abstract class WatchFace : WatchFaceService() {
             }
         }
     }
+
+    // ---------------------------------------------------------------- offline render harness (tests only)
+
+    /**
+     * Offline render harness only (wear/src/test, WatchfaceRenderHarness); never called on the watch. Sets the frame
+     * state exactly as [WatchFaceRenderer.render] does (bounds, mode, live render, time) and draws one frame with
+     * [onDraw]. [time] is the shown clock, [nowMillis] the renderer's epoch time ([latestEpochMillis]).
+     */
+    @VisibleForTesting
+    internal fun renderOffline(canvas: Canvas, time: ZonedDateTime, nowMillis: Long, ambient: Boolean, lowBit: Boolean, burnIn: Boolean, is24h: Boolean) {
+        if (faceRect.width() != canvas.width || faceRect.height() != canvas.height) {
+            faceRect.set(0, 0, canvas.width, canvas.height)
+            watchShape = if (canvas.width == canvas.height) WatchShape.CIRCLE else WatchShape.SQUARE
+            if (!layoutComplete) {
+                onLayout(watchShape, faceRect, null)
+                layoutComplete = true
+            }
+        }
+        if (isAmbient != ambient) {
+            isAmbient = ambient
+            onWatchModeChanged(currentWatchMode)
+        }
+        isLiveRender = true
+        lowBitAmbient = lowBit
+        burnInProtection = burnIn
+        previousTime.set(latestTime)
+        latestTime.year = time.year
+        latestTime.month = time.monthValue - 1
+        latestTime.monthDay = time.dayOfMonth
+        latestTime.hour = time.hour
+        latestTime.minute = time.minute
+        latestTime.second = time.second
+        latestTime.timezone = time.zone.id
+        latestEpochMillis = nowMillis
+        onTimeChanged(previousTime, latestTime)
+        if (is24h != is24HourFormat) {
+            is24HourFormat = is24h
+            on24HourFormatChanged(is24h)
+        }
+        onDraw(canvas)
+    }
+
+    /** Offline render harness only: a tap as the renderer's tap listener delivers it. */
+    @VisibleForTesting
+    internal fun tapOffline(tapType: Int, x: Int, y: Int, eventTime: Long) = onTapCommand(tapType, x, y, eventTime)
 
     // Helper method for subclasses to trigger invalidation
     fun invalidate() {

@@ -200,14 +200,16 @@ sealed class EventData : Event() {
     @Serializable
     data class ActionTempTargetConfirmed(val isMgdl: Boolean = true, val duration: Int = 0, val low: Double = 0.0, val high: Double = 0.0) : EventData()
 
+    /** [requestId] echoes the id of the phone's precheck (0 = none, from an old phone: refused). */
     @Serializable
-    data class ActionBolusConfirmed(val insulin: Double, val carbs: Int) : EventData()
+    data class ActionBolusConfirmed(val insulin: Double, val carbs: Int, val requestId: Long = 0L) : EventData()
 
     @Serializable
     data class ActionECarbsConfirmed(val carbs: Int, val carbsTime: Long, val duration: Int) : EventData()
 
+    /** [requestId] echoes the id of the phone's precheck (0 = none, from an old phone: refused). */
     @Serializable
-    data class ActionFillConfirmed(val insulin: Double) : EventData()
+    data class ActionFillConfirmed(val insulin: Double, val requestId: Long = 0L) : EventData()
 
     @Serializable
     data class ActionProfileSwitchConfirmed(val timeShift: Int, val percentage: Int, val duration: Int) : EventData()
@@ -366,7 +368,13 @@ sealed class EventData : Event() {
         val tempTargetLevel: Int,
         val reservoirString: String,
         val reservoir: Double,
-        val reservoirLevel: Int
+        val reservoirLevel: Int,
+        /**
+         * Time of the last loop run (APS decision, Loop.lastRun.lastAPSRun; on AAPSClient the last suggested time),
+         * 0 = unknown (no run since app start, or an older phone app). Unlike [openApsStatus] (last temp basal enact,
+         * -1 on runs that enact nothing) it moves on every loop run. Kept last with a default for older data.
+         */
+        val lastLoopRunAt: Long = 0
     ) : EventData(), EventDataSet
 
     @Serializable

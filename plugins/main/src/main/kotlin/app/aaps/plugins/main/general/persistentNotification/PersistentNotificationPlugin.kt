@@ -25,6 +25,8 @@ import app.aaps.core.interfaces.rx.events.EventAutosensCalculationFinished
 import app.aaps.core.interfaces.rx.events.EventInitializationChanged
 import app.aaps.core.interfaces.rx.events.EventPreferenceChange
 import app.aaps.core.interfaces.rx.events.EventRefreshOverview
+import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.StringKey
 import app.aaps.core.interfaces.ui.IconsProvider
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
@@ -32,8 +34,10 @@ import app.aaps.core.objects.extensions.generateCOBString
 import app.aaps.core.objects.extensions.round
 import app.aaps.core.objects.extensions.toStringShort
 import app.aaps.plugins.main.R
+import io.reactivex.rxjava3.core.Observable
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -83,20 +87,24 @@ class PersistentNotificationPlugin @Inject constructor(
     override fun onStart() {
         super.onStart()
         notificationHolder.createNotificationChannel()
-        disposable += rxBus
-            .toObservable(EventRefreshOverview::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ triggerNotificationUpdate() }, fabricPrivacy::logException)
-        disposable += rxBus
-            .toObservable(EventInitializationChanged::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ triggerNotificationUpdate() }, fabricPrivacy::logException)
-        disposable += rxBus
-            .toObservable(EventAutosensCalculationFinished::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ triggerNotificationUpdate() }, fabricPrivacy::logException)
-        disposable += rxBus
-            .toObservable(EventPreferenceChange::class.java)
+        // Every rebuild reads the last BG, IOB (bolus and basal, from the DB) and COB and posts the
+        // notification. The triggers come in bursts: after a BG the calculation, the loop and the
+        // overview each fire within seconds, and an open settings screen forwards every preference
+        // write (a NSClient full re-sync wrote ~20,000 of them in 23 s). Of the preferences only
+        // the ones in [NOTIFICATION_PREFERENCE_KEYS] change the text, so only those rebuild it. One
+        // rebuild per [UPDATE_WINDOW_MS] is enough for an ongoing notification: the first event of
+        // a burst is handled at once, the rest of the burst once more when the window ends.
+        disposable += Observable
+            .merge(
+                listOf(
+                    rxBus.toObservable(EventRefreshOverview::class.java),
+                    rxBus.toObservable(EventInitializationChanged::class.java),
+                    rxBus.toObservable(EventAutosensCalculationFinished::class.java),
+                    rxBus.toObservable(EventPreferenceChange::class.java)
+                        .filter { it.changedKey in NOTIFICATION_PREFERENCE_KEYS }
+                ).map { events -> events.map { } }
+            )
+            .throttleLatest(UPDATE_WINDOW_MS, TimeUnit.MILLISECONDS, aapsSchedulers.io, true)
             .observeOn(aapsSchedulers.io)
             .subscribe({ triggerNotificationUpdate() }, fabricPrivacy::logException)
     }
@@ -108,8 +116,15 @@ class PersistentNotificationPlugin @Inject constructor(
     }
 
     private fun triggerNotificationUpdate() {
-        updateNotification()
-        dummyServiceHelper.startService(context)
+        // An exception reaching the subscriber would dispose the merged, throttled stream and stop
+        // every later rebuild (e.g. ForegroundServiceStartNotAllowedException from startService
+        // while the app is in the background). Log it and keep the stream alive.
+        try {
+            updateNotification()
+            dummyServiceHelper.startService(context)
+        } catch (e: Exception) {
+            fabricPrivacy.logException(e)
+        }
     }
 
     private fun updateNotification() {
@@ -148,24 +163,22 @@ class PersistentNotificationPlugin @Inject constructor(
             //IOB
             val bolusIob = iobCobCalculator.calculateIobFromBolus().round()
             val basalIob = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().round()
+            // each read once: COB and the profile name query the DB, the pump getter logs a line
+            val cob = iobCobCalculator.getCobInfo("PersistentNotificationPlugin").generateCOBString(decimalFormatter)
             line2 =
                 rh.gs(app.aaps.core.ui.R.string.treatments_iob_label_string) + " " + rh.gs(app.aaps.core.ui.R.string.format_insulin_units, (bolusIob.iob + basalIob.basaliob)) + " " + rh.gs(
                     app.aaps.core.ui.R
                         .string.cob
-                ) + ": " + iobCobCalculator.getCobInfo(
-                    "PersistentNotificationPlugin"
-                ).generateCOBString(decimalFormatter)
+                ) + ": " + cob
             val line2aa =
                 rh.gs(app.aaps.core.ui.R.string.treatments_iob_label_string) + " " + rh.gs(app.aaps.core.ui.R.string.format_insulin_units, (bolusIob.iob + basalIob.basaliob)) + ". " + rh.gs(
                     app.aaps.core.ui.R
                         .string.cob
-                ) + ": " + iobCobCalculator.getCobInfo(
-                    "PersistentNotificationPlugin"
-                ).generateCOBString(decimalFormatter) + "."
-            line3 = rh.gs(app.aaps.core.ui.R.string.pump_base_basal_rate, pump.baseBasalRate)
-            var line3aa = rh.gs(app.aaps.core.ui.R.string.pump_base_basal_rate, pump.baseBasalRate) + "."
-            line3 += " - " + profileFunction.getProfileName()
-            line3aa += " - " + profileFunction.getProfileName() + "."
+                ) + ": " + cob + "."
+            val baseBasalRate = rh.gs(app.aaps.core.ui.R.string.pump_base_basal_rate, pump.baseBasalRate)
+            val profileName = profileFunction.getProfileName()
+            line3 = "$baseBasalRate - $profileName"
+            var line3aa = "$baseBasalRate. - $profileName."
             /// For Android Auto
             val msgReadIntent = Intent()
                 .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
@@ -224,5 +237,18 @@ class PersistentNotificationPlugin @Inject constructor(
         val notification = builder.build()
         mNotificationManager.notify(notificationHolder.notificationID, notification)
         notificationHolder.notification = notification
+    }
+
+    companion object {
+
+        /** At most one notification rebuild per this many ms; the last event of a burst is never lost. */
+        const val UPDATE_WINDOW_MS = 2_000L
+
+        /**
+         * The preferences the notification text depends on: the glucose units (ProfileUtil), the
+         * language and simple mode (LocaleHelper reads simple_mode before language). Any other
+         * preference shows with the next rebuild after a BG.
+         */
+        val NOTIFICATION_PREFERENCE_KEYS = setOf(StringKey.GeneralUnits.key, StringKey.GeneralLanguage.key, BooleanKey.GeneralSimpleMode.key)
     }
 }

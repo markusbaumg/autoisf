@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- German strings of the "AAPS Halo" watch face; values-de so that de-CH and de-AT use them too. -->
+<resources>
+    <string name="halo_bolus_again">nochmal</string>
+    <string name="halo_bolus_sent">Bolus-Anfrage gesendet. Auf der Uhr bestätigen.</string>
+    <string name="halo_bolus_refused_max">%1$s U liegt über dem Max-Bolus (%2$s U)</string>
+    <string name="halo_bolus_refused_phone">Telefon nicht verbunden. Keine Anfrage gesendet.</string>
+    <string name="halo_bolus_refused_stale">Keine aktuellen Daten vom Telefon. Keine Anfrage gesendet.</string>
+    <string name="halo_bolus_refused_pending">Eine Anfrage läuft bereits. Bitte auf der Uhr prüfen.</string>
+    <string name="halo_bolus_refused_wear_control">Wear-Steuerung ist auf dem Telefon aus.</string>
+</resources>

@@ -18,6 +18,10 @@ import app.aaps.plugins.sync.nsclientV3.keys.NsclientLongKey
 import app.aaps.shared.tests.TestBaseWithProfile
 import com.google.common.truth.Truth.assertThat
 import io.reactivex.rxjava3.core.Maybe
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -26,9 +30,12 @@ import org.mockito.internal.verification.Times
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.clearInvocations
+import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
 
 class DataSyncSelectorV3Test : TestBaseWithProfile() {
 
@@ -1057,5 +1064,331 @@ class DataSyncSelectorV3Test : TestBaseWithProfile() {
         verify(preferences, Times(1)).put(NsclientLongKey.CarbsLastSyncedId, 6L)
         verify(preferences, Times(1)).put(NsclientLongKey.CarbsLastSyncedId, 7L)
         verify(preferences, Times(1)).put(NsclientLongKey.CarbsLastSyncedId, 8L)
+    }
+
+    private fun bolus(id: Long, alreadyInNs: Boolean) =
+        BS(timestamp = id * 60_000L, amount = 1.0, type = BS.Type.NORMAL, ids = if (alreadyInNs) IDs(nightscoutId = "ns$id") else IDs()).also { it.id = id }
+
+    /**
+     * Boluses with ids 1..[count], walked from pointer 0. [alreadyInNs]: loaded from NS, so the walk
+     * skips them locally (the re-walk after a DB cleanup); otherwise each one is uploaded, which succeeds.
+     */
+    private fun walkOfBoluses(count: Long, alreadyInNs: Boolean) = runBlocking {
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        whenever(persistenceLayer.getLastBolusId()).thenReturn(count)
+        // the stored pointer: starts at 0 and keeps what is written, as the real preference does
+        var stored = 0L
+        whenever(preferences.get(NsclientLongKey.BolusLastSyncedId)).thenAnswer { stored }
+        doAnswer { invocation -> stored = invocation.getArgument(1); Unit }.whenever(preferences).put(eq(NsclientLongKey.BolusLastSyncedId), any<Long>())
+        whenever(activePlugin.activeNsClient).thenReturn(nsClient)
+        whenever(nsClient.nsAdd(eq("treatments"), any(), any(), anyOrNull())).thenReturn(true)
+        whenever(persistenceLayer.getNextSyncElementBolus(any())).thenAnswer { invocation ->
+            val id = invocation.getArgument<Long>(0) + 1
+            if (id <= count) Maybe.just(Pair(bolus(id, alreadyInNs), bolus(id, alreadyInNs))) else Maybe.empty()
+        }
+    }
+
+    @Test
+    fun skippedRecordsMoveThePointerInMemoryAndWriteItOnceAtTheEndTest() = runBlocking {
+        walkOfBoluses(3, alreadyInNs = true)
+        sut.processChangedBoluses()
+        // every record was walked from the in-memory pointer, none uploaded ...
+        for (id in 0L..3L) verify(persistenceLayer, Times(1)).getNextSyncElementBolus(id)
+        verify(nsClient, Times(0)).nsAdd(any(), any(), any(), anyOrNull())
+        // ... and the preference was written once, with the last id
+        verify(preferences, Times(0)).put(NsclientLongKey.BolusLastSyncedId, 1L)
+        verify(preferences, Times(0)).put(NsclientLongKey.BolusLastSyncedId, 2L)
+        verify(preferences, Times(1)).put(NsclientLongKey.BolusLastSyncedId, 3L)
+        Unit
+    }
+
+    @Test
+    fun uploadedRecordsWriteThePointerAtOnceTest() = runBlocking {
+        walkOfBoluses(3, alreadyInNs = false)
+        sut.processChangedBoluses()
+        verify(nsClient, Times(3)).nsAdd(eq("treatments"), any(), any(), anyOrNull())
+        for (id in 1L..3L) verify(preferences, Times(1)).put(NsclientLongKey.BolusLastSyncedId, id)
+        Unit
+    }
+
+    @Test
+    fun longSkipWalkWritesThePointerEveryConfirmEveryRecordsTest() = runBlocking {
+        val count = DataSyncSelectorV3.CONFIRM_EVERY * 2L + 7
+        walkOfBoluses(count, alreadyInNs = true)
+        sut.processChangedBoluses()
+        verify(preferences, Times(1)).put(NsclientLongKey.BolusLastSyncedId, DataSyncSelectorV3.CONFIRM_EVERY.toLong())
+        verify(preferences, Times(1)).put(NsclientLongKey.BolusLastSyncedId, DataSyncSelectorV3.CONFIRM_EVERY * 2L)
+        verify(preferences, Times(1)).put(NsclientLongKey.BolusLastSyncedId, count)
+        verify(preferences, Times(3)).put(eq(NsclientLongKey.BolusLastSyncedId), any())
+        Unit
+    }
+
+    @Test
+    fun failedUploadKeepsThePointerBeforeTheFailedRecordTest() = runBlocking {
+        walkOfBoluses(3, alreadyInNs = false)
+        // the second upload fails: the walk stops, the pointer stays at 1
+        whenever(nsClient.nsAdd(eq("treatments"), any(), any(), anyOrNull())).thenReturn(true, false)
+        sut.processChangedBoluses()
+        verify(persistenceLayer, Times(0)).getNextSyncElementBolus(2L)
+        verify(preferences, Times(1)).put(NsclientLongKey.BolusLastSyncedId, 1L)
+        verify(preferences, Times(0)).put(NsclientLongKey.BolusLastSyncedId, 2L)
+        Unit
+    }
+
+    @Test
+    fun resetDuringTheWalkDropsThePendingPointerTest() = runBlocking {
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        // one skipped record confirmed in memory, then the table is empty (cleanup): the pointer is
+        // reset to 0 and the pending 1 must not come back
+        whenever(persistenceLayer.getLastBolusId()).thenReturn(1L, 0L)
+        whenever(preferences.get(NsclientLongKey.BolusLastSyncedId)).thenReturn(0L)
+        whenever(activePlugin.activeNsClient).thenReturn(nsClient)
+        whenever(persistenceLayer.getNextSyncElementBolus(0L)).thenReturn(Maybe.just(Pair(bolus(1, true), bolus(1, true))), Maybe.empty())
+        sut.processChangedBoluses()
+        verify(preferences, Times(1)).put(NsclientLongKey.BolusLastSyncedId, 0)
+        verify(preferences, Times(0)).put(NsclientLongKey.BolusLastSyncedId, 1L)
+        Unit
+    }
+
+    @Test
+    fun fullSyncRequestedDuringTheWalkRestartsItFromZeroTest() = runBlocking {
+        // the walk starts at 5 and skips 6 and 7 in memory; then a Full sync removes the stored
+        // pointer: the pending 7 is stale, the walk must restart at 0 and write 8 at its end
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        var stored = 5L
+        var iterations = 0
+        whenever(persistenceLayer.getLastBolusId()).thenAnswer { if (++iterations == 3) stored = 0; 8L }
+        whenever(preferences.get(NsclientLongKey.BolusLastSyncedId)).thenAnswer { stored }
+        doAnswer { invocation -> stored = invocation.getArgument(1); Unit }.whenever(preferences).put(eq(NsclientLongKey.BolusLastSyncedId), any<Long>())
+        whenever(activePlugin.activeNsClient).thenReturn(nsClient)
+        whenever(persistenceLayer.getNextSyncElementBolus(any())).thenAnswer { invocation ->
+            val id = invocation.getArgument<Long>(0) + 1
+            if (id <= 8) Maybe.just(Pair(bolus(id, true), bolus(id, true))) else Maybe.empty()
+        }
+        sut.processChangedBoluses()
+        verify(persistenceLayer, Times(1)).getNextSyncElementBolus(0L)
+        verify(persistenceLayer, Times(2)).getNextSyncElementBolus(6L)
+        verify(preferences, Times(0)).put(NsclientLongKey.BolusLastSyncedId, 7L)
+        verify(preferences, Times(1)).put(NsclientLongKey.BolusLastSyncedId, 8L)
+        verify(preferences, Times(1)).put(eq(NsclientLongKey.BolusLastSyncedId), any())
+        Unit
+    }
+
+    @Test
+    fun pauseDuringTheWalkWritesThePendingPointerTest() = runBlocking {
+        walkOfBoluses(3, alreadyInNs = true)
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false, false, true)
+        sut.processChangedBoluses()
+        verify(preferences, Times(1)).put(NsclientLongKey.BolusLastSyncedId, 2L)
+        verify(preferences, Times(1)).put(eq(NsclientLongKey.BolusLastSyncedId), any())
+        Unit
+    }
+
+    /**
+     * The stored bolus pointer as the real preference keeps it: starts at [initial], keeps what
+     * is written, is 0 after a remove (Full sync). Every write is recorded in [writes].
+     */
+    private class StoredPointer(initial: Long) {
+
+        @Volatile var value = initial
+        val writes: MutableList<Long> = Collections.synchronizedList(mutableListOf())
+    }
+
+    private fun storedBolusPointer(initial: Long): StoredPointer {
+        val stored = StoredPointer(initial)
+        whenever(preferences.get(NsclientLongKey.BolusLastSyncedId)).thenAnswer { stored.value }
+        doAnswer { invocation -> stored.value = invocation.getArgument(1); stored.writes.add(stored.value); Unit }
+            .whenever(preferences).put(eq(NsclientLongKey.BolusLastSyncedId), any<Long>())
+        doAnswer { stored.value = 0L; Unit }.whenever(preferences).remove(NsclientLongKey.BolusLastSyncedId)
+        return stored
+    }
+
+    @Test
+    fun aFlushNeverMovesThePointerBackwardsTest() = runBlocking {
+        // the walk skips 1..3 in memory; before its final flush an overlapping writer stored 50:
+        // the pending 3 must not overwrite it (the old confirmLast*IdIfGreater semantics)
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        whenever(persistenceLayer.getLastBolusId()).thenReturn(100L)
+        val stored = storedBolusPointer(0L)
+        whenever(activePlugin.activeNsClient).thenReturn(nsClient)
+        whenever(persistenceLayer.getNextSyncElementBolus(any())).thenAnswer { invocation ->
+            val id = invocation.getArgument<Long>(0) + 1
+            if (id <= 3) Maybe.just(Pair(bolus(id, true), bolus(id, true)))
+            else {
+                sut.confirmLastBolusIdIfGreater(50)
+                Maybe.empty()
+            }
+        }
+        sut.processChangedBoluses()
+        assertThat(stored.writes).containsExactly(50L)
+        assertThat(stored.value).isEqualTo(50L)
+    }
+
+    @Test
+    fun overlappingWritersNeverMoveThePointerBackwardsTest() = runBlocking {
+        // records 1..20: odd ones are uploaded, even ones skipped. While record 5 is uploaded an
+        // overlapping writer moves the stored pointer to 12. No write of the walk may go below
+        // what is stored, the walk continues after 12 and ends at 20.
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        whenever(persistenceLayer.getLastBolusId()).thenReturn(20L)
+        val stored = storedBolusPointer(0L)
+        whenever(activePlugin.activeNsClient).thenReturn(nsClient)
+        whenever(persistenceLayer.getNextSyncElementBolus(any())).thenAnswer { invocation ->
+            val id = invocation.getArgument<Long>(0) + 1
+            if (id <= 20) Maybe.just(Pair(bolus(id, id % 2 == 0L), bolus(id, id % 2 == 0L))) else Maybe.empty()
+        }
+        whenever(nsClient.nsAdd(eq("treatments"), any(), any(), anyOrNull())).thenAnswer { invocation ->
+            if (invocation.getArgument<DataSyncSelector.PairBolus>(1).value.id == 5L) sut.confirmLastBolusIdIfGreater(12)
+            true
+        }
+        sut.processChangedBoluses()
+        assertThat(stored.writes).isInOrder()
+        assertThat(stored.writes).doesNotContain(5L)
+        assertThat(stored.value).isEqualTo(20L)
+        verify(persistenceLayer, Times(0)).getNextSyncElementBolus(5L)
+        verify(persistenceLayer, Times(1)).getNextSyncElementBolus(12L)
+        Unit
+    }
+
+    @Test
+    fun fullSyncDuringASkipWalkFromZeroRestartsAtZeroTest() = runBlocking {
+        // the walk starts at 0 and skips 1 and 2 in memory; then a Full sync: the stored value is 0
+        // again (as at the start, so the stored value alone cannot tell), the walk must restart at 0
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        val stored = storedBolusPointer(0L)
+        var iterations = 0
+        whenever(persistenceLayer.getLastBolusId()).thenAnswer { if (++iterations == 3) sut.resetToNextFullSync(); 5L }
+        whenever(activePlugin.activeNsClient).thenReturn(nsClient)
+        whenever(persistenceLayer.getNextSyncElementBolus(any())).thenAnswer { invocation ->
+            val id = invocation.getArgument<Long>(0) + 1
+            if (id <= 5) Maybe.just(Pair(bolus(id, true), bolus(id, true))) else Maybe.empty()
+        }
+        sut.processChangedBoluses()
+        verify(persistenceLayer, Times(2)).getNextSyncElementBolus(0L)
+        verify(persistenceLayer, Times(2)).getNextSyncElementBolus(1L)
+        assertThat(stored.writes).containsExactly(5L)
+        Unit
+    }
+
+    @Test
+    fun fullSyncDuringAnUploadFromZeroRestartsAtZeroTest() = runBlocking {
+        // record 1 is uploaded and written; while record 2 is uploaded a Full sync removes the
+        // pointer: 2 must not be written back (the Full sync would then skip record 1), the walk
+        // restarts at 0 and uploads 1, 2 and 3
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        whenever(persistenceLayer.getLastBolusId()).thenReturn(3L)
+        val stored = storedBolusPointer(0L)
+        whenever(activePlugin.activeNsClient).thenReturn(nsClient)
+        whenever(persistenceLayer.getNextSyncElementBolus(any())).thenAnswer { invocation ->
+            val id = invocation.getArgument<Long>(0) + 1
+            if (id <= 3) Maybe.just(Pair(bolus(id, false), bolus(id, false))) else Maybe.empty()
+        }
+        var uploads = 0
+        whenever(nsClient.nsAdd(eq("treatments"), any(), any(), anyOrNull())).thenAnswer {
+            if (++uploads == 2) sut.resetToNextFullSync()
+            true
+        }
+        sut.processChangedBoluses()
+        verify(persistenceLayer, Times(2)).getNextSyncElementBolus(0L)
+        assertThat(stored.writes).containsExactly(1L, 1L, 2L, 3L).inOrder()
+        Unit
+    }
+
+    @Test
+    fun fullSyncJustBeforeTheFlushIsNotOverwrittenTest() = runBlocking {
+        // the walk from 0 has 1..3 pending in memory; a Full sync happens in the window between the
+        // flush reading the stored value and writing it (stored value 0 = the pending base 0).
+        // The flush must not write 3 back.
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        whenever(persistenceLayer.getLastBolusId()).thenReturn(3L)
+        val stored = storedBolusPointer(0L)
+        var armed = false
+        whenever(preferences.get(NsclientLongKey.BolusLastSyncedId)).thenAnswer {
+            if (armed) {
+                armed = false
+                sut.resetToNextFullSync()
+            }
+            stored.value
+        }
+        whenever(activePlugin.activeNsClient).thenReturn(nsClient)
+        whenever(persistenceLayer.getNextSyncElementBolus(any())).thenAnswer { invocation ->
+            val id = invocation.getArgument<Long>(0) + 1
+            if (id <= 3) Maybe.just(Pair(bolus(id, true), bolus(id, true)))
+            else {
+                armed = true // the next read of the pointer is the flush's
+                Maybe.empty()
+            }
+        }
+        sut.processChangedBoluses()
+        assertThat(armed).isFalse()
+        assertThat(stored.writes).isEmpty()
+        assertThat(stored.value).isEqualTo(0L)
+    }
+
+    /** Everything but boluses empty, uploads enabled: what [DataSyncSelectorV3.doUpload] needs. */
+    private fun onlyBolusesToUpload() {
+        whenever(preferences.get(BooleanKey.NsClientUploadData)).thenReturn(true)
+        whenever(persistenceLayer.getLastCarbsId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastBolusCalculatorResultId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastTemporaryTargetId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastGlucoseValueId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastTherapyEventId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastDeviceStatusId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastTemporaryBasalId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastExtendedBolusId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastProfileSwitchId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastEffectiveProfileSwitchId()).thenReturn(0L)
+        whenever(persistenceLayer.getLastRunningModeId()).thenReturn(0L)
+        whenever(persistenceLayer.getNextSyncElementCarbs(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementBolusCalculatorResult(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementTemporaryTarget(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementGlucoseValue(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementTherapyEvent(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementDeviceStatus(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementTemporaryBasal(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementExtendedBolus(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementProfileSwitch(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementEffectiveProfileSwitch(0)).thenReturn(Maybe.empty())
+        whenever(persistenceLayer.getNextSyncElementRunningMode(0)).thenReturn(Maybe.empty())
+    }
+
+    @Test
+    fun twoConcurrentWalksDoNotInterfereTest() = runBlocking {
+        // two walks started at the same time on two threads, 30 records: odd ones uploaded, even
+        // ones skipped. The walks run one after the other: no upload overlaps another, every
+        // record is uploaded once, the pointer only moves forward and ends at 30.
+        val count = 30L
+        whenever(preferences.get(NsclientBooleanKey.NsPaused)).thenReturn(false)
+        onlyBolusesToUpload()
+        whenever(persistenceLayer.getLastBolusId()).thenReturn(count)
+        val stored = storedBolusPointer(0L)
+        whenever(activePlugin.activeNsClient).thenReturn(nsClient)
+        whenever(persistenceLayer.getNextSyncElementBolus(any())).thenAnswer { invocation ->
+            val id = invocation.getArgument<Long>(0) + 1
+            if (id <= count) Maybe.just(Pair(bolus(id, id % 2 == 0L), bolus(id, id % 2 == 0L))) else Maybe.empty()
+        }
+        val active = AtomicInteger()
+        val maxActive = AtomicInteger()
+        val uploaded = Collections.synchronizedList(mutableListOf<Long>())
+        whenever(nsClient.nsAdd(eq("treatments"), any(), any(), anyOrNull())).thenAnswer { invocation ->
+            maxActive.accumulateAndGet(active.incrementAndGet(), ::maxOf)
+            Thread.sleep(2)
+            uploaded.add(invocation.getArgument<DataSyncSelector.PairBolus>(1).value.id)
+            active.decrementAndGet()
+            true
+        }
+        val start = CompletableDeferred<Unit>()
+        val walks = List(2) {
+            async(Dispatchers.Default) {
+                start.await()
+                sut.doUpload()
+            }
+        }
+        start.complete(Unit)
+        walks.awaitAll()
+        assertThat(maxActive.get()).isEqualTo(1)
+        assertThat(uploaded).containsExactlyElementsIn((1L..count step 2).toList()).inOrder()
+        assertThat(stored.writes).isInOrder()
+        assertThat(stored.value).isEqualTo(count)
     }
 }

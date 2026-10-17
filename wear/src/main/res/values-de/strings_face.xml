@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="face_waiting">Warte auf AAPS</string>
+    <string name="face_phone_lost">Telefon getrennt · %1$s</string>
+    <string name="face_no_data">Keine Daten · %1$s</string>
+    <string name="face_no_profile">Kein Profil</string>
+    <string name="face_loop_off">Loop aus</string>
+    <string name="face_loop_off_short">aus</string>
+    <string name="face_loop_age">Loop %1$s</string>
+    <string name="face_loop_open">Offen</string>
+    <string name="face_reservoir">Reservoir %1$s</string>
+    <string name="face_phone_batt">Tel %1$d %%</string>
+    <string name="face_low">TIEF</string>
+    <string name="face_high">HOCH</string>
+    <string name="face_hours">%1$d Std</string>
+    <string name="face_days">%1$d T</string>
+    <string name="face_bolus_unit">U</string>
+</resources>

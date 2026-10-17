@@ -1,6 +1,7 @@
 package app.aaps.plugins.sync.nsclientV3
 
 import androidx.annotation.OpenForTesting
+import androidx.annotation.VisibleForTesting
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -11,6 +12,7 @@ import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.source.NSClientSource
 import app.aaps.core.interfaces.sync.DataSyncSelector
+import app.aaps.core.interfaces.sync.NsClient
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.LongNonKey
@@ -21,6 +23,8 @@ import app.aaps.plugins.sync.nsShared.events.EventNSClientUpdateGuiStatus
 import app.aaps.plugins.sync.nsShared.extensions.onlyNsIdAdded
 import app.aaps.plugins.sync.nsclientV3.keys.NsclientBooleanKey
 import app.aaps.plugins.sync.nsclientV3.keys.NsclientLongKey
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -79,63 +83,196 @@ class DataSyncSelectorV3 @Inject constructor(
 
     val bgUploadEnabled @OpenForTesting get() = preferences.get(BooleanKey.BgSourceUploadToNs) && activePlugin.activeBgSource !is NSClientSource
 
+    /**
+     * Sync pointers confirmed during the current walk and not yet written to the preferences.
+     *
+     * Every handled record used to be a preference write at once, also the records a walk only
+     * skips locally ("Loaded from NS", "Only NS id changed"): after "Cleanup databases" the pointers
+     * were above the tables' highest ids, every pointer was reset to 0 and 23,114 records were
+     * walked in 26 s, all of them skips and all of them a write, and every write is forwarded as
+     * EventPreferenceChange while a settings screen is open. The pointer now advances in memory:
+     * a record that was uploaded (nsAdd/nsUpdate succeeded) still writes it at once, as before;
+     * skipped records write it every [CONFIRM_EVERY] records and at the end of the walk (empty
+     * result, failed upload, pause, exception). The reset to 0 is still written at once: it is
+     * also upstream's retry path for failed uploads. Worst case after a process death mid-walk:
+     * up to [CONFIRM_EVERY] - 1 already skipped records are skipped again, without a network call.
+     * The confirmLast*IdIfGreater functions keep writing at once.
+     *
+     * Every pointer write of a walk keeps the old confirmLast*IdIfGreater semantics: it only moves
+     * the stored pointer forward. And it is dropped when a Full sync happened since the walk read
+     * the pointer ([fullSyncGeneration] changed) or the stored value moved below the value the
+     * pending pointer was built on. Check and write run under [pointerLock], as does
+     * [resetToNextFullSync], so a Full sync cannot slip in between and be overwritten.
+     *
+     * The walk state ([pendingPointers], [pendingConfirms], [walkUploaded], [readGenerations]) is
+     * owned by one walk at a time: [doUpload] holds [walkMutex] for the whole walk.
+     */
+    private val pendingPointers = HashMap<NsclientLongKey, PendingPointer>()
+    private var pendingConfirms = 0
+    private var walkUploaded = false
+
+    /** The [fullSyncGeneration] at which the walk last read each pointer (see lastSyncedId). */
+    private val readGenerations = HashMap<NsclientLongKey, Long>()
+
+    /** Guards the pointer check-and-write against [resetToNextFullSync] (called from the UI). */
+    private val pointerLock = Any()
+
+    /** Incremented by every [resetToNextFullSync]; a pending or uploaded pointer from an older generation is stale. */
+    private var fullSyncGeneration = 0L
+
+    /** One sync walk at a time: overlapping [doUpload] calls wait for the running one. */
+    private val walkMutex = Mutex()
+
+    /** A pointer that moved on in memory: [id], built on the stored value [storedBase] in Full sync [generation]. */
+    private class PendingPointer(val storedBase: Long, val id: Long, val generation: Long)
+
+    /** True if [pending] was overtaken by a Full sync or the stored value moved below its base. Under [pointerLock]. */
+    private fun isStale(pending: PendingPointer, stored: Long) =
+        pending.generation != fullSyncGeneration || stored < pending.storedBase
+
+    /**
+     * The id a walk continues from: the pending one, unless the stored value moved backwards since
+     * it was set (a Full sync removed it, see resetToNextFullSync). Then the pending pointer is
+     * stale, it is dropped and the walk restarts from the stored value, as it did when every
+     * record was written at once.
+     */
+    private fun lastSyncedId(key: NsclientLongKey): Long {
+        synchronized(pointerLock) {
+            readGenerations[key] = fullSyncGeneration
+            val stored = preferences.get(key)
+            val pending = pendingPointers[key] ?: return stored
+            if (isStale(pending, stored)) {
+                pendingPointers.remove(key)
+                return stored
+            }
+            return maxOf(pending.id, stored)
+        }
+    }
+
+    private fun resetPointer(key: NsclientLongKey) {
+        synchronized(pointerLock) {
+            pendingPointers.remove(key)
+            preferences.put(key, 0)
+        }
+    }
+
+    /** The client for an upload; the record handled next was not a local skip. */
+    private fun uploading(): NsClient? {
+        walkUploaded = true
+        return activePlugin.activeNsClient
+    }
+
+    private fun confirmInWalk(key: NsclientLongKey, lastSynced: Long) {
+        synchronized(pointerLock) {
+            val uploaded = walkUploaded
+            walkUploaded = false
+            // A Full sync since this record was read: drop it, the next round restarts from the stored value
+            if (readGenerations[key] != fullSyncGeneration) {
+                pendingPointers.remove(key)
+                return
+            }
+            val stored = preferences.get(key)
+            val pending = pendingPointers[key]?.takeUnless { isStale(it, stored) }
+            if (pending == null) pendingPointers.remove(key)
+            if (lastSynced <= maxOf(stored, pending?.id ?: stored)) return
+            if (uploaded) {
+                // written at once, as before (stored < lastSynced checked above); it covers the skipped records before it as well
+                pendingPointers.remove(key)
+                pendingConfirms = 0
+                preferences.put(key, lastSynced)
+                return
+            }
+            pendingPointers[key] = PendingPointer(pending?.storedBase ?: stored, lastSynced, fullSyncGeneration)
+            if (++pendingConfirms >= CONFIRM_EVERY) flushPointers()
+        }
+    }
+
+    /**
+     * Writes the pending pointers to the preferences: only forward (id > stored), and not when a
+     * Full sync happened or the stored value moved backwards meanwhile (see lastSyncedId).
+     */
+    @VisibleForTesting internal fun flushPointers() {
+        synchronized(pointerLock) {
+            pendingConfirms = 0
+            walkUploaded = false
+            if (pendingPointers.isEmpty()) return
+            val pointers = pendingPointers.toMap()
+            pendingPointers.clear()
+            pointers.forEach { (key, pending) ->
+                val stored = preferences.get(key)
+                if (!isStale(pending, stored) && pending.id > stored) preferences.put(key, pending.id)
+            }
+        }
+    }
+
     override suspend fun doUpload() {
-        rxBus.send(EventNSClientUpdateGuiStatus())
-        if ((config.AAPSCLIENT || preferences.get(BooleanKey.NsClientUploadData)) && !isPaused) {
-            queueCounter.bolusesRemaining = (persistenceLayer.getLastBolusId() ?: 0L) - preferences.get(NsclientLongKey.BolusLastSyncedId)
-            queueCounter.carbsRemaining = (persistenceLayer.getLastCarbsId() ?: 0L) - preferences.get(NsclientLongKey.CarbsLastSyncedId)
-            queueCounter.bcrRemaining = (persistenceLayer.getLastBolusCalculatorResultId() ?: 0L) - preferences.get(NsclientLongKey.BolusCalculatorLastSyncedId)
-            queueCounter.ttsRemaining = (persistenceLayer.getLastTemporaryTargetId() ?: 0L) - preferences.get(NsclientLongKey.TemporaryTargetLastSyncedId)
+        walkMutex.withLock {
+            rxBus.send(EventNSClientUpdateGuiStatus())
+            if ((config.AAPSCLIENT || preferences.get(BooleanKey.NsClientUploadData)) && !isPaused) {
+                queueCounter.bolusesRemaining = (persistenceLayer.getLastBolusId() ?: 0L) - preferences.get(NsclientLongKey.BolusLastSyncedId)
+                queueCounter.carbsRemaining = (persistenceLayer.getLastCarbsId() ?: 0L) - preferences.get(NsclientLongKey.CarbsLastSyncedId)
+                queueCounter.bcrRemaining = (persistenceLayer.getLastBolusCalculatorResultId() ?: 0L) - preferences.get(NsclientLongKey.BolusCalculatorLastSyncedId)
+                queueCounter.ttsRemaining = (persistenceLayer.getLastTemporaryTargetId() ?: 0L) - preferences.get(NsclientLongKey.TemporaryTargetLastSyncedId)
 // NSCv3 doesn't support food update
 //            queueCounter.foodsRemaining = (persistenceLayer.getLastFoodId() ?: 0L) - preferences.get(NsclientLongKey.FoodLastSyncedId)
-            queueCounter.gvsRemaining = (persistenceLayer.getLastGlucoseValueId() ?: 0L) - preferences.get(NsclientLongKey.GlucoseValueLastSyncedId)
-            queueCounter.tesRemaining = (persistenceLayer.getLastTherapyEventId() ?: 0L) - preferences.get(NsclientLongKey.TherapyEventLastSyncedId)
-            queueCounter.dssRemaining = (persistenceLayer.getLastDeviceStatusId() ?: 0L) - preferences.get(NsclientLongKey.DeviceStatusLastSyncedId)
-            queueCounter.tbrsRemaining = (persistenceLayer.getLastTemporaryBasalId() ?: 0L) - preferences.get(NsclientLongKey.TemporaryBasalLastSyncedId)
-            queueCounter.ebsRemaining = (persistenceLayer.getLastExtendedBolusId() ?: 0L) - preferences.get(NsclientLongKey.ExtendedBolusLastSyncedId)
-            queueCounter.pssRemaining = (persistenceLayer.getLastProfileSwitchId() ?: 0L) - preferences.get(NsclientLongKey.ProfileSwitchLastSyncedId)
-            queueCounter.epssRemaining = (persistenceLayer.getLastEffectiveProfileSwitchId() ?: 0L) - preferences.get(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
-            queueCounter.rmsRemaining = (persistenceLayer.getLastRunningModeId() ?: 0L) - preferences.get(NsclientLongKey.RunningModeLastSyncedId)
-            rxBus.send(EventNSClientUpdateGuiQueue())
-            processChangedGlucoseValues()
-            processChangedBoluses()
-            processChangedCarbs()
-            processChangedBolusCalculatorResults()
-            processChangedTemporaryBasals()
-            processChangedExtendedBoluses()
-            processChangedProfileSwitches()
-            processChangedEffectiveProfileSwitches()
-            processChangedTempTargets()
+                queueCounter.gvsRemaining = (persistenceLayer.getLastGlucoseValueId() ?: 0L) - preferences.get(NsclientLongKey.GlucoseValueLastSyncedId)
+                queueCounter.tesRemaining = (persistenceLayer.getLastTherapyEventId() ?: 0L) - preferences.get(NsclientLongKey.TherapyEventLastSyncedId)
+                queueCounter.dssRemaining = (persistenceLayer.getLastDeviceStatusId() ?: 0L) - preferences.get(NsclientLongKey.DeviceStatusLastSyncedId)
+                queueCounter.tbrsRemaining = (persistenceLayer.getLastTemporaryBasalId() ?: 0L) - preferences.get(NsclientLongKey.TemporaryBasalLastSyncedId)
+                queueCounter.ebsRemaining = (persistenceLayer.getLastExtendedBolusId() ?: 0L) - preferences.get(NsclientLongKey.ExtendedBolusLastSyncedId)
+                queueCounter.pssRemaining = (persistenceLayer.getLastProfileSwitchId() ?: 0L) - preferences.get(NsclientLongKey.ProfileSwitchLastSyncedId)
+                queueCounter.epssRemaining = (persistenceLayer.getLastEffectiveProfileSwitchId() ?: 0L) - preferences.get(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
+                queueCounter.rmsRemaining = (persistenceLayer.getLastRunningModeId() ?: 0L) - preferences.get(NsclientLongKey.RunningModeLastSyncedId)
+                rxBus.send(EventNSClientUpdateGuiQueue())
+                try {
+                    processChangedGlucoseValues()
+                    processChangedBoluses()
+                    processChangedCarbs()
+                    processChangedBolusCalculatorResults()
+                    processChangedTemporaryBasals()
+                    processChangedExtendedBoluses()
+                    processChangedProfileSwitches()
+                    processChangedEffectiveProfileSwitches()
+                    processChangedTempTargets()
 // NSCv3 doesn't support food update
 //            processChangedFoods()
-            processChangedTherapyEvents()
-            processChangedDeviceStatuses()
-            processChangedRunningModes()
-            processChangedProfileStore()
-            storeDataForDb.updateNsIds()
-            aapsLogger.debug(LTag.NSCLIENT, "Remaining: $queueCounter")
+                    processChangedTherapyEvents()
+                    processChangedDeviceStatuses()
+                    processChangedRunningModes()
+                    processChangedProfileStore()
+                } finally {
+                    flushPointers()
+                }
+                storeDataForDb.updateNsIds()
+                aapsLogger.debug(LTag.NSCLIENT, "Remaining: $queueCounter")
+            }
+            rxBus.send(EventNSClientUpdateGuiStatus())
         }
-        rxBus.send(EventNSClientUpdateGuiStatus())
     }
 
     override fun resetToNextFullSync() {
-        preferences.remove(NsclientLongKey.GlucoseValueLastSyncedId)
-        preferences.remove(NsclientLongKey.TemporaryBasalLastSyncedId)
-        preferences.remove(NsclientLongKey.TemporaryTargetLastSyncedId)
-        preferences.remove(NsclientLongKey.ExtendedBolusLastSyncedId)
-        preferences.remove(NsclientLongKey.FoodLastSyncedId)
-        preferences.remove(NsclientLongKey.BolusLastSyncedId)
-        preferences.remove(NsclientLongKey.CarbsLastSyncedId)
-        preferences.remove(NsclientLongKey.BolusCalculatorLastSyncedId)
-        preferences.remove(NsclientLongKey.TherapyEventLastSyncedId)
-        preferences.remove(NsclientLongKey.ProfileSwitchLastSyncedId)
-        preferences.remove(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
-        preferences.remove(NsclientLongKey.RunningModeLastSyncedId)
-        preferences.remove(NsclientLongKey.ProfileStoreLastSyncedId)
+        synchronized(pointerLock) {
+            // a running walk sees the new generation and neither writes its pending nor its next uploaded pointer back
+            fullSyncGeneration++
+            pendingPointers.clear()
+            preferences.remove(NsclientLongKey.GlucoseValueLastSyncedId)
+            preferences.remove(NsclientLongKey.TemporaryBasalLastSyncedId)
+            preferences.remove(NsclientLongKey.TemporaryTargetLastSyncedId)
+            preferences.remove(NsclientLongKey.ExtendedBolusLastSyncedId)
+            preferences.remove(NsclientLongKey.FoodLastSyncedId)
+            preferences.remove(NsclientLongKey.BolusLastSyncedId)
+            preferences.remove(NsclientLongKey.CarbsLastSyncedId)
+            preferences.remove(NsclientLongKey.BolusCalculatorLastSyncedId)
+            preferences.remove(NsclientLongKey.TherapyEventLastSyncedId)
+            preferences.remove(NsclientLongKey.ProfileSwitchLastSyncedId)
+            preferences.remove(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
+            preferences.remove(NsclientLongKey.RunningModeLastSyncedId)
+            preferences.remove(NsclientLongKey.ProfileStoreLastSyncedId)
 
-        val lastDeviceStatusDbId = persistenceLayer.getLastDeviceStatusId()
-        if (lastDeviceStatusDbId != null) preferences.put(NsclientLongKey.DeviceStatusLastSyncedId, lastDeviceStatusDbId)
-        else preferences.remove(NsclientLongKey.DeviceStatusLastSyncedId)
+            val lastDeviceStatusDbId = persistenceLayer.getLastDeviceStatusId()
+            if (lastDeviceStatusDbId != null) preferences.put(NsclientLongKey.DeviceStatusLastSyncedId, lastDeviceStatusDbId)
+            else preferences.remove(NsclientLongKey.DeviceStatusLastSyncedId)
+        }
     }
 
     @OpenForTesting
@@ -149,12 +286,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedBoluses() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastBolusId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.BolusLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.BolusLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.BolusLastSyncedId, 0)
+                resetPointer(NsclientLongKey.BolusLastSyncedId)
                 startId = 0
             }
             queueCounter.bolusesRemaining = lastDbId - startId
@@ -169,16 +309,17 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring Bolus. Only NS id changed: ${bolus.second.id} ")
                     // without nsId = create new
                     bolus.first.ids.nightscoutId == null                                      ->
-                        cont = activePlugin.activeNsClient?.nsAdd("treatments", DataSyncSelector.PairBolus(bolus.first, bolus.second.id), " $startId/$lastDbId") == true
+                        cont = uploading()?.nsAdd("treatments", DataSyncSelector.PairBolus(bolus.first, bolus.second.id), " $startId/$lastDbId") == true
                     // with nsId = update if it's modified record
                     bolus.first.ids.nightscoutId != null && bolus.first.id != bolus.second.id ->
-                        cont = activePlugin.activeNsClient?.nsUpdate("treatments", DataSyncSelector.PairBolus(bolus.first, bolus.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsUpdate("treatments", DataSyncSelector.PairBolus(bolus.first, bolus.second.id), "$startId/$lastDbId") == true
                 }
-                if (cont) confirmLastBolusIdIfGreater(bolus.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.BolusLastSyncedId, bolus.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -192,12 +333,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedCarbs() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastCarbsId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.CarbsLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.CarbsLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.CarbsLastSyncedId, 0)
+                resetPointer(NsclientLongKey.CarbsLastSyncedId)
                 startId = 0
             }
             queueCounter.carbsRemaining = lastDbId - startId
@@ -212,16 +356,17 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring Carbs. Only NS id changed ID: ${carb.second.id} ")
                     // without nsId = create new
                     carb.first.ids.nightscoutId == null                                    ->
-                        cont = activePlugin.activeNsClient?.nsAdd("treatments", DataSyncSelector.PairCarbs(carb.first, carb.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsAdd("treatments", DataSyncSelector.PairCarbs(carb.first, carb.second.id), "$startId/$lastDbId") == true
                     // with nsId = update if it's modified record
                     carb.first.ids.nightscoutId != null && carb.first.id != carb.second.id ->
-                        cont = activePlugin.activeNsClient?.nsUpdate("treatments", DataSyncSelector.PairCarbs(carb.first, carb.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsUpdate("treatments", DataSyncSelector.PairCarbs(carb.first, carb.second.id), "$startId/$lastDbId") == true
                 }
-                if (cont) confirmLastCarbsIdIfGreater(carb.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.CarbsLastSyncedId, carb.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -235,12 +380,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedBolusCalculatorResults() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastBolusCalculatorResultId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.BolusCalculatorLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.BolusCalculatorLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.BolusCalculatorLastSyncedId, 0)
+                resetPointer(NsclientLongKey.BolusCalculatorLastSyncedId)
                 startId = 0
             }
             queueCounter.bcrRemaining = lastDbId - startId
@@ -255,24 +403,25 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring BolusCalculatorResult. Only NS id changed ID: ${bolusCalculatorResult.second.id} ")
                     // without nsId = create new
                     bolusCalculatorResult.first.ids.nightscoutId == null                                                                      ->
-                        cont = activePlugin.activeNsClient?.nsAdd(
+                        cont = uploading()?.nsAdd(
                             "treatments",
                             DataSyncSelector.PairBolusCalculatorResult(bolusCalculatorResult.first, bolusCalculatorResult.second.id),
                             "$startId/$lastDbId"
                         ) == true
                     // with nsId = update if it's modified record
                     bolusCalculatorResult.first.ids.nightscoutId != null && bolusCalculatorResult.first.id != bolusCalculatorResult.second.id ->
-                        cont = activePlugin.activeNsClient?.nsUpdate(
+                        cont = uploading()?.nsUpdate(
                             "treatments",
                             DataSyncSelector.PairBolusCalculatorResult(bolusCalculatorResult.first, bolusCalculatorResult.second.id),
                             "$startId/$lastDbId"
                         ) == true
                 }
-                if (cont) confirmLastBolusCalculatorResultsIdIfGreater(bolusCalculatorResult.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.BolusCalculatorLastSyncedId, bolusCalculatorResult.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -286,12 +435,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedTempTargets() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastTemporaryTargetId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.TemporaryTargetLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.TemporaryTargetLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.TemporaryTargetLastSyncedId, 0)
+                resetPointer(NsclientLongKey.TemporaryTargetLastSyncedId)
                 startId = 0
             }
             queueCounter.ttsRemaining = lastDbId - startId
@@ -306,16 +458,17 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring TemporaryTarget. Only NS id changed ID: ${tt.second.id} ")
                     // without nsId = create new
                     tt.first.ids.nightscoutId == null                                ->
-                        cont = activePlugin.activeNsClient?.nsAdd("treatments", DataSyncSelector.PairTemporaryTarget(tt.first, tt.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsAdd("treatments", DataSyncSelector.PairTemporaryTarget(tt.first, tt.second.id), "$startId/$lastDbId") == true
                     // existing with nsId = update
                     tt.first.ids.nightscoutId != null                                ->
-                        cont = activePlugin.activeNsClient?.nsUpdate("treatments", DataSyncSelector.PairTemporaryTarget(tt.first, tt.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsUpdate("treatments", DataSyncSelector.PairTemporaryTarget(tt.first, tt.second.id), "$startId/$lastDbId") == true
                 }
-                if (cont) confirmLastTempTargetsIdIfGreater(tt.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.TemporaryTargetLastSyncedId, tt.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 /*
     @OpenForTesting
@@ -329,12 +482,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedFoods() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastFoodId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.FoodLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.FoodLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.FoodLastSyncedId, 0)
+                resetPointer(NsclientLongKey.FoodLastSyncedId)
                 startId = 0
             }
             queueCounter.foodsRemaining = lastDbId - startId
@@ -349,16 +505,17 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring Food. Only NS id changed ID: ${food.second.id} ")
                     // without nsId = create new
                     food.first.ids.nightscoutId == null                                    ->
-                        cont = activePlugin.activeNsClient?.nsAdd("food", DataSyncSelector.PairFood(food.first, food.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsAdd("food", DataSyncSelector.PairFood(food.first, food.second.id), "$startId/$lastDbId") == true
                     // with nsId = update
                     food.first.ids.nightscoutId != null                                    ->
-                        cont = activePlugin.activeNsClient?.nsUpdate("food", DataSyncSelector.PairFood(food.first, food.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsUpdate("food", DataSyncSelector.PairFood(food.first, food.second.id), "$startId/$lastDbId") == true
                 }
-                if (cont) confirmLastFoodIdIfGreater(food.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.FoodLastSyncedId, food.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 */
     @OpenForTesting
@@ -372,12 +529,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedGlucoseValues() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastGlucoseValueId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.GlucoseValueLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.GlucoseValueLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.GlucoseValueLastSyncedId, 0)
+                resetPointer(NsclientLongKey.GlucoseValueLastSyncedId)
                 startId = 0
             }
             queueCounter.gvsRemaining = lastDbId - startId
@@ -393,17 +553,18 @@ class DataSyncSelectorV3 @Inject constructor(
                             aapsLogger.info(LTag.NSCLIENT, "Ignoring GlucoseValue. Only NS id changed ID: ${gv.second.id} ")
                         // without nsId = create new
                         gv.first.ids.nightscoutId == null                                ->
-                            cont = activePlugin.activeNsClient?.nsAdd("entries", DataSyncSelector.PairGlucoseValue(gv.first, gv.second.id), "$startId/$lastDbId") == true
+                            cont = uploading()?.nsAdd("entries", DataSyncSelector.PairGlucoseValue(gv.first, gv.second.id), "$startId/$lastDbId") == true
                         // with nsId = update
                         else                                                             ->  //  gv.first.interfaceIDs.nightscoutId != null
-                            cont = activePlugin.activeNsClient?.nsUpdate("entries", DataSyncSelector.PairGlucoseValue(gv.first, gv.second.id), "$startId/$lastDbId") == true
+                            cont = uploading()?.nsUpdate("entries", DataSyncSelector.PairGlucoseValue(gv.first, gv.second.id), "$startId/$lastDbId") == true
                     }
                 }
-                if (cont) confirmLastGlucoseValueIdIfGreater(gv.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.GlucoseValueLastSyncedId, gv.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -417,12 +578,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedTherapyEvents() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastTherapyEventId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.TherapyEventLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.TherapyEventLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.TherapyEventLastSyncedId, 0)
+                resetPointer(NsclientLongKey.TherapyEventLastSyncedId)
                 startId = 0
             }
             queueCounter.tesRemaining = lastDbId - startId
@@ -437,16 +601,17 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring TherapyEvent. Only NS id changed ID: ${te.second.id} ")
                     // without nsId = create new
                     te.first.ids.nightscoutId == null                                ->
-                        cont = activePlugin.activeNsClient?.nsAdd("treatments", DataSyncSelector.PairTherapyEvent(te.first, te.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsAdd("treatments", DataSyncSelector.PairTherapyEvent(te.first, te.second.id), "$startId/$lastDbId") == true
                     // nsId = update
                     te.first.ids.nightscoutId != null                                ->
-                        cont = activePlugin.activeNsClient?.nsUpdate("treatments", DataSyncSelector.PairTherapyEvent(te.first, te.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsUpdate("treatments", DataSyncSelector.PairTherapyEvent(te.first, te.second.id), "$startId/$lastDbId") == true
                 }
-                if (cont) confirmLastTherapyEventIdIfGreater(te.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.TherapyEventLastSyncedId, te.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -460,24 +625,28 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedDeviceStatuses() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastDeviceStatusId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.DeviceStatusLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.DeviceStatusLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.DeviceStatusLastSyncedId, 0)
+                resetPointer(NsclientLongKey.DeviceStatusLastSyncedId)
                 startId = 0
             }
             queueCounter.dssRemaining = lastDbId - startId
             rxBus.send(EventNSClientUpdateGuiQueue())
             persistenceLayer.getNextSyncElementDeviceStatus(startId).blockingGet()?.let { deviceStatus ->
-                cont = activePlugin.activeNsClient?.nsAdd("devicestatus", DataSyncSelector.PairDeviceStatus(deviceStatus, lastDbId), "$startId/$lastDbId") == true
-                if (cont) confirmLastDeviceStatusIdIfGreater(deviceStatus.id)
+                cont = uploading()?.nsAdd("devicestatus", DataSyncSelector.PairDeviceStatus(deviceStatus, lastDbId), "$startId/$lastDbId") == true
+                if (cont) confirmInWalk(NsclientLongKey.DeviceStatusLastSyncedId, deviceStatus.id)
                 // with nsId = ignore
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -491,12 +660,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedTemporaryBasals() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastTemporaryBasalId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.TemporaryBasalLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.TemporaryBasalLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.TemporaryBasalLastSyncedId, 0)
+                resetPointer(NsclientLongKey.TemporaryBasalLastSyncedId)
                 startId = 0
             }
             queueCounter.tbrsRemaining = lastDbId - startId
@@ -512,16 +684,17 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring TemporaryBasal. Only NS id changed ID: ${tb.second.id} ")
                     // without nsId = create new
                     tb.first.ids.nightscoutId == null                                ->
-                        cont = activePlugin.activeNsClient?.nsAdd("treatments", DataSyncSelector.PairTemporaryBasal(tb.first, tb.second.id), "$startId/$lastDbId", profile) == true
+                        cont = uploading()?.nsAdd("treatments", DataSyncSelector.PairTemporaryBasal(tb.first, tb.second.id), "$startId/$lastDbId", profile) == true
                     // with nsId = update
                     tb.first.ids.nightscoutId != null                                ->
-                        cont = activePlugin.activeNsClient?.nsUpdate("treatments", DataSyncSelector.PairTemporaryBasal(tb.first, tb.second.id), "$startId/$lastDbId", profile) == true
+                        cont = uploading()?.nsUpdate("treatments", DataSyncSelector.PairTemporaryBasal(tb.first, tb.second.id), "$startId/$lastDbId", profile) == true
                 }
-                if (cont) confirmLastTemporaryBasalIdIfGreater(tb.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.TemporaryBasalLastSyncedId, tb.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -535,12 +708,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedExtendedBoluses() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastExtendedBolusId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.ExtendedBolusLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.ExtendedBolusLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.ExtendedBolusLastSyncedId, 0)
+                resetPointer(NsclientLongKey.ExtendedBolusLastSyncedId)
                 startId = 0
             }
             queueCounter.ebsRemaining = lastDbId - startId
@@ -557,17 +733,18 @@ class DataSyncSelectorV3 @Inject constructor(
                             aapsLogger.info(LTag.NSCLIENT, "Ignoring ExtendedBolus. Only NS id changed ID: ${eb.second.id} ")
                         // without nsId = create new
                         eb.first.ids.nightscoutId == null                                ->
-                            cont = activePlugin.activeNsClient?.nsAdd("treatments", DataSyncSelector.PairExtendedBolus(eb.first, eb.second.id), "$startId/$lastDbId", profile) == true
+                            cont = uploading()?.nsAdd("treatments", DataSyncSelector.PairExtendedBolus(eb.first, eb.second.id), "$startId/$lastDbId", profile) == true
                         // with nsId = update
                         eb.first.ids.nightscoutId != null                                ->
-                            cont = activePlugin.activeNsClient?.nsUpdate("treatments", DataSyncSelector.PairExtendedBolus(eb.first, eb.second.id), "$startId/$lastDbId", profile) == true
+                            cont = uploading()?.nsUpdate("treatments", DataSyncSelector.PairExtendedBolus(eb.first, eb.second.id), "$startId/$lastDbId", profile) == true
                     }
                 } else aapsLogger.info(LTag.NSCLIENT, "Ignoring ExtendedBolus. No profile: ${eb.second.id} ")
-                if (cont) confirmLastExtendedBolusIdIfGreater(eb.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.ExtendedBolusLastSyncedId, eb.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -581,12 +758,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedProfileSwitches() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastProfileSwitchId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.ProfileSwitchLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.ProfileSwitchLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.ProfileSwitchLastSyncedId, 0)
+                resetPointer(NsclientLongKey.ProfileSwitchLastSyncedId)
                 startId = 0
             }
             queueCounter.pssRemaining = lastDbId - startId
@@ -601,16 +781,17 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring ProfileSwitch. Only NS id changed ID: ${ps.second.id} ")
                     // without nsId = create new
                     ps.first.ids.nightscoutId == null                                ->
-                        cont = activePlugin.activeNsClient?.nsAdd("treatments", DataSyncSelector.PairProfileSwitch(ps.first, ps.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsAdd("treatments", DataSyncSelector.PairProfileSwitch(ps.first, ps.second.id), "$startId/$lastDbId") == true
                     // with nsId = update
                     ps.first.ids.nightscoutId != null                                ->
-                        cont = activePlugin.activeNsClient?.nsUpdate("treatments", DataSyncSelector.PairProfileSwitch(ps.first, ps.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsUpdate("treatments", DataSyncSelector.PairProfileSwitch(ps.first, ps.second.id), "$startId/$lastDbId") == true
                 }
-                if (cont) confirmLastProfileSwitchIdIfGreater(ps.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.ProfileSwitchLastSyncedId, ps.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -624,12 +805,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedEffectiveProfileSwitches() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastEffectiveProfileSwitchId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.EffectiveProfileSwitchLastSyncedId, 0)
+                resetPointer(NsclientLongKey.EffectiveProfileSwitchLastSyncedId)
                 startId = 0
             }
             queueCounter.epssRemaining = lastDbId - startId
@@ -644,16 +828,17 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring EffectiveProfileSwitch. Only NS id changed ID: ${ps.second.id} ")
                     // without nsId = create new
                     ps.first.ids.nightscoutId == null                                ->
-                        cont = activePlugin.activeNsClient?.nsAdd("treatments", DataSyncSelector.PairEffectiveProfileSwitch(ps.first, ps.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsAdd("treatments", DataSyncSelector.PairEffectiveProfileSwitch(ps.first, ps.second.id), "$startId/$lastDbId") == true
                     // with nsId = update
                     ps.first.ids.nightscoutId != null                                ->
-                        cont = activePlugin.activeNsClient?.nsUpdate("treatments", DataSyncSelector.PairEffectiveProfileSwitch(ps.first, ps.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsUpdate("treatments", DataSyncSelector.PairEffectiveProfileSwitch(ps.first, ps.second.id), "$startId/$lastDbId") == true
                 }
-                if (cont) confirmLastEffectiveProfileSwitchIdIfGreater(ps.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.EffectiveProfileSwitchLastSyncedId, ps.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -667,12 +852,15 @@ class DataSyncSelectorV3 @Inject constructor(
     suspend fun processChangedRunningModes() {
         var cont = true
         while (cont) {
-            if (isPaused) return
+            if (isPaused) {
+                flushPointers()
+                return
+            }
             val lastDbId = persistenceLayer.getLastRunningModeId() ?: 0L
-            var startId = preferences.get(NsclientLongKey.RunningModeLastSyncedId)
+            var startId = lastSyncedId(NsclientLongKey.RunningModeLastSyncedId)
             if (startId > lastDbId) {
                 aapsLogger.info(LTag.NSCLIENT, "Resetting startId: $startId lastDbId: $lastDbId")
-                preferences.put(NsclientLongKey.RunningModeLastSyncedId, 0)
+                resetPointer(NsclientLongKey.RunningModeLastSyncedId)
                 startId = 0
             }
             queueCounter.rmsRemaining = lastDbId - startId
@@ -687,16 +875,17 @@ class DataSyncSelectorV3 @Inject constructor(
                         aapsLogger.info(LTag.NSCLIENT, "Ignoring RunningMode. Only NS id changed ID: ${rm.second.id} ")
                     // without nsId = create new
                     rm.first.ids.nightscoutId == null                                ->
-                        cont = activePlugin.activeNsClient?.nsAdd("treatments", DataSyncSelector.PairRunningMode(rm.first, rm.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsAdd("treatments", DataSyncSelector.PairRunningMode(rm.first, rm.second.id), "$startId/$lastDbId") == true
                     // existing with nsId = update
                     rm.first.ids.nightscoutId != null                                ->
-                        cont = activePlugin.activeNsClient?.nsUpdate("treatments", DataSyncSelector.PairRunningMode(rm.first, rm.second.id), "$startId/$lastDbId") == true
+                        cont = uploading()?.nsUpdate("treatments", DataSyncSelector.PairRunningMode(rm.first, rm.second.id), "$startId/$lastDbId") == true
                 }
-                if (cont) confirmLastRunningModeIdIfGreater(rm.second.id)
+                if (cont) confirmInWalk(NsclientLongKey.RunningModeLastSyncedId, rm.second.id)
             } ?: run {
                 cont = false
             }
         }
+        flushPointers()
     }
 
     @OpenForTesting
@@ -725,5 +914,11 @@ class DataSyncSelectorV3 @Inject constructor(
             if (activePlugin.activeNsClient?.nsAdd("profile", DataSyncSelector.PairProfileStore(profileJson, now), "") == true)
                 confirmLastProfileStore(now)
         }
+    }
+
+    companion object {
+
+        /** During a walk the sync pointer is written to the preferences every this many locally skipped records. */
+        const val CONFIRM_EVERY = 50
     }
 }

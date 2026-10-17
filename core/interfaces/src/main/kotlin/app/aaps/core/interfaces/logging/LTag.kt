@@ -4,6 +4,8 @@ enum class LTag(val tag: String, val defaultValue: Boolean = true, val requiresR
     CORE("CORE"),
     APS("APS"),
     AUTOSENS("AUTOSENS", defaultValue = false),
+    /** Verbose AutoISF traces: per-bucket average ISF, getIsfMgdl profiler line, CALC lines, the full IOB array. */
+    AUTOISF("AUTOISF", defaultValue = false),
     AUTOMATION("AUTOMATION"),
     AUTOTUNE("AUTOTUNE", defaultValue = false),
     BGSOURCE("BGSOURCE"),
