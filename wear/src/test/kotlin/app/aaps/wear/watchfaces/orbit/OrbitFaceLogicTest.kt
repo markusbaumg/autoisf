@@ -2,7 +2,6 @@ package app.aaps.wear.watchfaces.orbit
 
 import app.aaps.wear.watchfaces.common.FaceState.BgAge
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.LoopHealth
-import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.MoonKind
 import app.aaps.wear.watchfaces.common.FaceState.PhoneLink
 import app.aaps.wear.watchfaces.common.FaceState.Range
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Ring
@@ -457,32 +456,32 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.DEG_TT + OrbitFaceLogic.DEG_BOLUS).isEqualTo(360f)
         val bx = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL)
         val by = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL)
-        // the date sits inside the ring at the bottom: clear of the lower discs and of the ring under it
-        val dateBottom = OrbitFaceLogic.DATE_Y + 0.36f * 22f
-        assertThat(OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f) - dateBottom).isAtLeast(12f)
-        assertThat(OrbitFaceLogic.DATE_Y - 8f).isGreaterThan(by + OrbitFaceLogic.BALL_R)
-        assertThat(OrbitFaceLogic.DATE_Y - 8f - OrbitFaceLogic.SPARK_Y_BOTTOM).isAtLeast(30f)
-        // a W4-W9 pill row takes the date's place, the date stacks above it, clear of the chart and of the pill
-        // (Orbit discs round 3: the chart is hidden then, so the stacked date only has to clear the lower discs)
-        assertThat(kotlin.math.hypot(bx - (OrbitFaceLogic.CX + OrbitFaceLogic.DATE_LINE_MAX_WIDTH / 2f), OrbitFaceLogic.DATE_STACK_Y - by))
-            .isAtLeast(OrbitFaceLogic.BALL_R + 8f)
-        assertThat(OrbitFaceLogic.SLOT_Y - OrbitFaceLogic.ROW_PILL_H / 2f - (OrbitFaceLogic.DATE_STACK_Y + 8f)).isAtLeast(4f)
-        val endCx = OrbitFaceLogic.CX - OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f + OrbitFaceLogic.ROW_PILL_H / 2f
-        assertThat(225f - kotlin.math.hypot(endCx - 225f, OrbitFaceLogic.SLOT_Y - 225f) - OrbitFaceLogic.ROW_PILL_H / 2f).isAtLeast(14f)
-        val rowCapR = OrbitFaceLogic.ROW_PILL_H / 2f
-        val rowCapX = OrbitFaceLogic.CX + OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f - rowCapR
-        assertThat(kotlin.math.hypot(bx - rowCapX, by - OrbitFaceLogic.SLOT_Y) - rowCapR - OrbitFaceLogic.BALL_R).isAtLeast(12f)
-        // the stacked date keeps 8 px to the lower discs
-        val chordX = bx - kotlin.math.sqrt(OrbitFaceLogic.BALL_R * OrbitFaceLogic.BALL_R - (OrbitFaceLogic.DATE_STACK_Y - 11f - by).let { it * it }.coerceAtMost(OrbitFaceLogic.BALL_R * OrbitFaceLogic.BALL_R))
-        assertThat(chordX - (OrbitFaceLogic.CX + OrbitFaceLogic.DATE_LINE_MAX_WIDTH / 2f)).isAtLeast(8f)
-        // one chart box for every state: a W1-W3 pill in the delta row stays above it (no reflow)
-        assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y - OrbitFaceLogic.SLOT_IN_DELTA_H / 2f).isAtLeast(OrbitFaceLogic.DELTA_ROW_Y - 12f)
-        assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y + OrbitFaceLogic.SLOT_IN_DELTA_H / 2f).isAtMost(OrbitFaceLogic.SPARK_Y_TOP + OrbitFaceLogic.SPARK_INSET)
-        // the clamped delta-row pill keeps SAT_CLEAR to the KH / basal discs
-        val pillHalf = OrbitFaceLogic.slotInDeltaMaxPillWidth() / 2f
-        val capR = OrbitFaceLogic.SLOT_IN_DELTA_H / 2f
-        assertThat(kotlin.math.hypot(bx - (OrbitFaceLogic.CX + pillHalf - capR), by - OrbitFaceLogic.SLOT_IN_DELTA_Y) - capR)
-            .isAtLeast(OrbitFaceLogic.BALL_R + OrbitFaceLogic.SAT_CLEAR - 0.01f)
+        // Orbit discs round 4: the date sits inside the unbroken ring at the bottom: its glyph box (cap top to a comma's
+        // descender) at the widest date line keeps DATE_RING_CLEAR to the ring's inner edge, and 8 px or more to the
+        // lower discs; it never moves (a W4-W9 warning takes the chart's slot)
+        val dateTop = OrbitFaceLogic.DATE_Y - 0.36f * 26f - 1f
+        val dateBottom = OrbitFaceLogic.DATE_Y + 0.36f * 26f + 0.22f * 26f
+        val dateEnd = OrbitFaceLogic.CX + OrbitFaceLogic.DATE_LINE_MAX_WIDTH / 2f
+        assertThat(OrbitFaceLogic.ringClear(dateEnd, dateBottom)).isAtLeast(OrbitFaceLogic.DATE_RING_CLEAR)
+        assertThat(OrbitFaceLogic.ringClear(OrbitFaceLogic.CX, dateBottom)).isAtLeast(OrbitFaceLogic.DATE_RING_CLEAR)
+        assertThat(kotlin.math.hypot(bx - dateEnd, by - dateTop.coerceAtMost(by))).isAtLeast(OrbitFaceLogic.BALL_R + 8f)
+        assertThat(dateTop - OrbitFaceLogic.SPARK_Y_BOTTOM).isAtLeast(16f)
+        // the W4-W9 warning in the chart's slot: 24 px words, 8 px or more to the lower discs (the budget is measured in
+        // 2D), wide enough for "Reservoir 5 U" (144 px in Roboto Semibold, no descender: glyph box -10 / +10) and within
+        // 4 % of "Reservoir 18 U" (158 px), under the delta row's HOCH / TIEF pill
+        assertThat(OrbitFaceLogic.textLineMaxWidth(OrbitFaceLogic.ROW_Y, 11f, 10f)).isAtLeast(152f)
+        val rowW = OrbitFaceLogic.textLineMaxWidth(OrbitFaceLogic.ROW_Y, OrbitFaceLogic.WARN_ABOVE, OrbitFaceLogic.WARN_BELOW)
+        assertThat(rowW).isAtLeast(144f)
+        val rowEnd = OrbitFaceLogic.CX + rowW / 2f
+        assertThat(kotlin.math.hypot(bx - rowEnd, by - (OrbitFaceLogic.ROW_Y + OrbitFaceLogic.WARN_BELOW)) - OrbitFaceLogic.BALL_R)
+            .isAtLeast(OrbitFaceLogic.WARN_DISC_CLEAR - 0.01f)
+        assertThat(OrbitFaceLogic.ROW_Y - OrbitFaceLogic.WARN_ABOVE - (OrbitFaceLogic.DELTA_ROW_Y + OrbitFaceLogic.CAPTION_H / 2f)).isAtLeast(2f)
+        assertThat(OrbitFaceLogic.DATE_Y - 0.36f * 26f - (OrbitFaceLogic.ROW_Y + OrbitFaceLogic.WARN_BELOW)).isAtLeast(30f)
+        // a W1-W3 warning on the delta row passes above the lower discs at full width ("Telefon getrennt · 14′" plus the
+        // triangle: 255 px)
+        assertThat(OrbitFaceLogic.textLineMaxWidth(OrbitFaceLogic.SLOT_IN_DELTA_Y, OrbitFaceLogic.WARN_ABOVE, OrbitFaceLogic.WARN_BELOW, cap = 280f))
+            .isEqualTo(280f)
+        assertThat(OrbitFaceLogic.ringClear(OrbitFaceLogic.CX + 140f, OrbitFaceLogic.SLOT_IN_DELTA_Y + OrbitFaceLogic.WARN_BELOW)).isAtLeast(14f)
         // the time sits below the Watch5 Pro status icon (y 23-49): its cap top is below y 58; the ring opens for the icon
         assertThat(OrbitFaceLogic.TIME_Y - 0.36f * OrbitFaceLogic.TIME_SIZE).isAtLeast(58f)
         assertThat(OrbitFaceLogic.ORBIT_R * kotlin.math.sin(Math.toRadians(OrbitFaceLogic.TIME_GAP_DEG.toDouble())).toFloat()).isAtLeast(30f)
@@ -513,21 +512,19 @@ class OrbitFaceLogicTest {
         assertThat(2f * OrbitFaceLogic.BOLUS_HIT_R).isAtLeast(56f)
     }
 
-    @Test fun gapWidths() {
-        // an 80 px text -> (80 + 16) / 2 / 195 rad = 14.1 deg (text width ±8 px; Orbit discs round 2: orbit r 195)
-        assertThat(OrbitFaceLogic.gapHalfDeg(80f)).isWithin(0.1f).of(14.10f)
-        assertThat(OrbitFaceLogic.gapHalfDeg(400f)).isEqualTo(OrbitFaceLogic.MAX_GAP_DEG)
-        // the date gap never runs into the break of the 4 and 8 o'clock satellites
-        assertThat(180f - OrbitFaceLogic.MAX_GAP_DEG).isGreaterThan(OrbitFaceLogic.DEG_BASAL + OrbitFaceLogic.BALL_GAP_DEG)
-        // Glass/Orbit UX round 3: the ring stops a constant 6 px before every satellite and the bolus button
-        // (Orbit discs round 2: the disc centres sit inside the ring; the ring end is 6 px from the disc's edge)
-        val endX = OrbitFaceLogic.pointX(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_IOB + OrbitFaceLogic.BALL_GAP_DEG)
-        val endY = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_IOB + OrbitFaceLogic.BALL_GAP_DEG)
-        assertThat(kotlin.math.hypot(endX - OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_IOB), endY - OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_IOB)))
-            .isWithin(0.05f).of(OrbitFaceLogic.BALL_R + 6f)
-        val bEndX = OrbitFaceLogic.pointX(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_BOLUS + OrbitFaceLogic.BOLUS_GAP_DEG)
-        val bEndY = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_BOLUS + OrbitFaceLogic.BOLUS_GAP_DEG)
-        assertThat(kotlin.math.hypot(bEndX - OrbitFaceLogic.BOLUS_X, bEndY - OrbitFaceLogic.BOLUS_Y)).isWithin(0.05f).of(OrbitFaceLogic.BOLUS_OUTER + 6f)
+    @Test fun ringRunsBehindTheDiscs() {
+        // Orbit discs round 4: the ring is unbroken behind the discs and the button (their opaque bodies hide it), so it
+        // must actually pass under each of them: between the centre and the outer edge
+        for (deg in OrbitFaceLogic.BALL_DEGS) {
+            val d = kotlin.math.hypot(
+                OrbitFaceLogic.pointX(OrbitFaceLogic.ORBIT_R, deg) - OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, deg),
+                OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, deg) - OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, deg)
+            )
+            assertThat(d + OrbitFaceLogic.TRACK_W / 2f).isLessThan(OrbitFaceLogic.BALL_R - 4f)
+        }
+        assertThat(OrbitFaceLogic.ORBIT_R - OrbitFaceLogic.BOLUS_R + OrbitFaceLogic.TRACK_W / 2f).isLessThan(OrbitFaceLogic.BOLUS_HALF - 4f)
+        assertThat(OrbitFaceLogic.TRACK_W).isAtLeast(3f)
+        assertThat(OrbitFaceLogic.RING_INNER_R).isEqualTo(OrbitFaceLogic.ORBIT_R - OrbitFaceLogic.TRACK_W / 2f)
     }
 
     @Test fun worstCaseWidths() {
@@ -593,11 +590,11 @@ class OrbitFaceLogicTest {
             // Semibold untracked; "BASAL" falls back to "BAS") fits with the 3 px padding
             assertThat(floor * s).isAtLeast(OrbitFaceLogic.MIN_TEXT_PX - 0.01f)
             assertThat(2.5f * floor).isAtMost(OrbitFaceLogic.labelMaxWidth(floor))
-            // status pill: the longest German texts at 19 px within the slot
-            for (t in listOf("Telefon getrennt · 14′", "Keine Daten · 17′", "Warte auf AAPS", "Reservoir 18 U", "Tel 18 %")) {
-                val size = OrbitFaceLogic.fitSize(OrbitFaceLogic.estimateWidth(t, 19f), 19f, OrbitFaceLogic.SLOT_MAX_WIDTH)
-                assertThat(OrbitFaceLogic.estimateWidth(t, size)).isAtMost(OrbitFaceLogic.SLOT_MAX_WIDTH + 0.01f)
-                assertThat(size * s).isAtLeast(11f)
+            // warnings (Orbit discs round 4): 24 px words; the W1-W3 texts on the delta row keep 24 px even by the
+            // conservative estimate (0.92: the estimate's margin over Roboto Semibold)
+            for (t in listOf("Telefon getrennt · 14′", "Keine Daten · 17′", "Warte auf AAPS")) {
+                val size = OrbitFaceLogic.fitSize(OrbitFaceLogic.estimateWidth(t, OrbitFaceLogic.WARN_TEXT) * 0.92f, OrbitFaceLogic.WARN_TEXT, 280f)
+                assertThat(size).isEqualTo(OrbitFaceLogic.WARN_TEXT)
             }
             // meta row and date line
             for (t in listOf("+0,08 · 17′", "-12,5 · 11′", "+12 · 3′")) {
@@ -610,34 +607,6 @@ class OrbitFaceLogicTest {
                 assertThat(size * s).isAtLeast(11f)
             }
         }
-    }
-
-    @Test fun moonPositions() {
-        val gapT = 17f
-        val gapD = 20f
-        assertThat(OrbitFaceLogic.moon(0, gapT, gapD, false).kind).isEqualTo(MoonKind.HIDDEN)
-        assertThat(OrbitFaceLogic.moon(57, gapT, gapD, false).kind).isEqualTo(MoonKind.HIDDEN)
-        assertThat(OrbitFaceLogic.moon(30, gapT, gapD, false).kind).isEqualTo(MoonKind.HIDDEN)
-        val dot = OrbitFaceLogic.moon(35, gapT, gapD, false)
-        assertThat(dot.kind).isEqualTo(MoonKind.DOT)
-        assertThat(dot.deg).isEqualTo(210f)
-        // 9 o'clock: free without the button, hidden behind it
-        assertThat(OrbitFaceLogic.moon(45, gapT, gapD, false, booleanArrayOf(false, false, false, false, false)).kind).isEqualTo(MoonKind.DOT)
-        assertThat(OrbitFaceLogic.moon(45, gapT, gapD, true).kind).isEqualTo(MoonKind.HIDDEN)
-        // behind the TT ball at 90 deg: 00:14 -> 84 deg, rim highlight on the trailing side
-        val rim = OrbitFaceLogic.moon(14, gapT, gapD, true)
-        assertThat(rim.kind).isEqualTo(MoonKind.RIM)
-        assertThat(rim.ball).isEqualTo(OrbitFaceLogic.IDX_TT)
-        assertThat(rim.rimDeg).isWithin(0.5f).of(90f - 6f / OrbitFaceLogic.BALL_OCCLUDE_DEG * 90f)
-        // without a TT ball the moon is a plain dot there
-        val shown = booleanArrayOf(true, true, true, true, false)
-        assertThat(OrbitFaceLogic.moon(14, gapT, gapD, true, shown).kind).isEqualTo(MoonKind.DOT)
-        // LOOP at 10 o'clock: 00:49 -> 294 deg
-        // Glass/Orbit UX round 5: LOOP at 310 deg: 00:52 -> 312 deg
-        val loop = OrbitFaceLogic.moon(52, gapT, gapD, false, shown)
-        assertThat(loop.kind).isEqualTo(MoonKind.RIM)
-        assertThat(loop.ball).isEqualTo(OrbitFaceLogic.IDX_LOOP)
-        assertThat(OrbitFaceLogic.BALL_OCCLUDE_DEG).isWithin(0.1f).of(11.97f) // r 39 discs on r 171, ring r 195
     }
 
     @Test fun dateLineWithTempTarget() {

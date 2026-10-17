@@ -53,7 +53,6 @@ import app.aaps.wear.watchfaces.common.PhoneReach
 import app.aaps.wear.watchfaces.common.PhoneReachability
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Ball
 import app.aaps.wear.watchfaces.common.FaceState.BgAge
-import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.MoonKind
 import app.aaps.wear.watchfaces.common.FaceState.Range
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Ring
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Slot
@@ -81,12 +80,13 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * "AAPS Orbit": BG is the sun in the centre, status values are planets on one orbit ring that breaks for the
- * time (12 o'clock) and the date (6 o'clock). A minute moon moves along the ring (the only motion).
+ * "AAPS Orbit": BG is the sun in the centre, status values are lit discs threaded on one orbit ring that uses the
+ * full dial and breaks only for the system status icon at 12 o'clock (Orbit discs round 4: the minute moon is gone,
+ * the time is digital; empty 3 / 9 o'clock stations show a small socket so the ring stays balanced).
  * Colour shows state only. Geometry: designs/orbit_spec.md; states: designsystem/states.md.
  *
  * Drawing: a 450 x 450 design grid scaled to the screen. Everything derived from data (strings, colours, the
- * sparkline path, the moon, the status slot) is rebuilt only when the data, the minute, the mode or a preference
+ * sparkline path, the status slot) is rebuilt only when the data, the minute, the mode or a preference
  * changes; a frame itself allocates nothing. Glows use setShadowLayer (hardware canvas) or bitmaps pre-rendered on
  * a software canvas (BlurMaskFilter does not work on the hardware canvas).
  *
@@ -196,14 +196,8 @@ class OrbitWatchface : WatchFace() {
     private var lineSepW = 0f
     private var lineW = 0f
     private var dateSize = DATE_SIZE
-    /** Track segments between the breaks (time, date, satellites, bolus), degrees clockwise from 12. */
-    private val segStart = FloatArray(MAX_SEGMENTS)
-    private val segSweep = FloatArray(MAX_SEGMENTS)
-    private var segCount = 0
-    private val gapA = FloatArray(MAX_SEGMENTS)
-    private val gapB = FloatArray(MAX_SEGMENTS)
+    /** The ring's one break, for the system status icon at 12 o'clock (half angle, degrees). */
     private var gapT = 10f
-    private var gapD = 10f
     private var bgAge = BgAge.NONE
     private var range = Range.STALE
     private var rangeColour = STALE_C
@@ -238,17 +232,15 @@ class OrbitWatchface : WatchFace() {
 
     /** Offline render harness only: the date line text drawn by the last frame ("" when none was drawn). */
     @VisibleForTesting internal var drawnDateText = ""
-    private var moon = OrbitFaceLogic.Moon(MoonKind.HIDDEN, 0f)
+    /** Offline render harness only: the glyph box (design px) of the date line drawn by the last frame. */
+    @VisibleForTesting internal val drawnDateBox = RectF()
+    private val textBounds = android.graphics.Rect()
     private var shiftX = 0f
     private var shiftY = 0f
     private var sparkWindowMs = OrbitFaceLogic.SPARK_HISTORY_MS
 
     // sparkline
     private val sparkPath = Path()
-    /** Orbit discs round 3: the soft area under the trace (closed to the plot floor per joined run). */
-    private val areaPath = Path()
-    private var areaShader: Shader? = null
-    private var areaColour = 0
     /** Orbit discs round 3: no band, trace or dot without a reading in the window (no ghost box under "Warte auf AAPS"). */
     private var hasSpark = false
     /** Orbit discs round 3: the data is old (W2 / W3): the value discs drop to the stale grey, so old numbers never look live. */
@@ -260,9 +252,8 @@ class OrbitWatchface : WatchFace() {
     private val predY = FloatArray(OrbitFaceLogic.PREDICTION_DOTS)
     private var predCount = 0
     private var lowY = 0f
-    // Orbit discs round 3: a target band that can actually be seen (10 % / 7 %; 14 / 8 alpha vanished)
-    private val bandFadeIn = bandFade(withAlpha(GREEN, 30))
-    private val bandFadeOut = bandFade(withAlpha(Color.WHITE, 16))
+    // Orbit discs round 4: the target range as two hairlines, faded at both ends (the filled band read as a smudge box)
+    private val bandLine = bandFade(withAlpha(Color.WHITE, BAND_LINE_ALPHA))
     private var highY = 0f
     private val sparkTop = OrbitFaceLogic.SPARK_Y_TOP
     private val sparkBottom = OrbitFaceLogic.SPARK_Y_BOTTOM
@@ -319,7 +310,6 @@ class OrbitWatchface : WatchFace() {
     private val outlineSegment = Path()
     private var outlineMeasure = PathMeasure()
     private var outlineLength = 0f
-    private val tickPath = Path()
     private val warnIcon = Path()
 
     // pre-rendered bitmaps (software canvas), rebuilt when the scale changes
@@ -698,17 +688,11 @@ class OrbitWatchface : WatchFace() {
         val loopPillFolded = OrbitFaceLogic.foldLoopPill(slot, ballShown[OrbitFaceLogic.IDX_LOOP], isAmbient)
         loopMuted = OrbitFaceLogic.muteLoopRing(range, slot, loopPillFolded)
         if (loopPillFolded) slot = null
-        // ... and a remaining W4-W9 pill takes the date's place at 6 o'clock: the chart never reflows
-        val pillRowW = pillRowWidth(if (slot != null && !slotInDeltaRow) slot else null, isAmbient)
-        pillRowShown = pillRowW > 0f
-        // Glass/Orbit UX round 5 (time/date in every state): the date line stays, stacked above the pill
-        // Orbit discs round 2: the date sits inside the ring (no break); a pill row there crosses it, so it breaks
-        gapD = if (pillRowShown) OrbitFaceLogic.gapHalfDeg(pillRowW + 2f * PILL_RING_CLEAR) else 0f
-        moon = OrbitFaceLogic.moon(minute, gapT, if (!pillRowShown) -2f else gapD, bolusCheck.state != State.HIDDEN, ballShown)
+        // ... and a remaining W4-W9 warning takes the chart's slot (Orbit discs round 4: the date never moves)
+        pillRowShown = (slot != null && !slotInDeltaRow) || (captionShown && !captionInDelta)
         shiftX = OrbitFaceLogic.burnInShift(minuteKey, 0).toFloat()
         shiftY = OrbitFaceLogic.burnInShift(minuteKey, 1).toFloat()
         buildSparkline(d, now)
-        buildTrackSegments()
     }
 
     private fun labelWidth(label: String, size: Float, tracking: Float): Float {
@@ -724,8 +708,6 @@ class OrbitWatchface : WatchFace() {
         lineDate = datePart
         lineTt = ttPart
         if (datePart.isEmpty() && ttPart.isEmpty()) {
-            // pref.date off: the track closes at 6 o'clock
-            gapD = 0f
             lineW = 0f
             return
         }
@@ -737,46 +719,6 @@ class OrbitWatchface : WatchFace() {
         lineDateW = dw * dateSize / DATE_SIZE
         lineSepW = sep * dateSize / DATE_SIZE
         lineW = full * dateSize / DATE_SIZE
-    }
-
-    /**
-     * Glass/Orbit UX round 1: the orbit breaks around the time, the date and every drawn satellite (and the bolus
-     * button), so the satellites sit ON the ring. Ambient draws all four satellite values (UX round 3), no bolus.
-     */
-    private fun buildTrackSegments() {
-        var n = 0
-        if (gapD > 0f) {
-            gapA[n] = 180f - gapD; gapB[n] = 180f + gapD; n++
-        }
-        for (i in balls.indices) {
-            val b = balls[i] ?: continue
-            if (isAmbient && b.value == "--" && !b.pause) continue
-            val deg = OrbitFaceLogic.BALL_DEGS[i]
-            gapA[n] = deg - OrbitFaceLogic.BALL_GAP_DEG; gapB[n] = deg + OrbitFaceLogic.BALL_GAP_DEG; n++
-        }
-        if (!isAmbient && bolusCheck.state != State.HIDDEN) {
-            gapA[n] = OrbitFaceLogic.DEG_BOLUS - OrbitFaceLogic.BOLUS_GAP_DEG; gapB[n] = OrbitFaceLogic.DEG_BOLUS + OrbitFaceLogic.BOLUS_GAP_DEG; n++
-        }
-        // insertion sort by start (at most 7 gaps, no allocation)
-        for (i in 1 until n) {
-            val a = gapA[i]; val b = gapB[i]
-            var j = i - 1
-            while (j >= 0 && gapA[j] > a) { gapA[j + 1] = gapA[j]; gapB[j + 1] = gapB[j]; j-- }
-            gapA[j + 1] = a; gapB[j + 1] = b
-        }
-        // the time gap is always there: segments run from gapT to 360 - gapT around the other gaps
-        segCount = 0
-        var from = gapT
-        val end = 360f - gapT
-        for (i in 0 until n) {
-            if (gapA[i] > from) {
-                segStart[segCount] = from; segSweep[segCount] = min(gapA[i], end) - from; segCount++
-            }
-            from = max(from, gapB[i])
-        }
-        if (end > from) {
-            segStart[segCount] = from; segSweep[segCount] = end - from; segCount++
-        }
     }
 
     /**
@@ -825,7 +767,6 @@ class OrbitWatchface : WatchFace() {
     private fun buildSparkline(d: ComplicationData, now: Long) {
         val bg = d.bgData
         sparkPath.rewind()
-        areaPath.rewind()
         predCount = 0
         val low = bg.low.takeIf { it > 0 } ?: DEFAULT_LOW_MGDL
         val high = bg.high.takeIf { it > 0 } ?: DEFAULT_HIGH_MGDL
@@ -856,30 +797,14 @@ class OrbitWatchface : WatchFace() {
         lowY = sy(low)
         highY = sy(high)
         var prevT = Long.MIN_VALUE
-        var lastX = 0f
-        val floor = sparkBottom - OrbitFaceLogic.SPARK_INSET
         for (p in points) {
             val x = OrbitFaceLogic.sparkX(p.timeStamp, now, sparkWindowMs)
             val y = sy(p.sgv)
             val brk = prevT == Long.MIN_VALUE || OrbitFaceLogic.sparkBreak(prevT, p.timeStamp)
-            if (brk) {
-                if (prevT != Long.MIN_VALUE) { areaPath.lineTo(lastX, floor); areaPath.close() }
-                sparkPath.moveTo(x, y)
-                areaPath.moveTo(x, floor)
-                areaPath.lineTo(x, y)
-            } else {
-                sparkPath.lineTo(x, y)
-                areaPath.lineTo(x, y)
-            }
-            lastX = x
+            if (brk) sparkPath.moveTo(x, y) else sparkPath.lineTo(x, y)
             prevT = p.timeStamp
         }
-        if (prevT != Long.MIN_VALUE) { areaPath.lineTo(lastX, floor); areaPath.close() }
         hasSpark = points.isNotEmpty()
-        if (areaShader == null || areaColour != rangeColour) {
-            areaColour = rangeColour
-            areaShader = LinearGradient(0f, sparkTop, 0f, sparkBottom, withAlpha(rangeColour, 64), withAlpha(rangeColour, 0), Shader.TileMode.CLAMP)
-        }
         hasNowDot = bg.timeStamp in from..now && bg.sgv > 0
         if (hasNowDot) {
             nowX = OrbitFaceLogic.sparkX(bg.timeStamp, now, sparkWindowMs)
@@ -926,12 +851,6 @@ class OrbitWatchface : WatchFace() {
         warnIcon.lineTo(-7f, 6f)
         warnIcon.close()
 
-        // confirm tick of the armed bolus button, 16 x 10 px centred on (0, 0) (Glass/Orbit UX round 1: replaces the
-        // "nochmal" word, which did not fit the button at the 18 px floor)
-        tickPath.rewind()
-        tickPath.moveTo(-8f, 0f)
-        tickPath.lineTo(-2.5f, 5f)
-        tickPath.lineTo(8f, -5f)
     }
 
     private fun ensureCaches(s: Float) {
@@ -966,7 +885,7 @@ class OrbitWatchface : WatchFace() {
             val m = BOLUS_PAD + OrbitFaceLogic.BOLUS_HALF
             val r = OrbitFaceLogic.BOLUS_HALF
             fill.reset(); fill.isAntiAlias = true
-            fill.color = withAlpha(BOLUS_FILL, 110)
+            fill.color = withAlpha(BOLUS_FILL, 80)
             fill.maskFilter = BlurMaskFilter(7f * 1.73f, BlurMaskFilter.Blur.NORMAL)
             c.drawCircle(m, m, r + 1f, fill)
             fill.maskFilter = null
@@ -1045,24 +964,36 @@ class OrbitWatchface : WatchFace() {
             }
         }
 
-        // 2. orbit track with the time, date and satellite breaks (Orbit discs round 3: lit, 2.5 px)
-        drawTrack(canvas, TRACK_W, Color.WHITE, true, shader = trackShader)
+        // 2. orbit ring (Orbit discs round 4: unbroken behind the discs and the button, which sit on it; 3.5 px, lit
+        // from the upper left), and a socket at an empty 3 / 9 o'clock station
+        drawTrack(canvas, OrbitFaceLogic.TRACK_W, Color.WHITE, true, shader = trackShader)
+        val ballOn = bolusCheck.state != State.HIDDEN
+        val ttOn = balls[OrbitFaceLogic.IDX_TT] != null
+        if (ballOn != ttOn) drawSocket(canvas, if (ballOn) OrbitFaceLogic.DEG_TT else OrbitFaceLogic.DEG_BOLUS)
 
-        // 3. sparkline. Orbit discs round 3 (review: a flat line with a white knob read as a slider): a visible target
-        // band, a soft area fill under the trace in the range colour, the now dot in the range colour; nothing without
-        // data, and hidden while a W4-W9 pill holds the bottom (the stacked date takes its place)
+        // 3. sparkline. Orbit discs round 4 (review: the filled band read as a smudge box in the critical states): the
+        // target range as two faded hairlines, a soft fill that clings to the trace (gone 20 px under it), the now dot in
+        // the range colour; no target lines and no fill for old data; nothing without data, and hidden while a W4-W9
+        // warning holds the chart's slot
         if (hasSpark && !pillRowShown) {
-            val inBand = range == Range.IN
-            rect.set(OrbitFaceLogic.SPARK_X0, highY, OrbitFaceLogic.SPARK_X1, lowY)
-            setFill(Color.WHITE, true)
-            fill.shader = if (inBand) bandFadeIn else bandFadeOut
-            canvas.drawRoundRect(rect, BAND_CORNER, BAND_CORNER, fill)
-            fill.shader = null
             if (!old) {
-                setFill(Color.WHITE, true)
-                fill.shader = areaShader
-                canvas.drawPath(areaPath, fill)
-                fill.shader = null
+                setStroke(1f, Color.WHITE, true)
+                stroke.shader = bandLine
+                canvas.drawLine(OrbitFaceLogic.SPARK_X0, highY, OrbitFaceLogic.SPARK_X1, highY, stroke)
+                canvas.drawLine(OrbitFaceLogic.SPARK_X0, lowY, OrbitFaceLogic.SPARK_X1, lowY, stroke)
+                stroke.shader = null
+                // the soft fill clings to the trace: AREA_STEPS nested bands hanging from the line (each d px deep, the
+                // trace stroked d px wide d/2 px lower), so the fill fades from about AREA_ALPHA to 0 within AREA_FADE px
+                // of the line in every column (no box, no edge at the plot floor, no seams between the bands)
+                for (k in 1..AREA_STEPS) {
+                    val d = k * AREA_FADE / AREA_STEPS
+                    setStroke(d, withAlpha(rangeColour, AREA_ALPHA / AREA_STEPS + 1), true)
+                    stroke.strokeJoin = Paint.Join.ROUND
+                    canvas.save()
+                    canvas.translate(0f, d / 2f)
+                    canvas.drawPath(sparkPath, stroke)
+                    canvas.restore()
+                }
             }
             setStroke(2.5f, rangeColour, true)
             stroke.strokeJoin = Paint.Join.ROUND
@@ -1097,20 +1028,12 @@ class OrbitWatchface : WatchFace() {
 
         // 5. delta row; the pill row under it (TIEF/HOCH, status slot) has its own line, never over the delta
         val s = slot
-        if (slotInDeltaRow && s != null) drawPill(canvas, s, OrbitFaceLogic.CX, OrbitFaceLogic.SLOT_IN_DELTA_Y, OrbitFaceLogic.SLOT_IN_DELTA_H, OrbitFaceLogic.SLOT_IN_DELTA_TEXT, ambient = false, deltaPillMax(s, false))
+        if (slotInDeltaRow && s != null) drawWarning(canvas, s, OrbitFaceLogic.CX, OrbitFaceLogic.SLOT_IN_DELTA_Y, ambient = false, deltaWarnMax())
         else if (!firstStart) drawDeltaRow(canvas, DELTA_C, if (deltaRow.ageAmber) AMBER else DELTA_C, true, ambient = false, arrowColour = rangeColour)
         drawPillRow(canvas, if (s != null && !slotInDeltaRow) s else null, ambient = false)
 
-        // 6. balls (and the moon rim light)
+        // 6. discs
         for (i in balls.indices) drawBall(canvas, i)
-        if (moon.kind == MoonKind.RIM && moon.ball >= 0) {
-            setStroke(1.6f, withAlpha(MOON_C, 170), true)
-            val r = OrbitFaceLogic.BALL_R + 1f
-            val bx = ballX[moon.ball]
-            val by = ballY[moon.ball]
-            rect.set(bx - r, by - r, bx + r, by + r)
-            canvas.drawArc(rect, moon.rimDeg - 90f - 22f, 44f, false, stroke)
-        }
 
         // 7. bolus button
         if (bolusCheck.state != State.HIDDEN) drawBolus(canvas)
@@ -1118,14 +1041,22 @@ class OrbitWatchface : WatchFace() {
         // 8. time, date (+ TT)
         drawTime(canvas, TIME_C, tf600, true)
         drawDateLine(canvas, DATE_C, VIOLET, true)
+    }
 
-        // 9. minute moon
-        if (moon.kind == MoonKind.DOT) {
-            // Orbit discs round 3 (review: a range-coloured dot read as a BG position, as on Halo's arc): neutral, never
-            // the range colour; the stale grey when the reading is old
-            setFill(if (old) STALE_C else MOON_C, true)
-            canvas.drawCircle(OrbitFaceLogic.pointX(OrbitFaceLogic.ORBIT_R, moon.deg), OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, moon.deg), 3.5f, fill)
-        }
+    /**
+     * Orbit discs round 4 (review: with only the TT disc or only the bolus button, the 3 / 9 o'clock pair was lopsided):
+     * the empty station is a small socket on the ring (a dark dot with a ring-grey rim), so the orbit keeps its six
+     * stations and its balance. Never a value, never tappable.
+     */
+    private fun drawSocket(canvas: Canvas, deg: Float) {
+        val x = OrbitFaceLogic.pointX(OrbitFaceLogic.ORBIT_R, deg)
+        val y = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, deg)
+        setFill(Color.BLACK, true)
+        canvas.drawCircle(x, y, SOCKET_R + 2f, fill)
+        setFill(SOCKET_FILL, true)
+        canvas.drawCircle(x, y, SOCKET_R, fill)
+        setStroke(1.5f, SOCKET_RIM, true)
+        canvas.drawCircle(x, y, SOCKET_R, stroke)
     }
 
     /**
@@ -1169,7 +1100,7 @@ class OrbitWatchface : WatchFace() {
         val s = slot
         when {
             // W1..W3 (incl. the stale "Keine Daten · 17′") own slot A as an outline pill
-            s != null && slotInDeltaRow -> drawPill(canvas, s, OrbitFaceLogic.CX, OrbitFaceLogic.SLOT_IN_DELTA_Y, OrbitFaceLogic.SLOT_IN_DELTA_H, OrbitFaceLogic.SLOT_IN_DELTA_TEXT, ambient = true, deltaPillMax(s, true))
+            s != null && slotInDeltaRow -> drawWarning(canvas, s, OrbitFaceLogic.CX, OrbitFaceLogic.SLOT_IN_DELTA_Y, ambient = true, deltaWarnMax())
             !firstStart                 -> drawDeltaRow(canvas, amb(AMB2), amb(if (deltaRow.ageAmber) AMB1 else AMB2), aa, ambient = true, arrowColour = amb(AMB1))
         }
         drawPillRow(canvas, if (s != null && !slotInDeltaRow) s else null, ambient = true)
@@ -1216,8 +1147,8 @@ class OrbitWatchface : WatchFace() {
         setStroke(width, colour, aa)
         stroke.pathEffect = effect
         stroke.shader = shader
-        // canvas angles start at 3 o'clock: clockwise-from-12 minus 90
-        for (i in 0 until segCount) canvas.drawArc(trackRect, segStart[i] - 90f, segSweep[i], false, stroke)
+        // canvas angles start at 3 o'clock: clockwise-from-12 minus 90; one arc from the end of the 12 o'clock break
+        canvas.drawArc(trackRect, gapT - 90f, 360f - 2f * gapT, false, stroke)
         stroke.pathEffect = null
         stroke.shader = null
     }
@@ -1225,14 +1156,18 @@ class OrbitWatchface : WatchFace() {
     /** The date (and an active TT in [ttColour]) centred on the ring at 6 o'clock. */
     private fun drawDateLine(canvas: Canvas, colour: Int, ttColour: Int, aa: Boolean) {
         if (lineW <= 0f) return
-        // on the ring at 6 o'clock, or stacked above a W4-W9 pill there (Glass/Orbit UX round 5)
-        val y = if (pillRowShown) OrbitFaceLogic.DATE_STACK_Y else OrbitFaceLogic.DATE_Y
+        // Orbit discs round 4: always at 6 o'clock inside the unbroken ring (a W4-W9 warning takes the chart's slot)
+        val y = OrbitFaceLogic.DATE_Y
         val x0 = OrbitFaceLogic.CX - lineW / 2f
         setText(dateSize, tf500, aa)
         text.textAlign = Paint.Align.LEFT
         text.color = colour
         val by = baseline(y)
         drawnDateText = lineDate
+        // the glyph box of the whole line (the harness checks its clearance to the ring)
+        val all = if (lineTt.isEmpty()) lineDate else "$lineDate · $lineTt"
+        text.getTextBounds(all, 0, all.length, textBounds)
+        drawnDateBox.set(x0, by + textBounds.top, x0 + lineW, by + textBounds.bottom)
         if (lineTt.isEmpty()) {
             if (lineDate.isNotEmpty()) canvas.drawText(lineDate, x0, by, text)
             return
@@ -1267,8 +1202,9 @@ class OrbitWatchface : WatchFace() {
             text.color = amb(AMB2)
             text.style = Paint.Style.STROKE
             text.strokeWidth = 1.5f
-        } else if (ambient && burnInProtection) {
-            // burn-in: outlined digits (black inside), 2 px, 3 px for urgent low
+        } else if (ambient) {
+            // Orbit discs round 4 (design system: ambient = outlines only, as Halo): outlined digits (black inside) in every
+            // ambient mode, 2 px, 3 px for urgent low
             text.style = Paint.Style.STROKE
             text.strokeWidth = if (urgent) 3f else 2f
         }
@@ -1330,15 +1266,17 @@ class OrbitWatchface : WatchFace() {
 
     /**
      * Phone-off glyph (conn.phone_lost_fresh): a phone outline crossed by a slash. Orbit discs round 3: 24 px tall and
-     * amber (16 px grey did not read as "no phone").
+     * amber (16 px grey did not read as "no phone"). Orbit discs round 4: 28 px tall with a speaker slot, so it reads as
+     * a phone, not a crossed-out box.
      */
     private fun drawPhoneOff(canvas: Canvas, x: Float, y: Float, colour: Int, aa: Boolean) {
-        setStroke(2.2f, colour, aa)
-        rect.set(x - 7.5f, y - 12f, x + 7.5f, y + 12f)
-        canvas.drawRoundRect(rect, 2.5f, 2.5f, stroke)
-        stroke.strokeWidth = 2.4f
+        setStroke(2.4f, colour, aa)
+        rect.set(x - 8.5f, y - 14f, x + 8.5f, y + 14f)
+        canvas.drawRoundRect(rect, 3f, 3f, stroke)
         stroke.strokeCap = Paint.Cap.ROUND
-        canvas.drawLine(x - 12f, y + 12f, x + 12f, y - 12f, stroke)
+        canvas.drawLine(x - 3f, y - 10f, x + 3f, y - 10f, stroke)
+        stroke.strokeWidth = 2.6f
+        canvas.drawLine(x - 13f, y + 13f, x + 13f, y - 13f, stroke)
     }
 
     private fun drawPause(canvas: Canvas, x: Float, y: Float, colour: Int, aa: Boolean, hollow: Boolean, k: Float = 1f) {
@@ -1372,46 +1310,90 @@ class OrbitWatchface : WatchFace() {
     }
 
     /**
-     * The pill row under the delta (UX round 1): the TIEF/HOCH word as a pill (moved out of the hero, where it was cramped
-     * next to the glyph) and the status slot pill W4-W9, side by side and centred as a group.
+     * Orbit discs round 4: the W4-W9 warning (and a TIEF / HOCH word that cannot sit on the delta row) in the chart's
+     * slot ([OrbitFaceLogic.ROW_Y]; the chart is hidden then), side by side and centred as a group, clear of the KH /
+     * basal discs. The date stays at 6 o'clock.
      */
-    /** Total width of the pill row for [s] (0 when nothing is drawn); the date gap at 6 o'clock is cut to it. */
-    /**
-     * Glass/Orbit UX round 4: a W4-W9 pill takes the date's place on the ring at 6 o'clock ALONE. Round 3 kept a short
-     * date ("Sa 17.") beside it, which read as a cut-off, broken date; the full date returns when the warning clears.
-     */
-    private fun pillRowWidth(s: Slot?, ambient: Boolean): Float {
-        val cap = captionShown && !captionInDelta
-        if (!cap && s == null) return 0f
-        val word = if (caption == FaceState.Caption.HIGH_WORD) labels.sentinelHigh else labels.sentinelLow
-        val capW = if (cap) captionWidth(word, ambient) else 0f
-        val gap = if (cap && s != null) PILL_GAP else 0f
-        val slotW = if (s != null) 2f * pillHalf(s, OrbitFaceLogic.ROW_PILL_TEXT, ambient, pillSlotMax(s, capW, gap, ambient)) else 0f
-        return capW + gap + slotW
-    }
-
-    /**
-     * Glass/Orbit UX round 5: text budget of a delta-row pill, so the whole pill keeps [OrbitFaceLogic.SAT_CLEAR] to
-     * the KH and basal discs (the text shrinks toward the 18 px floor).
-     */
-    private fun deltaPillMax(s: Slot, ambient: Boolean): Float =
-        min(OrbitFaceLogic.SLOT_IN_DELTA_MAX_WIDTH, OrbitFaceLogic.slotInDeltaMaxPillWidth() - 2f * PILL_TEXT_PAD - (if (s.tone == Tone.ALERT && !ambient) 20f else 0f))
-
-    private fun pillSlotMax(s: Slot?, capW: Float, gap: Float, ambient: Boolean): Float =
-        min(OrbitFaceLogic.SLOT_MAX_WIDTH, OrbitFaceLogic.PILL_ROW_MAX_WIDTH - capW - gap - 2f * PILL_TEXT_PAD - (if (s?.tone == Tone.ALERT && !ambient) 20f else 0f))
-
     private fun drawPillRow(canvas: Canvas, s: Slot?, ambient: Boolean) {
         val cap = captionShown && !captionInDelta
         if (!cap && s == null) return
         val word = if (caption == FaceState.Caption.HIGH_WORD) labels.sentinelHigh else labels.sentinelLow
         val capW = if (cap) captionWidth(word, ambient) else 0f
         val gap = if (cap && s != null) PILL_GAP else 0f
-        // the row sits on the ring at 6 o'clock (the date's place): the slot text shrinks to what the caption leaves
-        val slotMax = pillSlotMax(s, capW, gap, ambient)
-        val slotW = if (s != null) 2f * pillHalf(s, OrbitFaceLogic.ROW_PILL_TEXT, ambient, slotMax) else 0f
+        val y = OrbitFaceLogic.ROW_Y
+        // the budget from the words' real glyph box ("Reservoir 18 U" has no descender: it may run wider than "Tel 8 %"
+        // with a "g" would), the caption's 32 px pill box when only a caption is shown
+        var above = OrbitFaceLogic.CAPTION_H / 2f
+        var below = OrbitFaceLogic.CAPTION_H / 2f
+        if (s != null) {
+            setText(floorPx(OrbitFaceLogic.WARN_TEXT), if (ambient) tf500 else tf600)
+            text.getTextBounds(s.text, 0, s.text.length, textBounds)
+            val base = baseline(y) - y
+            above = max(if (cap) above else 0f, -(base + textBounds.top) + 1f)
+            below = max(if (cap) below else 0f, base + textBounds.bottom + 1f)
+        }
+        val maxW = OrbitFaceLogic.textLineMaxWidth(y, above, below) - capW - gap
+        val slotW = if (s != null) layoutWarning(s, ambient, maxW) else 0f
         val x1 = OrbitFaceLogic.CX - (capW + gap + slotW) / 2f
-        if (cap) drawCaptionPill(canvas, word, x1 + capW / 2f, OrbitFaceLogic.SLOT_Y, OrbitFaceLogic.ROW_PILL_H, capW, ambient)
-        if (s != null) drawPill(canvas, s, x1 + capW + gap + slotW / 2f, OrbitFaceLogic.SLOT_Y, OrbitFaceLogic.ROW_PILL_H, OrbitFaceLogic.ROW_PILL_TEXT, ambient, slotMax)
+        if (cap) drawCaptionPill(canvas, word, x1 + capW / 2f, y, OrbitFaceLogic.CAPTION_H, capW, ambient)
+        if (s != null) drawWarning(canvas, s, x1 + capW + gap + slotW / 2f, y, ambient, maxW)
+    }
+
+    /** Width budget of a W1-W3 warning on the delta row (it passes above the lower discs, between the 3 / 9 o'clock stations). */
+    private fun deltaWarnMax(): Float =
+        OrbitFaceLogic.textLineMaxWidth(OrbitFaceLogic.SLOT_IN_DELTA_Y, OrbitFaceLogic.WARN_ABOVE, OrbitFaceLogic.WARN_BELOW, cap = DELTA_WARN_MAX_WIDTH)
+
+    // layout of the last measured warning (size and whether the triangle fits), no allocation
+    private var warnSize = OrbitFaceLogic.WARN_TEXT
+    private var warnIconShown = false
+
+    /**
+     * Fits [s] into [maxW]: the words at [OrbitFaceLogic.WARN_TEXT] with the alert triangle in front when both fit; the
+     * triangle gives way first (the words name the problem; colour is never the only cue), the size only when even the
+     * words alone cannot fit (never below the 18 px floor). Returns the drawn width.
+     */
+    private fun layoutWarning(s: Slot, ambient: Boolean, maxW: Float): Float {
+        val size = floorPx(OrbitFaceLogic.WARN_TEXT)
+        setText(size, if (ambient) tf500 else tf600, !(ambient && lowBitAmbient))
+        val tw = text.measureText(s.text)
+        val wantIcon = s.tone == Tone.ALERT && !ambient
+        warnIconShown = wantIcon && tw + OrbitFaceLogic.WARN_ICON_W <= maxW
+        val iconW = if (warnIconShown) OrbitFaceLogic.WARN_ICON_W else 0f
+        warnSize = max(floorPx(OrbitFaceLogic.MIN_TEXT_PX), OrbitFaceLogic.fitSize(tw, size, maxW - iconW))
+        return iconW + tw * warnSize / size
+    }
+
+    /**
+     * Status warning (states.md §4.2). Orbit discs round 4 (review: the pills' 13-14 px caps were too small for a safety
+     * message): coloured words at 24 px semibold, frameless as on Halo: red for an alert (with the triangle), amber for
+     * a warning, a light grey for information. Ambient: the words in the ambient grey.
+     */
+    private fun drawWarning(canvas: Canvas, s: Slot, cx: Float, cy: Float, ambient: Boolean, maxW: Float) {
+        val aa = !(ambient && lowBitAmbient)
+        val w = layoutWarning(s, ambient, maxW)
+        val fg = when {
+            ambient              -> amb(AMB1)
+            s.tone == Tone.ALERT -> RED
+            s.tone == Tone.WARN  -> AMBER
+            else                 -> INFO_TXT
+        }
+        val x0 = cx - w / 2f
+        if (warnIconShown) {
+            canvas.save()
+            canvas.translate(x0 + 9f, cy - 1f)
+            canvas.scale(WARN_ICON_SCALE, WARN_ICON_SCALE)
+            setStroke(1.8f, fg, true)
+            stroke.strokeJoin = Paint.Join.ROUND
+            stroke.strokeCap = Paint.Cap.ROUND
+            canvas.drawPath(warnIcon, stroke)
+            canvas.drawLine(0f, -1.5f, 0f, 2f, stroke)
+            canvas.drawPoint(0f, 4.2f, stroke)
+            canvas.restore()
+        }
+        setText(warnSize, if (ambient) tf500 else tf600, aa)
+        text.textAlign = Paint.Align.LEFT
+        text.color = fg
+        canvas.drawText(s.text, x0 + (if (warnIconShown) OrbitFaceLogic.WARN_ICON_W else 0f), baseline(cy), text)
     }
 
     private fun captionWidth(word: String, ambient: Boolean): Float {
@@ -1454,70 +1436,6 @@ class OrbitWatchface : WatchFace() {
                 else    -> LOW_TXT
             }, aa, 0.04f
         )
-    }
-
-    private fun pillHalf(s: Slot, textSize: Float, ambient: Boolean, maxText: Float = OrbitFaceLogic.SLOT_MAX_WIDTH, pad: Float = PILL_TEXT_PAD): Float {
-        setText(textSize, if (ambient) tf500 else tf600, !(ambient && lowBitAmbient))
-        val iconW = if (s.tone == Tone.ALERT && !ambient) 14f + 6f else 0f
-        return (iconW + pillTextWidth(s.text, textSize, maxText)) / 2f + pad
-    }
-
-    /** Pill text size: shrunk to [maxText], never below the 18 px floor (the strings are short enough there). */
-    private fun pillTextSize(s: String, textSize: Float, maxText: Float): Float =
-        max(floorPx(OrbitFaceLogic.MIN_TEXT_PX), OrbitFaceLogic.fitSize(text.measureText(s), textSize, maxText))
-
-    /** Text width at [pillTextSize] (the paint is set to [textSize]). */
-    private fun pillTextWidth(s: String, textSize: Float, maxText: Float): Float =
-        text.measureText(s) * pillTextSize(s, textSize, maxText) / textSize
-
-    /** Status slot pill (states.md §4.2). Interactive: tinted fill + outline; ambient: outline only. */
-    private fun drawPill(canvas: Canvas, s: Slot, cx: Float, cy: Float, height: Float, textSize: Float, ambient: Boolean, maxText: Float = OrbitFaceLogic.SLOT_MAX_WIDTH, pad: Float = PILL_TEXT_PAD) {
-        val aa = !(ambient && lowBitAmbient)
-        val bg = when {
-            ambient              -> Color.BLACK
-            s.tone == Tone.ALERT -> PILL_ALERT
-            s.tone == Tone.WARN  -> PILL_WARN
-            else                 -> PILL_INFO
-        }
-        val line = when {
-            ambient              -> amb(AMB2)
-            s.tone == Tone.ALERT -> RED
-            s.tone == Tone.WARN  -> AMBER
-            else                 -> NEUTRAL_RING
-        }
-        val fg = when {
-            ambient              -> amb(AMB1)
-            s.tone == Tone.ALERT -> LOW_TXT
-            s.tone == Tone.WARN  -> WARN_TXT
-            else                 -> TXT2
-        }
-        val tf = if (ambient) tf500 else tf600
-        setText(textSize, tf, aa)
-        val icon = s.tone == Tone.ALERT && !ambient
-        val iconW = if (icon) 14f + 6f else 0f
-        val tw = pillTextWidth(s.text, textSize, maxText)
-        val k = pillTextSize(s.text, textSize, maxText) / textSize
-        val half = (iconW + tw) / 2f + pad
-        rect.set(cx - half, cy - height / 2f, cx + half, cy + height / 2f)
-        setFill(bg, aa)
-        canvas.drawRoundRect(rect, height / 2f, height / 2f, fill)
-        setStroke(if (ambient) 1f else 1.5f, line, aa)
-        canvas.drawRoundRect(rect, height / 2f, height / 2f, stroke)
-        val x0 = cx - (iconW + tw) / 2f
-        if (icon) {
-            canvas.save()
-            canvas.translate(x0 + 7f, cy - 1f)
-            setStroke(1.6f, fg, true)
-            stroke.strokeJoin = Paint.Join.ROUND
-            canvas.drawPath(warnIcon, stroke)
-            canvas.drawLine(0f, -1.5f, 0f, 2f, stroke)
-            canvas.drawPoint(0f, 4.2f, stroke)
-            canvas.restore()
-        }
-        setText(textSize * k, tf, aa)
-        text.textAlign = Paint.Align.LEFT
-        text.color = fg
-        canvas.drawText(s.text, x0 + iconW, baseline(cy), text)
     }
 
     /**
@@ -1590,15 +1508,18 @@ class OrbitWatchface : WatchFace() {
         val stale = family == STALE_C
         val hot = discHot(i, b, muted) && !stale
         val hue = family ?: DISC_SLATE
-        // a paused loop (amber body) says "|| AUS" in light amber on the darker hot body: the word and the colour agree
+        // Orbit discs round 4 (review: the amber-on-brown loop-off disc looked like the KH disc): a paused loop is the one
+        // SOLID amber disc on the face, with "|| AUS" over "LOOP" in near-black and the strongest glow
         val pausedAmber = b.pause && !muted && family == AMBER
-        val key = hue xor (if (dim) 0x55000000 else 0) xor (if (hot || pausedAmber) 0x2A000000 else 0) xor (if (muted) 0x11000000 else 0)
+        val key = hue xor (if (dim) 0x55000000 else 0) xor (if (hot) 0x2A000000 else 0) xor (if (pausedAmber) 0x3C000000 else 0) xor
+            (if (muted) 0x11000000 else 0)
         if (discShader[i] == null || discKey[i] != key) {
             discKey[i] = key
             // a muted late loop (the red budget is spent on the pill) keeps only its dashed red rim: a slate body, no glow
-            discShader[i] = discBody(x, y, r, if (muted) DISC_SLATE else bodyHue(hue), discStrength(dim, hot || pausedAmber, muted, stale))
+            discShader[i] = if (pausedAmber) solidAmberBody(x, y, r)
+            else discBody(x, y, r, if (muted) DISC_SLATE else bodyHue(hue), discStrength(dim, hot, muted, stale))
             val glowA = when {
-                hot                   -> DISC_HOT_GLOW_ALPHA
+                hot || pausedAmber    -> DISC_HOT_GLOW_ALPHA
                 dim || muted || stale -> 0
                 else                  -> DISC_GLOW_ALPHA
             }
@@ -1616,6 +1537,7 @@ class OrbitWatchface : WatchFace() {
             }
 
             hot            -> setStroke(DISC_HOT_RIM, hue, true)
+            pausedAmber    -> setStroke(DISC_RIM, PAUSED_RIM, true)
             family == null -> setStroke(1.5f, DIM_RING, true)
             else           -> setStroke(DISC_RIM, withAlpha(hue, if (dim || stale) 150 else 255), true)
         }
@@ -1623,15 +1545,15 @@ class OrbitWatchface : WatchFace() {
         canvas.drawCircle(x, y, rimR, stroke)
         stroke.pathEffect = null
         val valueColour = when {
+            pausedAmber -> PAUSED_TXT
             hot   -> if (hue == RED) HOT_RED_TXT else HOT_AMBER_TXT
-            pausedAmber -> HOT_AMBER_TXT
             stale -> TXT2
             dim   -> DIM_TXT
             else  -> VAL_TXT
         }
-        val labelColour = if (family == null || b.ring == Ring.DIM || stale) DIM_TXT else DISC_LABEL
+        val labelColour = if (pausedAmber) PAUSED_TXT else if (family == null || b.ring == Ring.DIM || stale) DIM_TXT else DISC_LABEL
         val vy = if (b.label.isEmpty()) y else y - BALL_VALUE_DY
-        drawDiscValue(canvas, b, x, vy, ballSize[i], tf600, valueColour, if (pausedAmber) HOT_AMBER_TXT else VAL_TXT, true, hollowPause = false)
+        drawDiscValue(canvas, b, x, vy, ballSize[i], tf600, valueColour, if (pausedAmber) PAUSED_TXT else VAL_TXT, true, hollowPause = false)
         val label = ballLabelText[i] ?: b.label
         if (label.isNotEmpty()) drawText(canvas, label, x, y + BALL_LABEL_DY, ballLabelSize[i], tf500, labelColour, true, ballLabelTrack[i])
     }
@@ -1649,6 +1571,12 @@ class OrbitWatchface : WatchFace() {
         x - 0.34f * r, y - 0.42f * r, 1.42f * r,
         intArrayOf(discMix(hue, DISC_LIT * k), discMix(hue, DISC_MID * k), discMix(hue, DISC_DARK * k), discMix(hue, DISC_EDGE * k)),
         floatArrayOf(0f, 0.45f, 0.85f, 1f), Shader.TileMode.CLAMP
+    )
+
+    /** The paused loop's solid amber body, lit from the upper left (a sphere, not a flat sticker). */
+    private fun solidAmberBody(x: Float, y: Float, r: Float): Shader = RadialGradient(
+        x - 0.34f * r, y - 0.42f * r, 1.42f * r,
+        intArrayOf(AMBER_LIT, AMBER, AMBER_DEEP), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
     )
 
     /** Glow in the state colour from the rim outwards ([DISC_GLOW] px). */
@@ -1766,23 +1694,20 @@ class OrbitWatchface : WatchFace() {
         val subY = bolusY + BOLUS_SUB_DY
         when {
             armed                -> {
-                setStroke(3.5f, withAlpha(Color.WHITE, 70), true)
+                // Orbit discs round 4: the countdown is a 4 px white ring on a dark track (readable on the bright indigo)
+                setStroke(ARMED_RING_W, withAlpha(Color.BLACK, 110), true)
                 canvas.drawPath(outlinePath, stroke)
                 val remaining = (1f - (System.currentTimeMillis() - guard.armedAt).toFloat() / BolusTapGesture.WINDOW_MS).coerceIn(0f, 1f)
                 outlineSegment.rewind()
                 if (outlineMeasure.getSegment(0f, outlineLength * remaining, outlineSegment, true)) {
                     stroke.color = Color.WHITE
+                    stroke.strokeCap = Paint.Cap.ROUND
                     canvas.drawPath(outlineSegment, stroke)
                 }
                 drawBolusAmount(canvas, amountY, Color.WHITE)
-                // confirm tick: "tap again to send" (the countdown ring runs out around it)
-                setStroke(2.8f, Color.WHITE, true)
-                stroke.strokeCap = Paint.Cap.ROUND
-                stroke.strokeJoin = Paint.Join.ROUND
-                canvas.save()
-                canvas.translate(bolusX, subY)
-                canvas.drawPath(tickPath, stroke)
-                canvas.restore()
+                // Orbit discs round 4 (review: a tick read as "done / sent"): the family's "tap again" word, as Halo: "nochmal"
+                // when it fits the button's chord at the sub line, else "2×" (Halo's small-ball fallback)
+                drawText(canvas, armedWord(), bolusX, subY, armedWordSize, tf700, Color.WHITE, true)
             }
 
             state == State.SENT  -> {
@@ -1813,8 +1738,8 @@ class OrbitWatchface : WatchFace() {
             }
 
             else                 -> {
-                // idle: the white ring marks the one pressable object
-                setStroke(BOLUS_RING_W, withAlpha(Color.WHITE, 235), true)
+                // idle: the white ring marks the one pressable object (Orbit discs round 4: quieter, so arming is a visible change)
+                setStroke(BOLUS_RING_W, withAlpha(Color.WHITE, IDLE_RING_ALPHA), true)
                 canvas.drawCircle(bolusX, bolusY, r - BOLUS_RING_W / 2f, stroke)
                 drawBolusAmount(canvas, amountY, Color.WHITE)
                 drawText(canvas, "U", bolusX, subY, BOLUS_SUB_SIZE, tf600, BOLUS_TEXT, true)
@@ -1825,6 +1750,19 @@ class OrbitWatchface : WatchFace() {
             setStroke(3f, Color.WHITE, true)
             canvas.drawPath(outlinePath, stroke)
         }
+    }
+
+    private var armedWordSize = ARMED_WORD_SIZE
+
+    /** "nochmal" / "again" at 18 px bold when it fits [BOLUS_AMOUNT_MAX_W], else "2×" at 22 px bold. */
+    private fun armedWord(): String {
+        setText(ARMED_WORD_SIZE, tf700)
+        if (text.measureText(labels.again) <= BOLUS_AMOUNT_MAX_W - 2f) {
+            armedWordSize = ARMED_WORD_SIZE
+            return labels.again
+        }
+        armedWordSize = ARMED_TWICE_SIZE
+        return ARMED_TWICE
     }
 
     /** The bolus amount, 26 px bold, shrunk only to the button's chord (a long "+10,5" stays inside the ring). */
@@ -2022,30 +1960,39 @@ class OrbitWatchface : WatchFace() {
         private const val DATE_SIZE = 26f // Orbit discs round 3: 22 -> 26 (an 18 px cap, Halo's date)
         private const val DATE_MIN_SIZE = 22f
         private const val AMPM_SIZE = 18f
-        private const val MAX_SEGMENTS = 8
-        private const val SLOT_TEXT = OrbitFaceLogic.SLOT_TEXT
         private const val CAPTION_TEXT = 24f // Orbit discs round 3: 22 -> 24, the word carries the alarm
         private const val CAPTION_PAD = 12f
         private const val PILL_GAP = 8f
-        private const val PILL_TEXT_PAD = 14f
+        /** Orbit discs round 4: a W1-W3 warning on the delta row may run wider than the delta (it clears the 3 / 9 o'clock stations). */
+        private const val DELTA_WARN_MAX_WIDTH = 280f
+        private const val WARN_ICON_SCALE = 1.25f
+        private const val INFO_TXT = 0xFFC8CFDB.toInt()
         private const val BALL_VALUE_DY = OrbitFaceLogic.BALL_VALUE_DY
         private const val BALL_LABEL_DY = OrbitFaceLogic.BALL_LABEL_DY
-        private const val BAND_CORNER = 4f
-        private const val TRACK_W = 2.5f // Orbit discs round 3: 2 -> 2.5 px and lit (TRACK_LIT -> TRACK_DARK)
-        private const val TRACK_LIT = 0xFF8A9AC0.toInt()
-        private const val TRACK_DARK = 0xFF46506A.toInt()
-        private const val BAND_FADE = 40f // Glass/Orbit UX round 6: 24 -> 40
+        /** Orbit discs round 4: the lit ring, #B8C0CF at the upper left to #6B7385 at the lower right (outdoor contrast). */
+        private const val TRACK_LIT = 0xFFB8C0CF.toInt()
+        private const val TRACK_DARK = 0xFF6B7385.toInt()
+        private const val BAND_FADE = 28f // Orbit discs round 4: 40 -> 28 on the hairlines. Before: Glass/Orbit UX round 6: 24 -> 40
+        private const val BAND_LINE_ALPHA = 45
+        private const val AREA_ALPHA = 64
+        private const val AREA_FADE = 20f
+        private const val AREA_STEPS = 10
         private const val BOLUS_SUB_SIZE = OrbitFaceLogic.MIN_TEXT_PX
         /** Orbit discs round 3: the amount 20 -> 26 px bold (the one dosing number on the face), the "U" / tick under it. */
         private const val BOLUS_AMOUNT_SIZE = 26f
         private const val BOLUS_AMOUNT_MAX_W = 64f
         private const val BOLUS_AMOUNT_DY = -7f
         private const val BOLUS_SUB_DY = 17f
-        private const val BOLUS_RING_W = 2.5f
+        private const val BOLUS_RING_W = 2f // Orbit discs round 4: 2.5 -> 2 px at 63 % white
+        private const val IDLE_RING_ALPHA = 160
+        private const val ARMED_RING_W = 4f
+        private const val ARMED_WORD_SIZE = 18f
+        private const val ARMED_TWICE_SIZE = 22f
+        private const val ARMED_TWICE = "2×"
         /** Pause glyph width (two 5 px bars 11 px apart) and its gap to "AUS", at the 28 px value size. */
         private const val PAUSE_W = 16f
         private const val PAUSE_GAP = 5f
-        private const val PHONE_GLYPH_W = 26f
+        private const val PHONE_GLYPH_W = 32f
         private const val DELTA_ARROW_STROKE = 4.5f
         private val HEAD_SIGNS = intArrayOf(-1, 1)
         private const val AMPM_GAP = 3f
@@ -2107,19 +2054,31 @@ class OrbitWatchface : WatchFace() {
         /** Family rims (L* about 70-80) and the saturated hues their bodies are tinted with. */
         private const val IOB_C = 0xFF5BB8E8.toInt()
         private const val IOB_BODY = 0xFF3A9CE0.toInt()
-        private const val KH_C = 0xFFEDB27C.toInt()
-        private const val KH_BODY = 0xFFFFAA40.toInt()
+        /**
+         * Orbit discs round 4 (review: amber belongs to warnings only): KH is a low-chroma sand rim on a warm graphite body
+         * (the U/h recipe, warm instead of cool), so it never reads as a warning next to an amber BG or a paused loop.
+         */
+        private const val KH_C = 0xFFE2CBAE.toInt()
+        private const val KH_BODY = 0xFF9A8A76.toInt()
         private const val BASAL_C = 0xFFC9D3E6.toInt()
         private const val BASAL_BODY = 0xFF6A80B0.toInt()
         private const val TT_C = 0xFFD08CF0.toInt()
         private const val TT_BODY = 0xFFA050D8.toInt()
         /** The late loop's age in its warning colour, light enough on the hot body (word and colour agree). */
-        private const val HOT_RED_TXT = 0xFFFF9AA6.toInt()
-        private const val HOT_AMBER_TXT = 0xFFFFC870.toInt()
+        /** Orbit discs round 4 (review: red on dark red had the lowest contrast): near-white, the rim and glow carry the colour. */
+        private const val HOT_RED_TXT = 0xFFFFE3E7.toInt()
+        private const val HOT_AMBER_TXT = 0xFFFFF0D6.toInt()
+        /** The paused loop's solid amber sphere and its near-black words. */
+        private const val AMBER_LIT = 0xFFFFD58C.toInt()
+        private const val AMBER_DEEP = 0xFFD98A1E.toInt()
+        private const val PAUSED_RIM = 0xFFFFE2A8.toInt()
+        private const val PAUSED_TXT = 0xFF1A1206.toInt()
         /** Idle bolus button: a solid indigo (white 4.6:1 or more on it). */
-        private const val BOLUS_FILL = 0xFF4F5FF0.toInt()
-        /** Orbit discs round 2: the ring's break around a W4-W9 pill row keeps this much air at each end. */
-        private const val PILL_RING_CLEAR = 10f
+        private const val BOLUS_FILL = 0xFF4752D6.toInt() // Orbit discs round 4: 4F5FF0 -> 4752D6, the BG stays the hero
+        /** Orbit discs round 4: the socket of an empty 3 / 9 o'clock station. */
+        private const val SOCKET_R = 5f
+        private const val SOCKET_FILL = 0xFF1A1F2A.toInt()
+        private const val SOCKET_RIM = 0xFF8C95A8.toInt()
         /** Disc labels: a light neutral, 4.5:1 or more on every disc fill (about 9:1 on the hot red one). */
         private const val DISC_LABEL = 0xFFB8C0D0.toInt()
         /** Ambient disc outline (1 px, interactive-free grey; dropped under burn-in protection). */
@@ -2134,7 +2093,8 @@ class OrbitWatchface : WatchFace() {
         /** Indigo sphere of the idle bolus button (the Glass ball gradient). */
         private const val VAL_TXT = 0xFFEEF2F7.toInt()
         private const val TIME_C = 0xFFE6ECF4.toInt()
-        private const val DATE_C = TXT2
+        /** Orbit discs round 4: a neutral light grey (TXT2 sat next to the stale token #8A93A8). */
+        private const val DATE_C = 0xFFB0B8C8.toInt()
         private const val DELTA_C = 0xFFD5DCE8.toInt() // UX round 2: near txt1, the second reading after the BG
         private const val INDIGO = 0xFF7888FF.toInt()
         private const val BOLUS_TEXT = 0xFFE8EBFF.toInt()
@@ -2142,11 +2102,9 @@ class OrbitWatchface : WatchFace() {
         // Glass/Orbit UX round 3: the family's armed indigo #5B63F5 (Glass), idle and armed differ by fill AND ring
         // Orbit discs round 3: armed is a brighter indigo than the solid idle button (plus the countdown and the tick)
         private const val ARMED_FILL = 0xFF7484FF.toInt()
-        private const val MOON_C = 0xFFC8CFDB.toInt() // Orbit discs round 3: neutral, never the range colour
         private const val NOW_HOLLOW = 0xFFC8C8C8.toInt()
         private const val PILL_ALERT = 0xFF3A1018.toInt()
         private const val PILL_WARN = 0xFF33240C.toInt()
-        private const val PILL_INFO = 0xFF141A25.toInt()
         private const val BADGE_TXT = 0xFF1A0508.toInt()
 
         // sys.preview sample (spec §10): "6,4" FLAT "+0,1" 1′, loop 2′, IOB 1,25, COB 0g, basal 0,85, 10:08 "Fr 17. Okt"
