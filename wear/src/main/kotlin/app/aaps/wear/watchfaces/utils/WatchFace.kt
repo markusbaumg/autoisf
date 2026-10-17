@@ -54,6 +54,12 @@ abstract class WatchFace : WatchFaceService() {
     protected var watchShape = WatchShape.UNKNOWN
     protected var layoutComplete = false
 
+    /** True for the headless instance (watch face picker / editor preview); known from [onWatchStateKnown] on. */
+    protected var isHeadless = false
+
+    /** Epoch millis of the time being rendered (the renderer's ZonedDateTime), so ages and the clock share one time source. */
+    protected var latestEpochMillis = 0L
+
     protected val currentWatchMode: WatchMode
         get() = when {
             !isAmbient                        -> WatchMode.INTERACTIVE
@@ -186,6 +192,9 @@ abstract class WatchFace : WatchFaceService() {
      */
     protected open fun onTapCommand(tapType: Int, x: Int, y: Int, eventTime: Long) {}
 
+    /** Called once the WatchState is known (after onCreate), with [isHeadless] set. Default: no-op. */
+    protected open fun onWatchStateKnown() {}
+
     // Renderer instance
     private var renderer: WatchFaceRenderer? = null
 
@@ -195,6 +204,8 @@ abstract class WatchFace : WatchFaceService() {
         complicationSlotsManager: ComplicationSlotsManager,
         currentUserStyleRepository: CurrentUserStyleRepository
     ): WatchFace {
+        isHeadless = watchState.isHeadless
+        onWatchStateKnown()
         // Create renderer that delegates to abstract methods
         renderer = WatchFaceRenderer(
             context = applicationContext,
@@ -322,6 +333,7 @@ abstract class WatchFace : WatchFaceService() {
             latestTime.minute = zonedDateTime.minute
             latestTime.second = zonedDateTime.second
             latestTime.timezone = zonedDateTime.zone.id
+            latestEpochMillis = zonedDateTime.toInstant().toEpochMilli()
 
             onTimeChanged(previousTime, latestTime)
 
@@ -337,6 +349,7 @@ abstract class WatchFace : WatchFaceService() {
             previousTime.set(latestTime)
             latestTime.setToNow()
             latestTime.timezone = TimeZone.getDefault().id
+            latestEpochMillis = System.currentTimeMillis()
 
             onTimeChanged(previousTime, latestTime)
 

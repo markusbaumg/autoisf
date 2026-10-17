@@ -15,6 +15,7 @@ import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
+import android.text.format.DateFormat
 import android.os.Vibrator
 import android.widget.Toast
 import androidx.wear.watchface.TapType
@@ -26,6 +27,7 @@ import app.aaps.core.interfaces.rx.events.EventUpdateSelectedWatchface
 import app.aaps.core.interfaces.rx.events.EventWearToMobile
 import app.aaps.core.interfaces.rx.weardata.EventData
 import app.aaps.core.interfaces.rx.weardata.EventData.ActionResendData
+import app.aaps.core.interfaces.rx.weardata.EventData.LoopStatesList
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.interfaces.Preferences
@@ -45,6 +47,8 @@ import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Range
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Ring
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Slot
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Tone
+import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Trend
+import app.aaps.wear.watchfaces.utils.SimpleUi
 import app.aaps.wear.watchfaces.utils.WatchFace
 import app.aaps.wear.watchfaces.utils.WatchMode
 import app.aaps.wear.watchfaces.utils.WatchfaceViewAdapter.Companion.SelectedWatchFace
@@ -61,7 +65,10 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import javax.inject.Inject
 import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -76,6 +83,10 @@ import kotlin.math.sqrt
  *
  * Optional bolus button at 9 o'clock (watch preference, default OFF): double tap within 800 ms sends only a bolus
  * REQUEST (ActionBolusPreCheck); the phone checks it and the watch shows the standard confirmation.
+ *
+ * Not yet covered (deferred, see the commit message): multi-patient balls (datasets 1/2, key_include_external,
+ * multi.*), key_show_seconds, the optional LOOP-ball tap (ActionLoopStatusDetailed), ball.delivering/delivered
+ * (BolusProgress), flat-tyre insets and locale.rtl.
  */
 @SuppressLint("Deprecated")
 class OrbitWatchface : WatchFace() {
@@ -86,6 +97,7 @@ class OrbitWatchface : WatchFace() {
     @Inject lateinit var sp: SP
     @Inject lateinit var preferences: Preferences
     @Inject lateinit var complicationDataRepository: ComplicationDataRepository
+    @Inject lateinit var simpleUi: SimpleUi
 
     private val disposable = CompositeDisposable()
     private val watchfaceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -93,8 +105,11 @@ class OrbitWatchface : WatchFace() {
 
     @Volatile private var data: ComplicationData = ComplicationData()
 
-    /** CapabilityClient FILTER_REACHABLE, refreshed once per minute. Unknown until the first answer: assume reachable. */
-    @Volatile private var phoneReachable = true
+    /**
+     * CapabilityClient FILTER_REACHABLE, refreshed once per minute and on every bolus-button tap. Null (unknown)
+     * until the first answer: the button stays DISABLED until then.
+     */
+    @Volatile private var phoneReachable: Boolean? = null
 
     // ---------------------------------------------------------------- bolus
 
@@ -120,6 +135,37 @@ class OrbitWatchface : WatchFace() {
         dirty = true
         invalidate()
     }
+    private var flashUntil = 0L
+    private val redraw = Runnable { invalidate() }
+
+    // ---------------------------------------------------------------- display preferences (read in prefsChanged)
+
+    private var showIob = true
+    private var showCob = true
+    private var showBasal = true
+    private var showTt = true
+    private var showLoop = true
+    private var showDate = true
+    private var showWeek = false
+    private var showDelta = true
+    private var showAgo = true
+    private var showDirection = true
+    private var detailedDelta = false
+    private var avgDelta = false
+    private var showPredictions = true
+    private var timeFrameH = OrbitFaceLogic.DEFAULT_TIME_FRAME_H
+    private var loopStatesRaw = ""
+    private var loopStateNames: Set<String> = emptySet()
+    private var loopStatesTimeStamp = 0L
+
+    // graph tap zone: single tap opens the menu (after the double-tap window), double tap cycles the time frame
+    private var graphTapTime = 0L
+    private val graphSingleTap = Runnable {
+        graphTapTime = 0L
+        openMenu(System.currentTimeMillis())
+    }
+    private var captionText = ""
+    private var captionUntil = 0L
 
     // ---------------------------------------------------------------- derived state (rebuilt on change only)
 
@@ -128,11 +174,14 @@ class OrbitWatchface : WatchFace() {
     private var builtMinuteKey = -1L
     private var builtAmbient = false
     private var built24h = false
-    private var builtReachable = true
+    private var builtReachable: Boolean? = null
     private var dirty = true
 
     private var scale = 1f
     private var timeText = ""
+    private var amPmText = ""
+    private var timeX = 0f
+    private var amPmX = 0f
     private var dateText = ""
     private var dateSize = 18f
     private var gapT = 10f
@@ -142,9 +191,16 @@ class OrbitWatchface : WatchFace() {
     private var rangeColour = STALE_C
     private var heroColour = STALE_C
     private var heroText = "---"
-    private var arrowText = ""
+    private var heroSize = 108f
+    private var heroX = OrbitFaceLogic.CX
+    private var heroW = 0f
+    private var trend = Trend.NONE
+    private var trendX = 0f
+    private var trendSize = 48f
+    private var sentinelLow = false
+    private var loopMuted = false
+    private val trendPath = Path()
     private var deltaRow = OrbitFaceLogic.DeltaRow("", "", false)
-    private var ambientOldText = ""
     private var slot: Slot? = null
     private var slotInDeltaRow = false
     private var phoneGlyph = false
@@ -155,6 +211,7 @@ class OrbitWatchface : WatchFace() {
     private var moon = OrbitFaceLogic.Moon(MoonKind.HIDDEN, 0f)
     private var shiftX = 0f
     private var shiftY = 0f
+    private var sparkWindowMs = OrbitFaceLogic.SPARK_HISTORY_MS
 
     // sparkline
     private val sparkPath = Path()
@@ -186,6 +243,11 @@ class OrbitWatchface : WatchFace() {
     )
     private val dash = DashPathEffect(floatArrayOf(2f, 4f), 0f)
     private val ringDash = DashPathEffect(floatArrayOf(5f, 4f), 0f)
+
+    // ambient range tracks (spec §6): dashed 6/6 for HIGH, doubled r 166 + r 171 for LOW
+    private val ambDash = DashPathEffect(floatArrayOf(6f, 6f), 0f)
+    private val trackRectInner = RectF(OrbitFaceLogic.CX - 166f, OrbitFaceLogic.CY - 166f, OrbitFaceLogic.CX + 166f, OrbitFaceLogic.CY + 166f)
+    private val trackRectOuter = RectF(OrbitFaceLogic.CX - 171f, OrbitFaceLogic.CY - 171f, OrbitFaceLogic.CX + 171f, OrbitFaceLogic.CY + 171f)
     private val tf300 = Typeface.create(Typeface.DEFAULT, 300, false)
     private val tf400 = Typeface.create(Typeface.DEFAULT, 400, false)
     private val tf500 = Typeface.create(Typeface.DEFAULT, 500, false)
@@ -216,15 +278,12 @@ class OrbitWatchface : WatchFace() {
     override fun onCreate() {
         AndroidInjection.inject(this)
         super.onCreate()
-        sp.putInt(R.string.key_last_selected_watchface, SelectedWatchFace.ORBIT.ordinal)
-        rxBus.send(EventUpdateSelectedWatchface())
         labels = OrbitFaceLogic.Labels(
             again = getString(R.string.orbit_bolus_again),
             cob = getString(R.string.orbit_cob),
             minutesFormat = getString(R.string.orbit_minutes).replace("%1\$d", "%d"),
             hoursFormat = getString(R.string.orbit_hours).replace("%1\$d", "%d"),
             daysFormat = getString(R.string.orbit_days).replace("%1\$d", "%d"),
-            old = getString(R.string.orbit_old),
             waiting = getString(R.string.orbit_waiting),
             phoneLostFormat = getString(R.string.orbit_phone_lost).replace("%1\$s", "%s"),
             noDataFormat = getString(R.string.orbit_no_data).replace("%1\$s", "%s"),
@@ -233,11 +292,16 @@ class OrbitWatchface : WatchFace() {
             loopAgeFormat = getString(R.string.orbit_loop_age).replace("%1\$s", "%s"),
             loopOffShort = getString(R.string.orbit_loop_off_short),
             loopOpen = getString(R.string.orbit_loop_open),
+            loopLgs = getString(R.string.orbit_loop_lgs),
+            sentinelLow = getString(R.string.orbit_sentinel_low),
+            weekFormat = getString(R.string.orbit_week).replace("%1\$d", "%d"),
             pumpOnly = getString(R.string.orbit_pump_only),
             reservoirFormat = getString(R.string.orbit_reservoir).replace("%1\$s", "%s"),
             phoneBatteryFormat = getString(R.string.orbit_phone_battery).replace("%1\$s", "%s")
         )
         buildShapes()
+        readPrefs()
+        simpleUi.onCreate(::invalidate)
 
         watchfaceScope.launch {
             complicationDataRepository.complicationData.collect {
@@ -254,6 +318,14 @@ class OrbitWatchface : WatchFace() {
             .observeOn(aapsSchedulers.main)
             .subscribe { prefsChanged() }
 
+    }
+
+    /** sys.preview: the headless (picker / editor) instance renders the fixed sample and starts no services. */
+    override fun onWatchStateKnown() {
+        dirty = true
+        if (isHeadless) return
+        sp.putInt(R.string.key_last_selected_watchface, SelectedWatchFace.ORBIT.ordinal)
+        rxBus.send(EventUpdateSelectedWatchface())
         refreshPhoneReachable()
         rxBus.send(EventWearToMobile(ActionResendData("OrbitWatchface::onCreate")))
     }
@@ -261,6 +333,9 @@ class OrbitWatchface : WatchFace() {
     override fun onDestroy() {
         handler.removeCallbacks(countdownTick)
         handler.removeCallbacks(pendingEnd)
+        handler.removeCallbacks(redraw)
+        handler.removeCallbacks(graphSingleTap)
+        simpleUi.onDestroy()
         disposable.clear()
         watchfaceScope.cancel()
         for (i in corona.indices) corona[i]?.recycle()
@@ -272,12 +347,20 @@ class OrbitWatchface : WatchFace() {
 
     override fun onWatchModeChanged(watchMode: WatchMode) {
         // mode.transition: entering ambient clears the armed state; on exit the ages are recomputed before drawing
-        if (watchMode != WatchMode.INTERACTIVE) disarm()
+        if (watchMode != WatchMode.INTERACTIVE) {
+            disarm()
+            // captions and pending graph taps are dropped
+            captionUntil = 0L
+            graphTapTime = 0L
+            handler.removeCallbacks(graphSingleTap)
+        }
         dirty = true
     }
 
     private fun prefsChanged() {
         dirty = true
+        readPrefs()
+        simpleUi.updatePreferences()
         refreshBolusCheck()
         if (bolusCheck.state != State.IDLE) disarm()
         invalidate()
@@ -290,6 +373,7 @@ class OrbitWatchface : WatchFace() {
 
     /** Asynchronous; the answer marks the state dirty only when it changed. */
     private fun refreshPhoneReachable() {
+        if (isHeadless) return
         try {
             Wearable.getCapabilityClient(this)
                 .getCapability(DataLayerListenerServiceWear.PHONE_CAPABILITY, CapabilityClient.FILTER_REACHABLE)
@@ -307,7 +391,44 @@ class OrbitWatchface : WatchFace() {
 
     // ---------------------------------------------------------------- preferences
 
+    /** display_preferences toggles and the chart time frame (pref.all_on / pref.minimal). */
+    private fun readPrefs() {
+        showIob = sp.getBoolean(R.string.key_show_iob, true)
+        showCob = sp.getBoolean(R.string.key_show_cob, true)
+        showBasal = sp.getBoolean(R.string.key_show_temp_basal, true)
+        showTt = sp.getBoolean(R.string.key_show_temp_target, true)
+        showLoop = sp.getBoolean(R.string.key_show_external_status, true)
+        showDate = sp.getBoolean(R.string.key_show_date, true)
+        showWeek = sp.getBoolean(R.string.key_show_week_number, false)
+        showDelta = sp.getBoolean(R.string.key_show_delta, true)
+        showAgo = sp.getBoolean(R.string.key_show_ago, true)
+        showDirection = sp.getBoolean(R.string.key_show_direction, true)
+        detailedDelta = sp.getBoolean(R.string.key_show_detailed_delta, false)
+        avgDelta = sp.getBoolean(R.string.key_show_avg_delta, true)
+        showPredictions = sp.getBoolean(R.string.key_prediction_lines, true)
+        timeFrameH = (sp.getString(R.string.key_chart_time_frame, OrbitFaceLogic.DEFAULT_TIME_FRAME_H.toString()).toIntOrNull()
+            ?: OrbitFaceLogic.DEFAULT_TIME_FRAME_H).coerceIn(1, 5)
+    }
+
+    /** loopMode input: the offered states of the stored LoopStatesList, deserialised only when the string changed. */
+    private fun refreshLoopStates() {
+        val raw = sp.getString(R.string.key_loop_states_data, "")
+        if (raw == loopStatesRaw) return
+        loopStatesRaw = raw
+        val list = try {
+            if (raw.isEmpty()) null else EventData.deserialize(raw) as? LoopStatesList
+        } catch (_: Exception) {
+            null
+        }
+        loopStateNames = list?.states?.map { it.state.name }?.toSet() ?: emptySet()
+        loopStatesTimeStamp = list?.timeStamp ?: 0L
+    }
+
     private fun refreshBolusCheck() {
+        if (isHeadless) {
+            bolusCheck = OrbitBolusGuard.Check(State.HIDDEN, Reason.PREF_OFF)
+            return
+        }
         val amount = BolusTapGesture.parseAmount(sp.getString(R.string.key_orbit_bolus_amount, "0.5"))
         if (amount != bolusAmount || bolusAmountText.isEmpty()) {
             bolusAmount = amount
@@ -320,10 +441,12 @@ class OrbitWatchface : WatchFace() {
                 ambient = isAmbient,
                 wearControl = preferences.get(BooleanKey.WearControl),
                 amount = bolusAmount,
-                maxBolus = sp.getDouble(R.string.key_treatments_safety_max_bolus, OrbitBolusGuard.DEFAULT_MAX_BOLUS),
+                maxBolus = if (sp.contains(R.string.key_treatments_safety_max_bolus)) sp.getDouble(R.string.key_treatments_safety_max_bolus, Double.NaN)
+                else Double.NaN,
                 phoneReachable = phoneReachable,
                 lastPhoneMessage = d.lastUpdateTimestamp,
-                bgTimeStamp = d.bgData.timeStamp
+                bgTimeStamp = d.bgData.timeStamp,
+                firstStart = OrbitFaceLogic.firstStart(d.bgData.timeStamp, d.statusData.openApsStatus, d.statusData.iobSum)
             )
         )
     }
@@ -335,39 +458,65 @@ class OrbitWatchface : WatchFace() {
         return ((t.year * 13L + t.month) * 32L + t.monthDay) * 1440L + t.hour * 60L + t.minute
     }
 
+    /** The renderer's time (one time source for the clock and every age); the fixed sample time when headless. */
+    private fun renderNow(): Long = when {
+        isHeadless             -> SAMPLE_NOW
+        latestEpochMillis > 0L -> latestEpochMillis
+        else                   -> System.currentTimeMillis()
+    }
+
     private fun rebuildIfNeeded() {
-        val d = data
+        val d = if (isHeadless) sampleData else data
         val key = minuteKey()
         if (!dirty && d === builtFor && key == builtMinuteKey && isAmbient == builtAmbient && is24HourFormat == built24h &&
             phoneReachable == builtReachable
         ) return
         if (key != builtMinuteKey) refreshPhoneReachable()
+        refreshLoopStates()
         dirty = false
         builtFor = d
         builtMinuteKey = key
         builtAmbient = isAmbient
         built24h = is24HourFormat
         builtReachable = phoneReachable
-        rebuild(d, System.currentTimeMillis())
+        rebuild(d, renderNow(), key)
     }
 
-    private fun rebuild(d: ComplicationData, now: Long) {
+    private fun rebuild(d: ComplicationData, now: Long, minuteKey: Long) {
         val t = latestTime
         val bg = d.bgData
         val st = d.statusData
+        val hour = if (isHeadless) SAMPLE_HOUR else t.hour
+        val minute = if (isHeadless) SAMPLE_MINUTE else t.minute
 
-        timeText = OrbitFaceLogic.timeString(t.hour, t.minute, is24HourFormat)
-        dateText = try {
-            OrbitFaceLogic.dateString(t.year, t.month + 1, t.monthDay)
+        // time (+ AM/PM in 12 h) and date in the watch locale
+        timeText = OrbitFaceLogic.timeString(hour, minute, is24HourFormat)
+        amPmText = OrbitFaceLogic.amPm(hour, is24HourFormat)
+        setText(30f, tf600)
+        val timeW = text.measureText(timeText)
+        setText(floorPx(12f), tf500)
+        val amW = if (amPmText.isEmpty()) 0f else AMPM_GAP + text.measureText(amPmText)
+        timeX = OrbitFaceLogic.CX - (timeW + amW) / 2f
+        amPmX = timeX + timeW + AMPM_GAP
+        gapT = OrbitFaceLogic.gapHalfDeg(timeW + amW)
+
+        val locale = Locale.getDefault()
+        dateText = if (!showDate) "" else try {
+            val pattern = if (locale.language == "de") null else DateFormat.getBestDateTimePattern(locale, "EEEdMMM")
+            if (isHeadless) OrbitFaceLogic.dateString(SAMPLE_YEAR, SAMPLE_MONTH, SAMPLE_DAY, locale, pattern, if (showWeek) labels.weekFormat else null)
+            else OrbitFaceLogic.dateString(t.year, t.month + 1, t.monthDay, locale, pattern, if (showWeek) labels.weekFormat else null)
         } catch (_: Exception) {
             ""
         }
-        setText(18f, tf500)
-        val dateWidth = text.measureText(dateText)
-        dateSize = OrbitFaceLogic.fitSize(dateWidth, 18f, OrbitFaceLogic.DATE_LINE_MAX_WIDTH)
-        gapD = OrbitFaceLogic.gapHalfDeg(dateWidth * dateSize / 18f)
-        setText(30f, tf600)
-        gapT = OrbitFaceLogic.gapHalfDeg(text.measureText(timeText))
+        if (dateText.isEmpty()) {
+            // pref.date off: the track closes at 6 o'clock
+            gapD = 0f
+        } else {
+            setText(18f, tf500)
+            val dateWidth = text.measureText(dateText)
+            dateSize = OrbitFaceLogic.fitSize(dateWidth, 18f, OrbitFaceLogic.DATE_LINE_MAX_WIDTH)
+            gapD = OrbitFaceLogic.gapHalfDeg(dateWidth * dateSize / 18f)
+        }
 
         // BG
         val ageMin = OrbitFaceLogic.bgAgeMinutes(bg.timeStamp, now)
@@ -379,15 +528,19 @@ class OrbitWatchface : WatchFace() {
             Range.LOW, Range.URGENT_LOW   -> RED
             Range.STALE                   -> STALE_C
         }
-        heroColour = when {
-            range == Range.STALE      -> STALE_C
-            range == Range.URGENT_LOW -> LOW_TXT
-            else                      -> rangeColour
+        sentinelLow = OrbitFaceLogic.sentinelLow(bg.sgv, ageMin)
+        if (sentinelLow) range = Range.URGENT_LOW
+        // spec v2 §4.2: digits txt1; the range lives in the corona, glyph, glow and sparkline
+        heroColour = when (range) {
+            Range.STALE      -> TXT2
+            Range.URGENT_LOW -> LOW_TXT
+            else             -> TXT1
         }
         heroText = OrbitFaceLogic.heroText(bg.sgvString, bg.sgv, ageMin)
-        arrowText = if (OrbitFaceLogic.isOld(bgAge)) "" else OrbitFaceLogic.arrowText(bg.slopeArrow, bg.deltaMgdl)
-        deltaRow = OrbitFaceLogic.deltaRow(bg.delta, ageMin, labels)
-        ambientOldText = OrbitFaceLogic.oldAmbientText(ageMin, labels)
+        trend = if (OrbitFaceLogic.isOld(bgAge) || !showDirection) Trend.NONE else OrbitFaceLogic.trend(bg.slopeArrow, bg.deltaMgdl)
+        layoutHero()
+        val delta = OrbitFaceLogic.deltaSource(bg.delta, bg.deltaDetailed, bg.avgDelta, bg.avgDeltaDetailed, detailedDelta, avgDelta)
+        deltaRow = OrbitFaceLogic.deltaRow(delta, ageMin, labels, showDelta, showAgo)
 
         // status
         firstStart = OrbitFaceLogic.firstStart(bg.timeStamp, st.openApsStatus, st.iobSum)
@@ -395,7 +548,9 @@ class OrbitWatchface : WatchFace() {
         val loopOff = OrbitFaceLogic.loopOff(st.externalStatus, st.iobSum)
         val loopAge = OrbitFaceLogic.loopAgeMinutes(st.openApsStatus, now)
         val dataAgeMs = if (d.lastUpdateTimestamp > 0L) now - d.lastUpdateTimestamp else Long.MAX_VALUE
-        val link = OrbitFaceLogic.phoneLink(phoneReachable, dataAgeMs)
+        // the display treats an unknown link as reachable (no "Telefon getrennt" before the first answer);
+        // the bolus guard does not (DISABLED until then)
+        val link = OrbitFaceLogic.phoneLink(isHeadless || phoneReachable != false, dataAgeMs)
         val dataAgeMin = if (d.lastUpdateTimestamp > 0L) maxOf(0L, dataAgeMs / 60_000L) else null
         slot = OrbitFaceLogic.statusSlot(
             OrbitFaceLogic.SlotInput(
@@ -409,8 +564,9 @@ class OrbitWatchface : WatchFace() {
         )
         phoneGlyph = slot?.tone == Tone.GLYPH
         if (phoneGlyph) slot = null
-        slotInDeltaRow = firstStart || OrbitFaceLogic.slotReplacesDelta(slot)
-        if (firstStart && slot == null) slotInDeltaRow = false
+        slotInDeltaRow = firstStart || OrbitFaceLogic.slotReplacesDelta(slot) || (deltaRow.isEmpty && !phoneGlyph)
+        if (slot == null) slotInDeltaRow = false
+        loopMuted = OrbitFaceLogic.muteLoopRing(range, slot)
 
         // balls
         val temps = d.treatmentData.temps
@@ -423,11 +579,22 @@ class OrbitWatchface : WatchFace() {
             balls[OrbitFaceLogic.IDX_COB] = OrbitFaceLogic.placeholderBall(labels.cob)
             balls[OrbitFaceLogic.IDX_TT] = null
         } else {
-            balls[OrbitFaceLogic.IDX_LOOP] = OrbitFaceLogic.loopBall(st.openApsStatus, st.externalStatus, st.iobSum, now, labels)
-            balls[OrbitFaceLogic.IDX_IOB] = OrbitFaceLogic.iobBall(st.iobSum)
-            balls[OrbitFaceLogic.IDX_BASAL] = OrbitFaceLogic.basalBall(st.currentBasal, OrbitFaceLogic.tbrRunning(starts, ends, now))
-            balls[OrbitFaceLogic.IDX_COB] = OrbitFaceLogic.cobBall(st.cob, labels)
-            balls[OrbitFaceLogic.IDX_TT] = OrbitFaceLogic.ttBall(st.tempTarget, st.tempTargetLevel)
+            val mode = if (isHeadless) OrbitFaceLogic.LoopMode.UNKNOWN
+            else OrbitFaceLogic.loopMode(loopStateNames, loopStatesTimeStamp, d.lastUpdateTimestamp)
+            balls[OrbitFaceLogic.IDX_LOOP] =
+                if (OrbitFaceLogic.loopBallShown(showLoop, OrbitFaceLogic.loopHealth(loopAge)))
+                    OrbitFaceLogic.loopBall(st.openApsStatus, st.externalStatus, st.iobSum, now, labels, mode)
+                else null
+            balls[OrbitFaceLogic.IDX_IOB] = if (showIob) OrbitFaceLogic.iobBall(st.iobSum) else null
+            balls[OrbitFaceLogic.IDX_BASAL] = if (showBasal) OrbitFaceLogic.basalBall(st.currentBasal, OrbitFaceLogic.tbrRunning(starts, ends, now)) else null
+            balls[OrbitFaceLogic.IDX_COB] = if (showCob) OrbitFaceLogic.cobBall(st.cob, labels) else null
+            balls[OrbitFaceLogic.IDX_TT] = if (showTt) OrbitFaceLogic.ttBall(st.tempTarget, st.tempTargetLevel) else null
+        }
+        if (firstStart) {
+            if (!showLoop) balls[OrbitFaceLogic.IDX_LOOP] = null
+            if (!showIob) balls[OrbitFaceLogic.IDX_IOB] = null
+            if (!showBasal) balls[OrbitFaceLogic.IDX_BASAL] = null
+            if (!showCob) balls[OrbitFaceLogic.IDX_COB] = null
         }
         for (i in balls.indices) {
             val b = balls[i]
@@ -442,14 +609,48 @@ class OrbitWatchface : WatchFace() {
             handler.removeCallbacks(pendingEnd)
             handler.postDelayed(pendingEnd, guard.pendingLeftMs() + 50L)
         }
-        moon = OrbitFaceLogic.moon(t.minute, gapT, gapD, bolusCheck.state != State.HIDDEN, ballShown)
-        shiftX = OrbitFaceLogic.burnInShiftX(t.minute)
-        shiftY = OrbitFaceLogic.burnInShiftY(t.minute)
+        moon = OrbitFaceLogic.moon(minute, gapT, if (dateText.isEmpty()) -2f else gapD, bolusCheck.state != State.HIDDEN, ballShown)
+        shiftX = OrbitFaceLogic.burnInShift(minuteKey, 0).toFloat()
+        shiftY = OrbitFaceLogic.burnInShift(minuteKey, 1).toFloat()
 
         val pillUnder = slot != null && !slotInDeltaRow
         sparkTop = if (pillUnder) OrbitFaceLogic.SPARK_Y_TOP_PILL else OrbitFaceLogic.SPARK_Y_TOP
         sparkBottom = if (pillUnder) OrbitFaceLogic.SPARK_Y_BOTTOM_PILL else OrbitFaceLogic.SPARK_Y_BOTTOM
         buildSparkline(d, now)
+    }
+
+    /**
+     * Hero group (spec §4.2/§4.3): BG + 14 + a 40 px glyph must fit 252; the size steps down by 4 (minimum 60).
+     * The group is centred at x 225; without a glyph the digits re-centre. Builds the vector trend glyph.
+     */
+    private fun layoutHero() {
+        setText(108f, tf700)
+        val w108 = text.measureText(heroText)
+        val glyph = trend != Trend.NONE
+        heroSize = OrbitFaceLogic.heroSize(w108, glyph)
+        heroW = w108 * heroSize / 108f
+        heroX = OrbitFaceLogic.CX - OrbitFaceLogic.heroGroupWidth(w108, heroSize, glyph) / 2f + heroW / 2f
+        trendSize = 48f * heroSize / 108f
+        trendX = heroX + heroW / 2f + OrbitFaceLogic.HERO_GLYPH_GAP + OrbitFaceLogic.HERO_GLYPH_W * heroSize / 108f / 2f
+        trendPath.rewind()
+        if (trend == Trend.NONE) return
+        val rad = Math.toRadians(trend.deg.toDouble())
+        val dx = sin(rad).toFloat()
+        val dy = -cos(rad).toFloat()
+        val shaft = 0.62f * trendSize
+        val tipX = trendX + dx * shaft / 2f
+        val tipY = HERO_Y + dy * shaft / 2f
+        trendPath.moveTo(trendX - dx * shaft / 2f, HERO_Y - dy * shaft / 2f)
+        trendPath.lineTo(tipX, tipY)
+        for (k in 0 until trend.heads) {
+            val hx = tipX - dx * 0.24f * trendSize * k
+            val hy = tipY - dy * 0.24f * trendSize * k
+            for (sign in HEAD_SIGNS) {
+                val a = rad + Math.PI + sign * Math.toRadians(42.0)
+                trendPath.moveTo(hx, hy)
+                trendPath.lineTo(hx + sin(a).toFloat() * 0.30f * trendSize, hy - cos(a).toFloat() * 0.30f * trendSize)
+            }
+        }
     }
 
     private fun buildSparkline(d: ComplicationData, now: Long) {
@@ -462,7 +663,8 @@ class OrbitWatchface : WatchFace() {
         lowY = OrbitFaceLogic.sparkY(low, sparkTop, sparkBottom)
         highY = OrbitFaceLogic.sparkY(high, sparkTop, sparkBottom)
 
-        val from = now - OrbitFaceLogic.SPARK_HISTORY_MS
+        sparkWindowMs = timeFrameH * 60 * 60_000L
+        val from = now - sparkWindowMs
         val points = d.graphData.entries.asSequence()
             .filter { it.timeStamp in from..now && it.sgv > 0 }
             .sortedBy { it.timeStamp }
@@ -470,7 +672,7 @@ class OrbitWatchface : WatchFace() {
         if (bg.timeStamp in from..now && bg.sgv > 0 && (points.isEmpty() || points.last().timeStamp < bg.timeStamp)) points.add(bg)
         var prevT = Long.MIN_VALUE
         for (p in points) {
-            val x = OrbitFaceLogic.sparkX(p.timeStamp, now)
+            val x = OrbitFaceLogic.sparkX(p.timeStamp, now, sparkWindowMs)
             val y = OrbitFaceLogic.sparkY(p.sgv, sparkTop, sparkBottom)
             if (prevT == Long.MIN_VALUE || OrbitFaceLogic.sparkBreak(prevT, p.timeStamp)) sparkPath.moveTo(x, y) else sparkPath.lineTo(x, y)
             prevT = p.timeStamp
@@ -483,10 +685,10 @@ class OrbitWatchface : WatchFace() {
         }
         hasNowDot = bg.timeStamp in from..now && bg.sgv > 0
         if (hasNowDot) {
-            nowX = OrbitFaceLogic.sparkX(bg.timeStamp, now)
+            nowX = OrbitFaceLogic.sparkX(bg.timeStamp, now, sparkWindowMs)
             nowY = OrbitFaceLogic.sparkY(bg.sgv, sparkTop, sparkBottom)
         }
-        if (hasNowDot && !OrbitFaceLogic.isOld(bgAge)) {
+        if (hasNowDot && showPredictions && !OrbitFaceLogic.isOld(bgAge)) {
             val preds = d.treatmentData.predictions
             for (k in 1..OrbitFaceLogic.PREDICTION_DOTS) {
                 val target = bg.timeStamp + k * OrbitFaceLogic.PREDICTION_STEP_MS
@@ -574,8 +776,8 @@ class OrbitWatchface : WatchFace() {
         val colours = intArrayOf(GREEN, AMBER, RED)
         for (i in 0..2) {
             corona[i]?.recycle()
-            // blurred anyway: half resolution is enough
-            corona[i] = softBitmap(cw, ch, s * 0.5f) { c ->
+            // rendered at the real size, never upscaled (spec §1)
+            corona[i] = softBitmap(cw, ch, s) { c ->
                 fill.reset(); fill.isAntiAlias = true
                 fill.color = withAlpha(colours[i], CORONA_EMPHASIS_ALPHA)
                 fill.maskFilter = BlurMaskFilter(CORONA_BLUR_RADIUS, BlurMaskFilter.Blur.NORMAL)
@@ -645,6 +847,12 @@ class OrbitWatchface : WatchFace() {
         scale = min(w, h) / 450f
         canvas.drawColor(Color.BLACK)
         try {
+            // sys.simplified (charging / simplify_ui): the shared SimpleUi, no Orbit variant
+            if (!isHeadless && simpleUi.isEnabled(currentWatchMode)) {
+                simpleUi.setAntiAlias(currentWatchMode)
+                simpleUi.onDraw(canvas, data.bgData)
+                return
+            }
             rebuildIfNeeded()
             canvas.save()
             canvas.translate((w - 450f * scale) / 2f, (h - 450f * scale) / 2f)
@@ -680,7 +888,7 @@ class OrbitWatchface : WatchFace() {
         }
 
         // 2. orbit track with the time and date gaps
-        drawTrack(canvas, 1.5f, TRACK, true)
+        drawTrack(canvas, trackRect, 1.5f, TRACK, true)
 
         // 3. sparkline
         setStroke(1f, withAlpha(GREEN, 120), true)
@@ -709,11 +917,18 @@ class OrbitWatchface : WatchFace() {
 
         // 4. hero BG + arrow
         drawHero(canvas, heroColour, rangeColour, glow = !old, ambient = false)
+        if (captionUntil != 0L && System.currentTimeMillis() < captionUntil) {
+            // graph.timeframe_changed: "5 Std" top-left of the sparkline box
+            setText(floorPx(13f), tf600)
+            text.textAlign = Paint.Align.LEFT
+            text.color = TXT2
+            canvas.drawText(captionText, OrbitFaceLogic.SPARK_X0, sparkTop - 4f, text)
+        }
 
         // 5. delta row, status slot
         val s = slot
         if (slotInDeltaRow && s != null) drawPill(canvas, s, 251f, 30f, 19f, ambient = false)
-        else if (!firstStart) drawDeltaRow(canvas, DELTA_C, if (deltaRow.ageAmber) AMBER else DELTA_C, true)
+        else if (!firstStart) drawDeltaRow(canvas, DELTA_C, if (deltaRow.ageAmber) AMBER else DELTA_C, true, ambient = false)
         if (s != null && !slotInDeltaRow) drawPill(canvas, s, OrbitFaceLogic.SLOT_Y, 26f, 16f, ambient = false)
 
         // 6. balls (and the moon rim light)
@@ -731,8 +946,9 @@ class OrbitWatchface : WatchFace() {
         if (bolusCheck.state != State.HIDDEN) drawBolus(canvas)
 
         // 8. time, date
-        drawText(canvas, timeText, OrbitFaceLogic.CX, 57f, 30f, tf600, TIME_C, true)
-        drawText(canvas, dateText, OrbitFaceLogic.CX, OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f), dateSize, tf500, DATE_C, true)
+        drawTime(canvas, TIME_C, tf600, true, outlined = false)
+        if (dateText.isNotEmpty())
+            drawText(canvas, dateText, OrbitFaceLogic.CX, OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f), dateSize, tf500, DATE_C, true)
 
         // 9. minute moon
         if (moon.kind == MoonKind.DOT) {
@@ -741,62 +957,107 @@ class OrbitWatchface : WatchFace() {
         }
     }
 
+    /**
+     * Ambient (spec §6): greys only (white in low-bit, AA off), no corona/glow/moon/bolus/targets/predictions.
+     * The range is carried by the track's shape, so colour is never the only signal: solid ambLine for in range /
+     * stale (dropped in low-bit), dashed 6/6 amb2 for HIGH, doubled r 166 + r 171 amb2 for LOW. Burn-in: outlined
+     * digits and time, hollow dots/bars, strokes <= 2 px (3 for an urgent-low BG), per-minute [-4, 4] shift.
+     */
     private fun drawAmbient(canvas: Canvas) {
         val aa = !lowBitAmbient
-        drawTrack(canvas, 1f, amb(0xFF4A4A4A.toInt()), aa)
+        val burnIn = burnInProtection
+        when (range) {
+            Range.HIGH, Range.VERY_HIGH -> {
+                drawTrack(canvas, trackRect, 1f, amb(AMB2), aa, ambDash)
+            }
+
+            Range.LOW, Range.URGENT_LOW -> {
+                drawTrack(canvas, trackRectInner, 1f, amb(AMB2), aa)
+                drawTrack(canvas, trackRectOuter, 1f, amb(AMB2), aa)
+            }
+
+            else                        -> if (!lowBitAmbient) drawTrack(canvas, trackRect, 1f, AMB_LINE, aa)
+        }
 
         // sparkline: history only
-        setStroke(1.5f, amb(0xFF7A7A7A.toInt()), aa)
+        setStroke(1.5f, amb(AMB3), aa)
         stroke.strokeJoin = Paint.Join.ROUND
         canvas.drawPath(sparkPath, stroke)
-        drawCarets(canvas, amb(0xFF7A7A7A.toInt()), aa)
+        drawCarets(canvas, amb(AMB3), aa)
         if (hasNowDot) {
             setStroke(1.2f, amb(NOW_HOLLOW), aa)
             canvas.drawCircle(nowX, nowY, 4f, stroke)
         }
 
-        drawHero(canvas, amb(0xFFD6D6D6.toInt()), amb(0xFFD6D6D6.toInt()), glow = false, ambient = true)
+        drawHero(canvas, amb(AMB1), amb(AMB1), glow = false, ambient = true)
         val s = slot
         when {
-            // the final spec's ambient stale row; the slot text would only repeat it
-            s != null && s.rank == 3 -> drawText(canvas, ambientOldText, OrbitFaceLogic.CX, 251f, 19f, tf600, amb(0xFFBDBDBD.toInt()), aa)
-            s != null && slotInDeltaRow -> drawPill(canvas, s, 251f, 30f, 19f, ambient = true)
-            !firstStart              -> drawDeltaRow(canvas, amb(0xFF9A9A9A.toInt()), amb(0xFF9A9A9A.toInt()), aa)
+            // W1..W3 (incl. the stale "Keine Daten · 17′") own slot A as an outline pill
+            s != null && slotInDeltaRow -> drawPill(canvas, s, 251f, 30f, 18f, ambient = true)
+            !firstStart                 -> drawDeltaRow(canvas, amb(AMB2), amb(if (deltaRow.ageAmber) AMB1 else AMB2), aa, ambient = true)
         }
         if (s != null && !slotInDeltaRow) drawPill(canvas, s, OrbitFaceLogic.SLOT_Y, 26f, 16f, ambient = true)
 
+        // LOOP, IOB and TT as outlines; COB and BASAL are dropped
         for (i in balls.indices) {
+            if (i == OrbitFaceLogic.IDX_COB || i == OrbitFaceLogic.IDX_BASAL) continue
             val b = balls[i] ?: continue
             val x = ballX[i]
             val y = ballY[i]
             setFill(Color.BLACK, aa)
             canvas.drawCircle(x, y, OrbitFaceLogic.BALL_R, fill)
-            setStroke(1.2f, amb(0xFF6E6E6E.toInt()), aa)
+            setStroke(1.2f, amb(AMB3), aa)
             if (b.dashed) stroke.pathEffect = ringDash
             canvas.drawCircle(x, y, OrbitFaceLogic.BALL_R, stroke)
             stroke.pathEffect = null
-            if (b.pause) drawPause(canvas, x, y - 7f, amb(0xFFC8C8C8.toInt()), aa, hollow = true)
+            if (b.pause) drawPause(canvas, x, y - 7f, amb(AMB1), aa, hollow = true)
             else {
                 val size = ballSize[i]
-                drawText(canvas, b.value, x, if (b.label.isEmpty()) y else y - 7f, size, if (size >= 22f) tf400 else tf500, amb(0xFFC8C8C8.toInt()), aa)
+                drawText(canvas, b.value, x, if (b.label.isEmpty()) y else y - 7f, size, tf400, amb(AMB1), aa)
             }
-            if (b.label.isNotEmpty()) drawText(canvas, b.label, x, y + 15f, 14f, tf600, amb(0xFF9A9A9A.toInt()), aa, LABEL_TRACKING)
+            if (b.label.isNotEmpty()) drawText(canvas, b.label, x, y + 15f, floorPx(14f), tf600, amb(AMB2), aa, LABEL_TRACKING)
         }
 
-        drawText(canvas, timeText, OrbitFaceLogic.CX, 57f, 30f, tf600, amb(0xFFBDBDBD.toInt()), aa)
-        drawText(canvas, dateText, OrbitFaceLogic.CX, OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f), dateSize, tf500, amb(0xFF8E8E8E.toInt()), aa)
+        drawTime(canvas, amb(AMB1), tf400, aa, outlined = burnIn)
+        if (dateText.isNotEmpty())
+            drawText(canvas, dateText, OrbitFaceLogic.CX, OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f), dateSize, tf500, amb(AMB2), aa)
     }
 
-    private fun drawTrack(canvas: Canvas, width: Float, colour: Int, aa: Boolean) {
+    /** Time with the optional AM/PM suffix (locale.en_12h). [outlined]: burn-in, stroke only. */
+    private fun drawTime(canvas: Canvas, colour: Int, tf: Typeface, aa: Boolean, outlined: Boolean) {
+        setText(30f, tf, aa)
+        text.textAlign = Paint.Align.LEFT
+        text.color = colour
+        if (outlined) {
+            text.style = Paint.Style.STROKE
+            text.strokeWidth = 1.5f
+        }
+        val y = baseline(57f)
+        canvas.drawText(timeText, timeX, y, text)
+        if (amPmText.isEmpty()) return
+        setText(floorPx(12f), tf500, aa)
+        text.textAlign = Paint.Align.LEFT
+        text.color = if (isAmbient) amb(AMB2) else TXT2
+        canvas.drawText(amPmText, amPmX, y, text)
+    }
+
+    private fun drawTrack(canvas: Canvas, oval: RectF, width: Float, colour: Int, aa: Boolean, effect: DashPathEffect? = null) {
         setStroke(width, colour, aa)
+        stroke.pathEffect = effect
         // canvas angles start at 3 o'clock: clockwise-from-12 minus 90
-        canvas.drawArc(trackRect, gapT - 90f, 180f - gapD - gapT, false, stroke)
-        canvas.drawArc(trackRect, 180f + gapD - 90f, 180f - gapD - gapT, false, stroke)
+        canvas.drawArc(oval, gapT - 90f, 180f - gapD - gapT, false, stroke)
+        canvas.drawArc(oval, 180f + gapD - 90f, 180f - gapD - gapT, false, stroke)
+        stroke.pathEffect = null
     }
 
     private fun drawCarets(canvas: Canvas, colour: Int, aa: Boolean) {
         if (caretCount == 0) return
         setFill(colour, aa)
+        // burn-in: no filled shapes, the carets are outlines
+        if (isAmbient && burnInProtection) {
+            fill.style = Paint.Style.STROKE
+            fill.strokeWidth = 1f
+        }
         for (i in 0 until caretCount) {
             canvas.save()
             if (caretDir[i] > 0) canvas.translate(caretX[i], sparkTop - 4f)
@@ -812,34 +1073,42 @@ class OrbitWatchface : WatchFace() {
     private fun drawHero(canvas: Canvas, colour: Int, arrowColour: Int, glow: Boolean, ambient: Boolean) {
         val aa = !(ambient && lowBitAmbient)
         val dashes = heroText == "---"
-        setText(108f, if (ambient) tf300 else tf700, aa)
-        val w = text.measureText(heroText)
-        val size = OrbitFaceLogic.fitSize(w, 108f, OrbitFaceLogic.HERO_MAX_WIDTH)
-        text.textSize = size
-        val heroW = w * size / 108f
-        text.color = if (dashes && !ambient) STALE_C else colour
-        if (glow) text.setShadowLayer(12f, 0f, 0f, withAlpha(rangeColour, 120))
-        // without an arrow the digits sit on the optical centre
-        val heroX = if (arrowText.isEmpty()) OrbitFaceLogic.CX else HERO_X
-        canvas.drawText(heroText, heroX, baseline(191f), text)
+        val urgent = range == Range.URGENT_LOW
+        // ambient: Light, urgent low one weight step up (Regular)
+        setText(heroSize, if (ambient) (if (urgent) tf400 else tf300) else tf700, aa)
+        text.color = if (dashes && !ambient) TXT2 else colour
+        if (ambient && burnInProtection) {
+            // burn-in: outlined digits (black inside), 2 px, 3 px for urgent low
+            text.style = Paint.Style.STROKE
+            text.strokeWidth = if (urgent) 3f else 2f
+        }
+        if (glow) text.setShadowLayer(12f, 0f, 0f, withAlpha(rangeColour, if (OrbitFaceLogic.emphasis(range)) 150 else 120))
+        canvas.drawText(heroText, heroX, baseline(HERO_Y), text)
         text.clearShadowLayer()
-        val right = heroX + heroW / 2f
-        var arrowRight = right
-        if (arrowText.isNotEmpty()) {
-            setText(44f, if (ambient) tf400 else tf600, aa)
-            text.color = arrowColour
-            val ax = right + 24f
-            canvas.drawText(arrowText, ax, baseline(193f), text)
-            arrowRight = ax + text.measureText(arrowText) / 2f
+        var right = heroX + heroW / 2f
+        if (trend != Trend.NONE) {
+            setStroke(if (ambient) 2f else 4.6f * trendSize / 48f, arrowColour, aa)
+            stroke.strokeCap = Paint.Cap.ROUND
+            stroke.strokeJoin = Paint.Join.ROUND
+            canvas.drawPath(trendPath, stroke)
+            right = trendX + trendSize * 0.31f
+        }
+        if (sentinelLow && !dashes) {
+            // sentinel low: "TIEF" caption top-right of the digits
+            setText(floorPx(14f), tf700, aa)
+            text.textAlign = Paint.Align.LEFT
+            text.color = if (ambient) amb(AMB1) else LOW_TXT
+            canvas.drawText(labels.sentinelLow, heroX + heroW / 2f + 6f, baseline(HERO_Y - 30f), text)
         }
         if (OrbitFaceLogic.isStruck(bgAge) && !dashes) {
             setStroke(if (!ambient) 3f else if (lowBitAmbient) 2f else 1.5f, colour, aa)
-            canvas.drawLine(heroX - heroW / 2f - 6f, 195f, arrowRight, 195f, stroke)
+            canvas.drawLine(heroX - heroW / 2f - 6f, HERO_Y + 4f, max(right, heroX + heroW / 2f + 6f), HERO_Y + 4f, stroke)
         }
     }
 
-    private fun drawDeltaRow(canvas: Canvas, colour: Int, ageColour: Int, aa: Boolean) {
-        setText(21f, tf500, aa)
+    private fun drawDeltaRow(canvas: Canvas, colour: Int, ageColour: Int, aa: Boolean, ambient: Boolean) {
+        if (deltaRow.isEmpty && !phoneGlyph) return
+        setText(21f, if (ambient) tf400 else tf500, aa)
         val wl = text.measureText(deltaRow.deltaPart)
         val wa = text.measureText(deltaRow.agePart)
         val glyphW = if (phoneGlyph) 18f else 0f
@@ -883,18 +1152,19 @@ class OrbitWatchface : WatchFace() {
             else                 -> PILL_INFO
         }
         val line = when {
-            ambient              -> amb(0xFF9A9A9A.toInt())
+            ambient              -> amb(AMB2)
             s.tone == Tone.ALERT -> RED
             s.tone == Tone.WARN  -> AMBER
             else                 -> NEUTRAL_RING
         }
         val fg = when {
-            ambient              -> amb(0xFFE0E0E0.toInt())
+            ambient              -> amb(AMB1)
             s.tone == Tone.ALERT -> LOW_TXT
             s.tone == Tone.WARN  -> WARN_TXT
             else                 -> TXT2
         }
-        setText(textSize, tf600, aa)
+        val tf = if (ambient) tf500 else tf600
+        setText(textSize, tf, aa)
         val icon = s.tone == Tone.ALERT && !ambient
         val iconW = if (icon) 14f + 6f else 0f
         val tw = min(text.measureText(s.text), OrbitFaceLogic.SLOT_MAX_WIDTH)
@@ -903,7 +1173,7 @@ class OrbitWatchface : WatchFace() {
         rect.set(OrbitFaceLogic.CX - half, cy - height / 2f, OrbitFaceLogic.CX + half, cy + height / 2f)
         setFill(bg, aa)
         canvas.drawRoundRect(rect, height / 2f, height / 2f, fill)
-        setStroke(1.5f, line, aa)
+        setStroke(if (ambient) 1f else 1.5f, line, aa)
         canvas.drawRoundRect(rect, height / 2f, height / 2f, stroke)
         val x0 = OrbitFaceLogic.CX - (iconW + tw) / 2f
         if (icon) {
@@ -916,7 +1186,7 @@ class OrbitWatchface : WatchFace() {
             canvas.drawPoint(0f, 4.2f, stroke)
             canvas.restore()
         }
-        setText(textSize * k, tf600, aa)
+        setText(textSize * k, tf, aa)
         text.textAlign = Paint.Align.LEFT
         text.color = fg
         canvas.drawText(s.text, x0 + iconW, baseline(cy), text)
@@ -927,10 +1197,12 @@ class OrbitWatchface : WatchFace() {
         val x = ballX[i]
         val y = ballY[i]
         val r = OrbitFaceLogic.BALL_R
+        val muted = i == OrbitFaceLogic.IDX_LOOP && loopMuted && b.ring == Ring.RED
         if (b.dashed) {
             setFill(BALL_FILL, true)
             canvas.drawCircle(x, y, r, fill)
-            setStroke(2f, DIM_RING, true)
+            // loop.never: dim 2 px; loop.open: loop.ok 1.6 px
+            setStroke(if (b.ring == Ring.DIM) 2f else 1.6f, if (b.ring == Ring.DIM) DIM_RING else LOOP_OK, true)
             stroke.pathEffect = ringDash
             canvas.drawCircle(x, y, r - 1f, stroke)
             stroke.pathEffect = null
@@ -939,7 +1211,14 @@ class OrbitWatchface : WatchFace() {
             if (shell != null) {
                 val half = r + SHELL_PAD
                 shellDst.set(x - half, y - half, x + half, y + half)
+                if (muted) {
+                    // red budget: the ring at alpha 110 over an opaque shell
+                    setFill(BALL_FILL, true)
+                    canvas.drawCircle(x, y, r, fill)
+                    bmpPaint.alpha = MUTED_ALPHA
+                }
                 canvas.drawBitmap(shell, null, shellDst, bmpPaint)
+                bmpPaint.alpha = 255
             }
         }
         if (b.arc > 0f) {
@@ -949,10 +1228,11 @@ class OrbitWatchface : WatchFace() {
             canvas.drawArc(rect, -90f, 360f * b.arc, false, stroke)
         }
         val dim = b.ring == Ring.DIM || b.dimValue
-        val labelColour = when (b.ring) {
-            Ring.DIM     -> DIM_TXT
-            Ring.NEUTRAL -> LBL_NEUTRAL
-            else         -> withAlpha(ringColour(b.ring), 235)
+        val labelColour = when {
+            b.ring == Ring.DIM     -> DIM_TXT
+            b.ring == Ring.NEUTRAL -> LBL_NEUTRAL
+            muted                  -> withAlpha(ringColour(b.ring), MUTED_ALPHA)
+            else                   -> withAlpha(ringColour(b.ring), 235)
         }
         if (b.pause) drawPause(canvas, x, y - 7f, AMBER, true, hollow = false)
         else {
@@ -960,7 +1240,7 @@ class OrbitWatchface : WatchFace() {
             val tf = if (size < 22f) tf700 else tf600
             drawText(canvas, b.value, x, if (b.label.isEmpty()) y else y - 7f, size, tf, if (dim) DIM_TXT else VAL_TXT, true)
         }
-        if (b.label.isNotEmpty()) drawText(canvas, b.label, x, y + 15f, 14f, tf600, labelColour, true, LABEL_TRACKING)
+        if (b.label.isNotEmpty()) drawText(canvas, b.label, x, y + 15f, floorPx(14f), tf600, labelColour, true, LABEL_TRACKING)
     }
 
     private fun drawBolus(canvas: Canvas) {
@@ -995,6 +1275,11 @@ class OrbitWatchface : WatchFace() {
             setFill(if (disabled) withAlpha(TXT3, 255) else withAlpha(INDIGO, 230), true)
             canvas.drawPath(dropPath, fill)
             drawText(canvas, bolusAmountText, bolusX, bolusY + 11f, 19f, tf700, if (disabled) TXT3 else BOLUS_TEXT, true)
+        }
+        if (flashUntil != 0L && System.currentTimeMillis() < flashUntil) {
+            // request sent: white rim flash for SEND_FLASH_MS
+            setStroke(3f, Color.WHITE, true)
+            canvas.drawPath(outlinePath, stroke)
         }
     }
 
@@ -1035,6 +1320,9 @@ class OrbitWatchface : WatchFace() {
         canvas.drawText(s, cx, baseline(cy), text)
     }
 
+    /** Text sizes never go below 11 physical px (spec §1). */
+    private fun floorPx(size: Float): Float = max(size, 11f / max(scale, 0.01f))
+
     /** Ambient grey, or white in low-bit ambient. */
     private fun amb(colour: Int): Int = if (lowBitAmbient) Color.WHITE else colour
 
@@ -1055,7 +1343,7 @@ class OrbitWatchface : WatchFace() {
 
     override fun onTapCommand(tapType: Int, x: Int, y: Int, eventTime: Long) {
         // tap.ambient: no hit testing at all
-        if (tapType != TapType.UP || isAmbient) return
+        if (tapType != TapType.UP || isAmbient || isHeadless) return
         if (!guard.acceptTap(eventTime)) return
         val left = (faceRect.width() - 450f * scale) / 2f
         val top = (faceRect.height() - 450f * scale) / 2f
@@ -1064,7 +1352,9 @@ class OrbitWatchface : WatchFace() {
 
         refreshBolusCheck()
         val state = bolusCheck.state
-        val inside = state != State.HIDDEN && BolusTapGesture.isInside(dx, dy, bolusX, bolusY, BOLUS_HIT_R)
+        val inside = state != State.HIDDEN && BolusTapGesture.isInside(dx, dy, bolusX, bolusY, OrbitBolusGuard.HIT_R)
+        // a tap on the button re-checks the phone link, so a lost phone shows up without waiting for the minute
+        if (inside) refreshPhoneReachable()
         if (inside && (state == State.DISABLED || state == State.SENT)) {
             if (gesture.reset()) handler.removeCallbacks(countdownTick)
             toast(
@@ -1072,6 +1362,7 @@ class OrbitWatchface : WatchFace() {
                     Reason.PENDING        -> R.string.orbit_bolus_pending
                     Reason.STALE_DATA     -> R.string.orbit_bolus_refused_stale
                     Reason.OVER_MAX_BOLUS -> R.string.orbit_bolus_refused_max
+                    Reason.NO_MAX_BOLUS   -> R.string.orbit_bolus_refused_max_unknown
                     else                  -> R.string.orbit_bolus_refused_phone
                 }
             )
@@ -1097,6 +1388,9 @@ class OrbitWatchface : WatchFace() {
                     // Exactly as BolusActivity: the phone checks and the watch shows the confirmation screen.
                     rxBus.send(EventWearToMobile(EventData.ActionBolusPreCheck(bolusAmount, 0)))
                     dirty = true
+                    flashUntil = System.currentTimeMillis() + OrbitBolusGuard.SEND_FLASH_MS
+                    handler.removeCallbacks(redraw)
+                    handler.postDelayed(redraw, OrbitBolusGuard.SEND_FLASH_MS + 10L)
                 }
                 invalidate()
                 return
@@ -1116,16 +1410,33 @@ class OrbitWatchface : WatchFace() {
             openMenu(eventTime)
             return
         }
-        // Double-tap on the hero BG opens the main menu as well, like the other AAPS faces.
-        if (dx in 110f..340f && dy in 140f..240f) {
-            if (bgTapTime != 0L && eventTime - bgTapTime < OrbitBolusGuard.WINDOW_MS) {
-                openMenu(eventTime)
-                bgTapTime = 0
-            } else bgTapTime = eventTime
+        // tap.graph: single tap opens the menu once the double-tap window passed; a double tap within the window
+        // cycles the chart time frame (1..5 h) and shows a caption for 1,5 s
+        if (dx in GRAPH_X0..GRAPH_X1 && dy in GRAPH_Y0..GRAPH_Y1) {
+            if (graphTapTime != 0L && eventTime - graphTapTime < OrbitBolusGuard.WINDOW_MS) {
+                handler.removeCallbacks(graphSingleTap)
+                graphTapTime = 0L
+                cycleTimeFrame()
+            } else {
+                graphTapTime = eventTime
+                handler.removeCallbacks(graphSingleTap)
+                handler.postDelayed(graphSingleTap, OrbitBolusGuard.WINDOW_MS)
+            }
         }
     }
 
-    private var bgTapTime = 0L
+    private fun cycleTimeFrame() {
+        val next = OrbitFaceLogic.nextTimeFrame(timeFrameH)
+        sp.putString(R.string.key_chart_time_frame, next.toString())
+        timeFrameH = next
+        captionText = String.format(Locale.ROOT, labels.hoursFormat, next)
+        captionUntil = System.currentTimeMillis() + CAPTION_MS
+        dirty = true
+        handler.removeCallbacks(redraw)
+        handler.postDelayed(redraw, CAPTION_MS + 10L)
+        invalidate()
+    }
+
     private var lastMenuOpenTime = 0L
 
     private fun openMenu(eventTime: Long) {
@@ -1154,11 +1465,20 @@ class OrbitWatchface : WatchFace() {
 
     companion object {
 
-        private const val MAX_POINTS = 64
-        private const val HERO_X = 209f
+        private const val MAX_POINTS = 96
+        private const val HERO_Y = 191f
+        private val HEAD_SIGNS = intArrayOf(-1, 1)
+        private const val AMPM_GAP = 3f
         private const val BOLUS_CORNER = 16f
         private const val BOLUS_PAD = 16f
-        private const val BOLUS_HIT_R = 40f
+        private const val MUTED_ALPHA = 110
+        private const val CAPTION_MS = 1_500L
+
+        /** Graph tap zone (spec §9), design px. */
+        private const val GRAPH_X0 = 143f
+        private const val GRAPH_X1 = 299f
+        private const val GRAPH_Y0 = 268f
+        private const val GRAPH_Y1 = 340f
         private const val SHELL_PAD = 6f
         private val PAUSE_OFFSETS = floatArrayOf(-4f, 4f)
 
@@ -1174,6 +1494,12 @@ class OrbitWatchface : WatchFace() {
         private const val DEFAULT_HIGH_MGDL = 180.0
 
         private const val GREEN = 0xFF3DDC97.toInt()
+        private const val LOOP_OK = 0xFF40D68C.toInt()
+        private const val TXT1 = 0xFFEEF1F7.toInt()
+        private const val AMB1 = 0xFFE0E0E0.toInt()
+        private const val AMB2 = 0xFF9A9A9A.toInt()
+        private const val AMB3 = 0xFF6E6E6E.toInt()
+        private const val AMB_LINE = 0xFF3C3C3C.toInt()
         private const val AMBER = 0xFFFFB547.toInt()
         private const val RED = 0xFFFF5A6E.toInt()
         private const val LOW_TXT = 0xFFFFD6DC.toInt()
@@ -1202,5 +1528,38 @@ class OrbitWatchface : WatchFace() {
         private const val PILL_ALERT = 0xFF3A1018.toInt()
         private const val PILL_WARN = 0xFF33240C.toInt()
         private const val PILL_INFO = 0xFF141A25.toInt()
+
+        // sys.preview sample (spec §10): "6,4" FLAT "+0,1" 1′, loop 2′, IOB 1,25, COB 0g, basal 0,85, 10:08 "Fr 17. Okt"
+        private const val SAMPLE_YEAR = 2025
+        private const val SAMPLE_MONTH = 10
+        private const val SAMPLE_DAY = 17
+        private const val SAMPLE_HOUR = 10
+        private const val SAMPLE_MINUTE = 8
+        private val SAMPLE_NOW: Long = java.time.LocalDateTime.of(SAMPLE_YEAR, SAMPLE_MONTH, SAMPLE_DAY, SAMPLE_HOUR, SAMPLE_MINUTE)
+            .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+        private fun sampleBg(t: Long, mgdl: Double, mmol: String) = EventData.SingleBg(
+            dataset = 0, timeStamp = t, sgvString = mmol, glucoseUnits = "mmol", slopeArrow = "→", delta = "+0,1",
+            deltaDetailed = "+0,08", avgDelta = "+0,1", avgDeltaDetailed = "+0,08", sgvLevel = 0L, sgv = mgdl,
+            high = 180.0, low = 70.0, deltaMgdl = 1.0, avgDeltaMgdl = 1.0
+        )
+
+        private val sampleData: ComplicationData by lazy {
+            val points = ArrayList<EventData.SingleBg>()
+            for (k in 36 downTo 1) {
+                val mgdl = 115.0 + 18.0 * kotlin.math.sin(k / 6.0) * k / 36.0
+                points.add(sampleBg(SAMPLE_NOW - k * 5 * 60_000L - 60_000L, mgdl, ""))
+            }
+            ComplicationData(
+                bgData = sampleBg(SAMPLE_NOW - 60_000L, 115.0, "6,4"),
+                statusData = EventData.Status(
+                    dataset = 0, externalStatus = "", iobSum = "1,25", iobDetail = "", cob = "0g", currentBasal = "0,85U/h",
+                    battery = "80", rigBattery = "", openApsStatus = SAMPLE_NOW - 2 * 60_000L, bgi = "", batteryLevel = 1,
+                    tempTarget = "--", tempTargetLevel = 0, reservoirString = "120U", reservoir = 120.0, reservoirLevel = 0
+                ),
+                graphData = EventData.GraphData(points),
+                lastUpdateTimestamp = SAMPLE_NOW - 60_000L
+            )
+        }
     }
 }

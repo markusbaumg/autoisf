@@ -185,7 +185,6 @@
     <string name="orbit_minutes">%1$d′</string>
     <string name="orbit_hours">%1$d Std</string>
     <string name="orbit_days">%1$d T</string>
-    <string name="orbit_old">alt</string>
     <string name="orbit_waiting">Warte auf AAPS</string>
     <string name="orbit_phone_lost">Telefon getrennt · %1$s</string>
     <string name="orbit_no_data">Keine Daten · %1$s</string>
@@ -201,4 +200,8 @@
     <string name="orbit_bolus_refused_stale">Kein aktueller BZ. Keine Anfrage gesendet.</string>
     <string name="orbit_bolus_refused_max">Menge über dem Max-Bolus. Keine Anfrage gesendet.</string>
     <string name="orbit_bolus_pending">Eine Anfrage läuft bereits</string>
+    <string name="orbit_loop_lgs">LGS</string>
+    <string name="orbit_sentinel_low">TIEF</string>
+    <string name="orbit_week">KW %1$d</string>
+    <string name="orbit_bolus_refused_max_unknown">Max-Bolus noch nicht vom Telefon übertragen. Keine Anfrage gesendet.</string>
 </resources>

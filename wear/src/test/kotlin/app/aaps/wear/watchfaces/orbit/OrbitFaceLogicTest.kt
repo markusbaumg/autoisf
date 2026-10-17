@@ -8,6 +8,8 @@ import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Range
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Ring
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.SlotInput
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Tone
+import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.LoopMode
+import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Trend
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
 import java.util.Locale
@@ -16,7 +18,7 @@ class OrbitFaceLogicTest {
 
     private val de = OrbitFaceLogic.Labels()
     private val en = OrbitFaceLogic.Labels(
-        again = "again", cob = "COB", hoursFormat = "%d h", daysFormat = "%d d", old = "old", waiting = "Waiting for AAPS",
+        again = "again", cob = "COB", hoursFormat = "%d h", daysFormat = "%d d", waiting = "Waiting for AAPS",
         phoneLostFormat = "Phone disconnected · %s", noDataFormat = "No data · %s", noProfile = "No profile", loopOff = "Loop off",
         loopOffShort = "OFF", pumpOnly = "Pump", phoneBatteryFormat = "Phone %s %%"
     )
@@ -97,13 +99,24 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.heroText("6,4", 115.0, 60)).isEqualTo("---")
     }
 
-    @Test fun arrows() {
-        assertThat(OrbitFaceLogic.arrowText("→", 0.0)).isEqualTo("→")
-        assertThat(OrbitFaceLogic.arrowText("⇊", -12.0)).isEqualTo("⇊")
-        assertThat(OrbitFaceLogic.arrowText("X", -20.0)).isEqualTo("⇊")
-        assertThat(OrbitFaceLogic.arrowText("X", 20.0)).isEqualTo("⇈")
-        assertThat(OrbitFaceLogic.arrowText("??", 0.0)).isEmpty()
-        assertThat(OrbitFaceLogic.arrowText("--", null)).isEmpty()
+    @Test fun trendGlyph() {
+        assertThat(OrbitFaceLogic.trend("→", 0.0)).isEqualTo(Trend.FLAT)
+        assertThat(Trend.FLAT.deg).isEqualTo(90f)
+        assertThat(OrbitFaceLogic.trend("↗", 3.0).deg).isEqualTo(45f)
+        assertThat(OrbitFaceLogic.trend("⇊", -12.0)).isEqualTo(Trend.DOWN2)
+        assertThat(Trend.DOWN2.heads).isEqualTo(2)
+        assertThat(OrbitFaceLogic.trend("X", -20.0)).isEqualTo(Trend.DOWN2)
+        assertThat(OrbitFaceLogic.trend("X", 20.0)).isEqualTo(Trend.UP2)
+        assertThat(OrbitFaceLogic.trend("??", 0.0)).isEqualTo(Trend.NONE)
+        assertThat(OrbitFaceLogic.trend("--", null)).isEqualTo(Trend.NONE)
+    }
+
+    @Test fun sentinelLow() {
+        assertThat(OrbitFaceLogic.sentinelLow(39.0, 1)).isTrue()
+        assertThat(OrbitFaceLogic.sentinelLow(40.0, 1)).isFalse()
+        assertThat(OrbitFaceLogic.sentinelLow(39.0, 12)).isFalse()
+        assertThat(OrbitFaceLogic.sentinelLow(0.0, 1)).isFalse()
+        assertThat(OrbitFaceLogic.sentinelLow(39.0, null)).isFalse()
     }
 
     @Test fun deltaRow() {
@@ -117,8 +130,22 @@ class OrbitFaceLogicTest {
         assertThat(mg.deltaPart + mg.agePart).isEqualTo("-12 · 3′")
         // delta.missing
         assertThat(OrbitFaceLogic.deltaRow("--", 3, de).deltaPart).isEqualTo("-- · ")
-        assertThat(OrbitFaceLogic.oldAmbientText(17, de)).isEqualTo("– – 17′ alt")
-        assertThat(OrbitFaceLogic.oldAmbientText(17, en)).isEqualTo("– – 17′ old")
+        // key_show_delta off: age only
+        val noDelta = OrbitFaceLogic.deltaRow("+0,1", 1, de, showDelta = false)
+        assertThat(noDelta.deltaPart + noDelta.agePart).isEqualTo("1′")
+        // key_show_ago off hides a fresh age, never an aging one
+        val noAgo = OrbitFaceLogic.deltaRow("+0,1", 1, de, showAgo = false)
+        assertThat(noAgo.deltaPart + noAgo.agePart).isEqualTo("+0,1")
+        val aging = OrbitFaceLogic.deltaRow("+0,1", 8, de, showAgo = false)
+        assertThat(aging.agePart).isEqualTo("8′")
+        assertThat(OrbitFaceLogic.deltaRow("+0,1", 1, de, showDelta = false, showAgo = false).isEmpty).isTrue()
+    }
+
+    @Test fun deltaSource() {
+        assertThat(OrbitFaceLogic.deltaSource("+0,1", "+0,08", "+0,2", "+0,17", detailed = false, avg = false)).isEqualTo("+0,1")
+        assertThat(OrbitFaceLogic.deltaSource("+0,1", "+0,08", "+0,2", "+0,17", detailed = true, avg = false)).isEqualTo("+0,08")
+        assertThat(OrbitFaceLogic.deltaSource("+0,1", "+0,08", "+0,2", "+0,17", detailed = false, avg = true)).isEqualTo("+0,2")
+        assertThat(OrbitFaceLogic.deltaSource("+0,1", "+0,08", "+0,2", "+0,17", detailed = true, avg = true)).isEqualTo("+0,17")
     }
 
     // ------------------------------------------------------------ phone link and status slot (§4.2)
@@ -221,6 +248,40 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.loopBall(now, "Loop deaktiviert\n", "1,25", now, de))
             .isEqualTo(OrbitFaceLogic.Ball("", "AUS", Ring.AMBER, pause = true))
         assertThat(OrbitFaceLogic.loopBall(now, "Loop disabled\n", "1.25", now, en).label).isEqualTo("OFF")
+        // loop.open: dashed loop.ok "Offen", the age is not an alarm
+        assertThat(OrbitFaceLogic.loopBall(now - min(40), "", "1,25", now, de, LoopMode.OPEN))
+            .isEqualTo(OrbitFaceLogic.Ball("Offen", "LOOP", Ring.GREEN, dashed = true))
+        // loop.lgs: as ok with an "LGS" label, age rules apply
+        assertThat(OrbitFaceLogic.loopBall(now - min(2), "", "1,25", now, de, LoopMode.LGS)).isEqualTo(OrbitFaceLogic.Ball("2′", "LGS", Ring.GREEN))
+        assertThat(OrbitFaceLogic.loopBall(now - min(20), "", "1,25", now, de, LoopMode.LGS).ring).isEqualTo(Ring.RED)
+        // loop.off wins over the mode
+        assertThat(OrbitFaceLogic.loopBall(now, "Loop deaktiviert\n", "1,25", now, de, LoopMode.OPEN).pause).isTrue()
+        // visibility: pref, or forced for loop.bad
+        assertThat(OrbitFaceLogic.loopBallShown(false, LoopHealth.OK)).isFalse()
+        assertThat(OrbitFaceLogic.loopBallShown(false, LoopHealth.BAD)).isTrue()
+        assertThat(OrbitFaceLogic.loopBallShown(true, LoopHealth.NEVER)).isTrue()
+    }
+
+    @Test fun loopModeFromLoopStatesList() {
+        val closed = listOf("LOOP_OPEN", "LOOP_LGS", "LOOP_DISABLE", "LOOP_USER_SUSPEND", "PUMP_DISCONNECT")
+        assertThat(OrbitFaceLogic.loopMode(closed, now, now)).isEqualTo(LoopMode.CLOSED)
+        assertThat(OrbitFaceLogic.loopMode(listOf("LOOP_CLOSED", "LOOP_LGS"), now, now)).isEqualTo(LoopMode.OPEN)
+        assertThat(OrbitFaceLogic.loopMode(listOf("LOOP_CLOSED", "LOOP_OPEN"), now, now)).isEqualTo(LoopMode.LGS)
+        // missing, ambiguous or stale list
+        assertThat(OrbitFaceLogic.loopMode(emptyList(), now, now)).isEqualTo(LoopMode.UNKNOWN)
+        assertThat(OrbitFaceLogic.loopMode(listOf("LOOP_CLOSED"), now, now)).isEqualTo(LoopMode.UNKNOWN)
+        assertThat(OrbitFaceLogic.loopMode(closed, 0L, now)).isEqualTo(LoopMode.UNKNOWN)
+        assertThat(OrbitFaceLogic.loopMode(closed, now - min(16), now)).isEqualTo(LoopMode.UNKNOWN)
+        assertThat(OrbitFaceLogic.loopMode(closed, now - min(14), now)).isEqualTo(LoopMode.CLOSED)
+    }
+
+    @Test fun redBudgetMutesLoopRing() {
+        val alert = OrbitFaceLogic.Slot(6, "Loop 23′", Tone.ALERT)
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, alert)).isTrue()
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.URGENT_LOW, alert)).isTrue()
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.IN, alert)).isFalse()
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, OrbitFaceLogic.Slot(5, "Loop aus", Tone.WARN))).isFalse()
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, null)).isFalse()
     }
 
     @Test fun basalBall() {
@@ -271,8 +332,9 @@ class OrbitFaceLogicTest {
     @Test fun cobAndTt() {
         assertThat(OrbitFaceLogic.cobBall("0g", de)).isEqualTo(OrbitFaceLogic.Ball("0g", "KH", Ring.DIM))
         assertThat(OrbitFaceLogic.cobBall("0g", en).label).isEqualTo("COB")
-        assertThat(OrbitFaceLogic.cobBall("12g", de).ring).isEqualTo(Ring.AMBER)
-        assertThat(OrbitFaceLogic.cobBall("20(30)g", de)).isEqualTo(OrbitFaceLogic.Ball("20(30)g", "KH", Ring.AMBER))
+        // spec v2: COB > 0 is neutral, not amber
+        assertThat(OrbitFaceLogic.cobBall("12g", de).ring).isEqualTo(Ring.NEUTRAL)
+        assertThat(OrbitFaceLogic.cobBall("20(30)g", de)).isEqualTo(OrbitFaceLogic.Ball("20(30)g", "KH", Ring.NEUTRAL))
         assertThat(OrbitFaceLogic.cobBall("--g", de)).isEqualTo(OrbitFaceLogic.Ball("--", "KH", Ring.DIM))
         assertThat(OrbitFaceLogic.ttBall("8,0", 2)).isEqualTo(OrbitFaceLogic.Ball("8,0", "TT", Ring.VIOLET))
         assertThat(OrbitFaceLogic.ttBall("4,4 - 5,0", 2)!!.value).isEqualTo("4,4-5,0")
@@ -303,6 +365,15 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.dateString(2026, 9, 30)).startsWith("Mi 30. Sep")
         assertThat(OrbitFaceLogic.dateString(2026, 9, 30)).doesNotContain(".S")
         assertThat(OrbitFaceLogic.dateString(2026, 12, 31)).isEqualTo("Do 31. Dez")
+        // German stays German even when a best pattern is passed
+        assertThat(OrbitFaceLogic.dateString(2025, 10, 17, Locale.GERMANY, "EEE, d. MMM")).isEqualTo("Fr 17. Okt")
+        // key_show_week_number: ISO week
+        assertThat(OrbitFaceLogic.dateString(2025, 10, 17, Locale.GERMANY, null, "KW %d")).isEqualTo("Fr 17. Okt · KW 42")
+    }
+
+    @Test fun otherLocalesUseTheBestPattern() {
+        assertThat(OrbitFaceLogic.dateString(2025, 10, 17, Locale.US, "EEE, MMM d")).isEqualTo("Fri, Oct 17")
+        assertThat(OrbitFaceLogic.dateString(2025, 10, 17, Locale.US, "EEE, MMM d", "W%d")).isEqualTo("Fri, Oct 17 · W42")
     }
 
     @Test fun timeFormat() {
@@ -310,11 +381,45 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.timeString(13, 5, true)).isEqualTo("13:05")
         assertThat(OrbitFaceLogic.timeString(0, 40, false)).isEqualTo("12:40")
         assertThat(OrbitFaceLogic.timeString(13, 5, false)).isEqualTo("1:05")
+        // locale.en_12h
+        assertThat(OrbitFaceLogic.amPm(0, false)).isEqualTo("AM")
+        assertThat(OrbitFaceLogic.amPm(11, false)).isEqualTo("AM")
+        assertThat(OrbitFaceLogic.amPm(12, false)).isEqualTo("PM")
+        assertThat(OrbitFaceLogic.amPm(23, false)).isEqualTo("PM")
+        assertThat(OrbitFaceLogic.amPm(13, true)).isEmpty()
     }
 
-    @Test fun burnInCycle() {
-        val shifts = (0..4).map { OrbitFaceLogic.burnInShiftX(it) to OrbitFaceLogic.burnInShiftY(it) }
-        assertThat(shifts).containsExactly(0f to 0f, 2f to 0f, 2f to 2f, 0f to 2f, 0f to 0f).inOrder()
+    @Test fun burnInShiftCoversMinus4To4AndChangesEveryMinute() {
+        val xs = HashSet<Int>()
+        val ys = HashSet<Int>()
+        var changes = 0
+        var prev: Pair<Int, Int>? = null
+        val base = 29_000_000L
+        for (m in 0 until 24 * 60) {
+            val x = OrbitFaceLogic.burnInShift(base + m, 0)
+            val y = OrbitFaceLogic.burnInShift(base + m, 1)
+            assertThat(x).isIn(-4..4)
+            assertThat(y).isIn(-4..4)
+            xs += x
+            ys += y
+            if (prev != null && prev != (x to y)) changes++
+            prev = x to y
+        }
+        // the whole range is used on both axes, and the offset changes almost every minute
+        assertThat(xs).containsExactlyElementsIn(-4..4)
+        assertThat(ys).containsExactlyElementsIn(-4..4)
+        assertThat(changes).isGreaterThan(24 * 60 * 8 / 10)
+        // deterministic
+        assertThat(OrbitFaceLogic.burnInShift(base, 0)).isEqualTo(OrbitFaceLogic.burnInShift(base, 0))
+    }
+
+    @Test fun chartTimeFrameCycles() {
+        assertThat(OrbitFaceLogic.nextTimeFrame(3)).isEqualTo(4)
+        assertThat(OrbitFaceLogic.nextTimeFrame(5)).isEqualTo(1)
+        assertThat(OrbitFaceLogic.nextTimeFrame(1)).isEqualTo(2)
+        assertThat(OrbitFaceLogic.DEFAULT_TIME_FRAME_H).isEqualTo(3)
+        // a 5 h window puts a 5 h old reading on the left edge
+        assertThat(OrbitFaceLogic.sparkX(now - 5 * 3_600_000L, now, 5 * 3_600_000L)).isWithin(0.01f).of(OrbitFaceLogic.SPARK_X0)
     }
 
     // ------------------------------------------------------------ geometry, widths, moon
@@ -344,19 +449,59 @@ class OrbitFaceLogicTest {
     @Test fun worstCaseWidths() {
         // ball value: 22 px up to 56 px, 17 px bold beyond, shrink when even that is too wide
         assertThat(OrbitFaceLogic.ballValueSize(50f)).isEqualTo(22f)
-        assertThat(OrbitFaceLogic.ballValueSize(70f)).isEqualTo(17f)     // "12,40", "20(30)g"
-        val tiny = OrbitFaceLogic.ballValueSize(110f)                   // "4,4-5,0"
+        assertThat(OrbitFaceLogic.ballValueSize(70f)).isEqualTo(17f)
+        val tiny = OrbitFaceLogic.ballValueSize(110f)
         assertThat(tiny).isLessThan(17f)
         assertThat(110f * tiny / 22f).isWithin(0.01f).of(OrbitFaceLogic.BALL_VALUE_HARD_MAX)
-        // hero "400+" / "22,2+" shrink to 200 px
-        assertThat(OrbitFaceLogic.fitSize(190f, 108f, OrbitFaceLogic.HERO_MAX_WIDTH)).isEqualTo(108f)
-        assertThat(OrbitFaceLogic.fitSize(250f, 108f, OrbitFaceLogic.HERO_MAX_WIDTH) * 250f / 108f).isWithin(0.01f).of(200f)
-        // the hero plus arrow never reaches the IOB ball (left edge 359)
-        val heroRight = 209f + OrbitFaceLogic.HERO_MAX_WIDTH / 2f
-        assertThat(heroRight + 24f + 22f).isLessThan(OrbitFaceLogic.pointX(168f, 90f) - OrbitFaceLogic.BALL_R)
-        // slot pill: the widest text is capped so the pill (+ padding and icon) stays between the lower balls
-        val pillHalf = (OrbitFaceLogic.SLOT_MAX_WIDTH + 20f) / 2f + 14f
-        assertThat(OrbitFaceLogic.CX + pillHalf).isLessThan(450f - 50f)
+        // the hero group (BG + glyph) never reaches the IOB ball (left edge 359)
+        assertThat(OrbitFaceLogic.CX + OrbitFaceLogic.HERO_GROUP_MAX / 2f).isLessThan(OrbitFaceLogic.pointX(168f, 90f) - OrbitFaceLogic.BALL_R)
+    }
+
+    /**
+     * The catalogue strings (states.md §1) measured with the conservative width estimate, at 450 and at 384 px
+     * (s = 0.853): every text fits its slot and no text ends up below the 11 px physical floor.
+     */
+    @Test fun catalogueStringsFitTheirSlots() {
+        for (screen in listOf(384f, 450f)) {
+            val s = screen / 450f
+            // hero: "22,2+" with a glyph steps down but stays >= 60 and inside 252
+            for (bg in listOf("22,2+", "400+", "11,8", "115", "6,4", "---")) {
+                val w108 = OrbitFaceLogic.estimateWidth(bg, 108f)
+                for (glyph in listOf(true, false)) {
+                    val size = OrbitFaceLogic.heroSize(w108, glyph)
+                    assertThat(size).isAtLeast(OrbitFaceLogic.HERO_MIN_SIZE)
+                    assertThat(OrbitFaceLogic.heroGroupWidth(w108, size, glyph)).isAtMost(OrbitFaceLogic.HERO_GROUP_MAX)
+                }
+            }
+            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("22,2+", 108f), true)).isLessThan(108f)
+            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("6,4", 108f), true)).isEqualTo(108f)
+            // ball values: "20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "Offen", "Pumpe"
+            for (v in listOf("20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "0,85", "Offen", "Pumpe", "2 Std")) {
+                val size = OrbitFaceLogic.ballValueSize(OrbitFaceLogic.estimateWidth(v, 22f))
+                assertThat(OrbitFaceLogic.estimateWidth(v, size)).isAtMost(OrbitFaceLogic.BALL_VALUE_HARD_MAX + 0.01f)
+                assertThat(size * s).isAtLeast(11f)
+                // inside the ball (r 34) with a margin
+                assertThat(OrbitFaceLogic.estimateWidth(v, size)).isLessThan(2 * OrbitFaceLogic.BALL_R - 4f)
+            }
+            // ball labels 14 px stay >= 11 physical px at 384
+            assertThat(14f * s).isAtLeast(11f)
+            // status pill: the longest German texts at 19 px within the slot
+            for (t in listOf("Telefon getrennt · 14′", "Keine Daten · 17′", "Warte auf AAPS", "Reservoir 18U", "Tel 18 %")) {
+                val size = OrbitFaceLogic.fitSize(OrbitFaceLogic.estimateWidth(t, 19f), 19f, OrbitFaceLogic.SLOT_MAX_WIDTH)
+                assertThat(OrbitFaceLogic.estimateWidth(t, size)).isAtMost(OrbitFaceLogic.SLOT_MAX_WIDTH + 0.01f)
+                assertThat(size * s).isAtLeast(11f)
+            }
+            // meta row and date line
+            for (t in listOf("+0,08 · 17′", "-12,5 · 11′", "+12 · 3′")) {
+                val size = OrbitFaceLogic.fitSize(OrbitFaceLogic.estimateWidth(t, 21f) + 18f, 21f, OrbitFaceLogic.DELTA_ROW_MAX_WIDTH)
+                assertThat(size * s).isAtLeast(11f)
+            }
+            for (t in listOf("Fr 17. Okt · KW 42", "Mi 30. Sept", "Fri, Oct 17 · W42")) {
+                val size = OrbitFaceLogic.fitSize(OrbitFaceLogic.estimateWidth(t, 18f), 18f, OrbitFaceLogic.DATE_LINE_MAX_WIDTH)
+                assertThat(OrbitFaceLogic.estimateWidth(t, size)).isAtMost(OrbitFaceLogic.DATE_LINE_MAX_WIDTH + 0.01f)
+                assertThat(size * s).isAtLeast(11f)
+            }
+        }
     }
 
     @Test fun moonPositions() {

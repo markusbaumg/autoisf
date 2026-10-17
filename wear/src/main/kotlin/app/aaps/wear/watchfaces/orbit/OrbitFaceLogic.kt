@@ -2,6 +2,7 @@ package app.aaps.wear.watchfaces.orbit
 
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.time.temporal.WeekFields
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.asin
@@ -70,7 +71,9 @@ object OrbitFaceLogic {
     const val SPARK_Y_TOP_PILL = 298f
     const val SPARK_Y_BOTTOM_PILL = 334f
     const val SLOT_Y = 280f
-    const val SPARK_HISTORY_MS = 2 * 60 * 60_000L
+    /** Default sparkline window (key_chart_time_frame, hours). */
+    const val DEFAULT_TIME_FRAME_H = 3
+    const val SPARK_HISTORY_MS = DEFAULT_TIME_FRAME_H * 60 * 60_000L
     const val PREDICTION_DOTS = 5
     const val PREDICTION_STEP_MS = 6 * 60_000L
 
@@ -91,7 +94,6 @@ object OrbitFaceLogic {
         val minutesFormat: String = "%d′",
         val hoursFormat: String = "%d Std",
         val daysFormat: String = "%d T",
-        val old: String = "alt",
         val waiting: String = "Warte auf AAPS",
         val phoneLostFormat: String = "Telefon getrennt · %s",
         val noDataFormat: String = "Keine Daten · %s",
@@ -100,6 +102,9 @@ object OrbitFaceLogic {
         val loopAgeFormat: String = "Loop %s",
         val loopOffShort: String = "AUS",
         val loopOpen: String = "Offen",
+        val loopLgs: String = "LGS",
+        val sentinelLow: String = "TIEF",
+        val weekFormat: String = "KW %d",
         val pumpOnly: String = "Pumpe",
         val reservoirFormat: String = "Reservoir %s",
         val phoneBatteryFormat: String = "Tel %s %%"
@@ -167,29 +172,59 @@ object OrbitFaceLogic {
         return if (sgv >= SENTINEL_HIGH_MGDL && !s.endsWith("+")) "$s+" else s
     }
 
-    /** Only the arrows the face knows; "??", "--" and unknown strings draw nothing. */
-    fun arrowText(slopeArrow: String, deltaMgdl: Double?): String = when (slopeArrow.trim()) {
-        "⇈", "↑", "↗", "→", "↘", "↓", "⇊" -> slopeArrow.trim()
-        "X"                               -> if ((deltaMgdl ?: 0.0) < 0) "⇊" else "⇈"
-        else                              -> ""
+    /** Sentinel LOW (sgv <= 39): the phone string plus the "TIEF" caption, treated as urgent low. */
+    fun sentinelLow(sgv: Double, ageMinutes: Long?): Boolean =
+        ageMinutes != null && ageMinutes < STALE_FROM_MIN && sgv > 0.0 && sgv <= SENTINEL_LOW_MGDL
+
+    /**
+     * Trend for the face-own vector glyph (spec §4.3). [deg] is the shaft direction clockwise from 12 o'clock,
+     * [heads] 1 or 2 (fast). "??", "--" and unknown strings are NONE (no glyph, the BG re-centres).
+     */
+    enum class Trend(val deg: Float, val heads: Int) {
+        NONE(0f, 0), UP2(0f, 2), UP(0f, 1), UP45(45f, 1), FLAT(90f, 1), DOWN45(135f, 1), DOWN(180f, 1), DOWN2(180f, 2)
+    }
+
+    fun trend(slopeArrow: String, deltaMgdl: Double?): Trend = when (slopeArrow.trim()) {
+        "⇈"  -> Trend.UP2
+        "↑"  -> Trend.UP
+        "↗"  -> Trend.UP45
+        "→"  -> Trend.FLAT
+        "↘"  -> Trend.DOWN45
+        "↓"  -> Trend.DOWN
+        "⇊"  -> Trend.DOWN2
+        "X"  -> if ((deltaMgdl ?: 0.0) < 0) Trend.DOWN2 else Trend.UP2
+        else -> Trend.NONE
     }
 
     // ------------------------------------------------------------------ delta row
 
-    /** Interactive delta row: "+0,1 · " and the age "1′" (amber from 6 min); [phoneOff] adds the phone-off glyph. */
-    data class DeltaRow(val deltaPart: String, val agePart: String, val ageAmber: Boolean)
+    /**
+     * Meta row: "+0,1 · " and the age "1′" (amber from 6 min). [showDelta] off drops the delta; [showAgo] off hides
+     * a FRESH age, but an AGING (or older) age is always shown (toggle exception). Both empty: the row is empty.
+     */
+    data class DeltaRow(val deltaPart: String, val agePart: String, val ageAmber: Boolean) {
 
-    fun deltaRow(delta: String, ageMinutes: Long?, labels: Labels): DeltaRow {
-        val d = display(delta)
+        val isEmpty: Boolean get() = deltaPart.isEmpty() && agePart.isEmpty()
+    }
+
+    fun deltaRow(delta: String, ageMinutes: Long?, labels: Labels, showDelta: Boolean = true, showAgo: Boolean = true): DeltaRow {
+        val aging = (ageMinutes ?: 0L) >= AGING_FROM_MIN
+        val age = if (showAgo || aging) ageText(ageMinutes, labels) else ""
+        val d = if (showDelta) display(delta) else ""
         return DeltaRow(
-            deltaPart = "$d · ",
-            agePart = ageText(ageMinutes, labels),
-            ageAmber = (ageMinutes ?: 0L) >= AGING_FROM_MIN
+            deltaPart = if (d.isEmpty()) "" else if (age.isEmpty()) d else "$d · ",
+            agePart = age,
+            ageAmber = aging
         )
     }
 
-    /** Ambient replacement of the delta row from 12 min: "– – 17′ alt". */
-    fun oldAmbientText(ageMinutes: Long?, labels: Labels): String = "– – " + ageText(ageMinutes, labels) + " " + labels.old
+    /** Delta source (spec §4.4): detailed and/or average delta when those prefs are on. */
+    fun deltaSource(delta: String, deltaDetailed: String, avgDelta: String, avgDeltaDetailed: String, detailed: Boolean, avg: Boolean): String = when {
+        avg && detailed -> avgDeltaDetailed
+        avg             -> avgDelta
+        detailed        -> deltaDetailed
+        else            -> delta
+    }
 
     // ------------------------------------------------------------------ phone link and status slot
 
@@ -296,6 +331,27 @@ object OrbitFaceLogic {
 
     enum class LoopHealth { NEVER, OK, WARN, BAD }
 
+    enum class LoopMode { CLOSED, OPEN, LGS, UNKNOWN }
+
+    /** A LoopStatesList older than the last status by more than this is not trusted (states.md loopMode). */
+    const val LOOP_STATES_MAX_AGE_MS = 15 * 60_000L
+
+    /**
+     * loopMode (states.md §1, dataset 0, best effort): the one of CLOSED / OPEN / LGS that is missing from the
+     * offered LoopStatesList entries ([offered] holds their names). UNKNOWN when the list is missing, older than the
+     * last status by > 15 min, or ambiguous.
+     */
+    fun loopMode(offered: Collection<String>, listTimeStamp: Long, lastStatus: Long): LoopMode {
+        if (listTimeStamp <= 0L || offered.isEmpty()) return LoopMode.UNKNOWN
+        if (lastStatus > 0L && lastStatus - listTimeStamp > LOOP_STATES_MAX_AGE_MS) return LoopMode.UNKNOWN
+        val missing = listOf("LOOP_CLOSED" to LoopMode.CLOSED, "LOOP_OPEN" to LoopMode.OPEN, "LOOP_LGS" to LoopMode.LGS)
+            .filter { it.first !in offered }
+        return if (missing.size == 1) missing[0].second else LoopMode.UNKNOWN
+    }
+
+    /** Red budget (states.md rule 3): when the BG accent and the pill are both red the LOOP ring is muted. */
+    fun muteLoopRing(range: Range, slot: Slot?): Boolean = isLow(range) && slot?.tone == Tone.ALERT
+
     /** <= 5 OK, 6..14 WARN, >= 15 BAD. No loop run at all (-1) is NEVER: grey, never red. */
     fun loopHealth(ageMinutes: Long?): LoopHealth = when {
         ageMinutes == null -> LoopHealth.NEVER
@@ -308,17 +364,26 @@ object OrbitFaceLogic {
      * LOOP ball. Loop off: amber ring, pause glyph, "AUS". Never looped: dashed grey "--", or "Pumpe" when the
      * phone clearly runs without APS (pump data but no loop run). Otherwise the age coloured by health.
      */
-    fun loopBall(openApsStatus: Long, externalStatus: String, iobSum: String, now: Long, labels: Labels): Ball {
+    fun loopBall(
+        openApsStatus: Long, externalStatus: String, iobSum: String, now: Long, labels: Labels, mode: LoopMode = LoopMode.UNKNOWN
+    ): Ball {
         if (loopOff(externalStatus, iobSum)) return Ball("", labels.loopOffShort, Ring.AMBER, pause = true)
         val age = loopAgeMinutes(openApsStatus, now)
-        return when (loopHealth(age)) {
+        val health = loopHealth(age)
+        // loop.open: neutral dashed loop.ok ring with "Offen"; the age is not an alarm
+        if (mode == LoopMode.OPEN && health != LoopHealth.NEVER) return Ball(labels.loopOpen, "LOOP", Ring.GREEN, dashed = true)
+        val label = if (mode == LoopMode.LGS) labels.loopLgs else "LOOP"
+        return when (health) {
             LoopHealth.NEVER -> if (display(iobSum) != "--") Ball(labels.pumpOnly, "", Ring.DIM)
                                 else Ball("--", "LOOP", Ring.DIM, dashed = true)
-            LoopHealth.OK    -> Ball(ageText(age, labels), "LOOP", Ring.GREEN)
-            LoopHealth.WARN  -> Ball(ageText(age, labels), "LOOP", Ring.AMBER)
-            LoopHealth.BAD   -> Ball(ageText(age, labels), "LOOP", Ring.RED)
+            LoopHealth.OK    -> Ball(ageText(age, labels), label, Ring.GREEN)
+            LoopHealth.WARN  -> Ball(ageText(age, labels), label, Ring.AMBER)
+            LoopHealth.BAD   -> Ball(ageText(age, labels), label, Ring.RED)
         }
     }
+
+    /** LOOP ball visibility: key_show_external_status, forced on for loop.bad (safety exception). */
+    fun loopBallShown(showPref: Boolean, health: LoopHealth): Boolean = showPref || health == LoopHealth.BAD
 
     /** Phone placeholders that must never be drawn ("IOB" before the first status, "-.--", "--g", "no status"). */
     fun display(s: String): String {
@@ -367,11 +432,11 @@ object OrbitFaceLogic {
         }
     }
 
-    /** COB > 0 amber, else dim. "12(3)g" counts as 12. Label "KH" in German. */
+    /** COB > 0 neutral (spec v2: amber means "look soon"), else dim. "12(3)g" counts as 12. Label "KH" in German. */
     fun cobBall(cob: String, labels: Labels): Ball {
         val v = display(cob)
         val n = leadingNumber(v)
-        return Ball(v, labels.cob, if (n != null && n > 0.0) Ring.AMBER else Ring.DIM)
+        return Ball(v, labels.cob, if (n != null && n > 0.0) Ring.NEUTRAL else Ring.DIM)
     }
 
     /** "5,0 - 6,0" -> "5,0-6,0", "5,6" stays. */
@@ -394,6 +459,22 @@ object OrbitFaceLogic {
         return if (at17 <= BALL_VALUE_HARD_MAX) 17f else 17f * BALL_VALUE_HARD_MAX / at17
     }
 
+    /** Hero group budget (spec §4.2): BG + 14 + a 40 px glyph (both scaled with the BG size) within 252. */
+    const val HERO_GROUP_MAX = 252f
+    const val HERO_GLYPH_GAP = 14f
+    const val HERO_GLYPH_W = 40f
+    const val HERO_MIN_SIZE = 60f
+
+    fun heroGroupWidth(widthAt108: Float, size: Float, glyph: Boolean): Float =
+        widthAt108 * size / 108f + if (glyph) HERO_GLYPH_GAP + HERO_GLYPH_W * size / 108f else 0f
+
+    /** 108 px, stepped down by 4 until the group fits [HERO_GROUP_MAX] (minimum 60). */
+    fun heroSize(widthAt108: Float, glyph: Boolean): Float {
+        var size = 108f
+        while (size > HERO_MIN_SIZE && heroGroupWidth(widthAt108, size, glyph) > HERO_GROUP_MAX) size -= 4f
+        return size
+    }
+
     /** Shrinks a text size so a text measured at [size] fits [maxWidth]. */
     fun fitSize(widthAtSize: Float, size: Float, maxWidth: Float): Float =
         if (widthAtSize <= maxWidth || widthAtSize <= 0f) size else size * maxWidth / widthAtSize
@@ -408,21 +489,73 @@ object OrbitFaceLogic {
     private val WEEKDAY = DateTimeFormatter.ofPattern("EE", Locale.GERMANY)
     private val MONTH = DateTimeFormatter.ofPattern("MMM", Locale.GERMANY)
 
-    /** "Fr 17. Okt" (Locale.GERMANY, trailing dots of the abbreviations removed) from the renderer's date. */
-    fun dateString(year: Int, month1: Int, day: Int): String {
+    /**
+     * Date from the renderer's date. German: "Fr 17. Okt" (Locale.GERMANY, trailing dots of the abbreviations
+     * removed). Other locales: [bestPattern] (Android's getBestDateTimePattern(locale, "EEEdMMM"), e.g.
+     * "EEE, MMM d" -> "Fri, Oct 17"). [weekFormat] non-null appends " · KW 42" (key_show_week_number, ISO week).
+     */
+    fun dateString(
+        year: Int, month1: Int, day: Int, locale: Locale = Locale.GERMANY, bestPattern: String? = null, weekFormat: String? = null
+    ): String {
         val d = LocalDate.of(year, month1, day)
-        return "${WEEKDAY.format(d).trimEnd('.')} $day. ${MONTH.format(d).trimEnd('.')}"
+        val base = if (locale.language == "de" || bestPattern.isNullOrBlank())
+            "${WEEKDAY.format(d).trimEnd('.')} $day. ${MONTH.format(d).trimEnd('.')}"
+        else DateTimeFormatter.ofPattern(bestPattern, locale).format(d)
+        if (weekFormat == null) return base
+        return base + " · " + String.format(Locale.ROOT, weekFormat, d.get(WeekFields.ISO.weekOfWeekBasedYear()))
     }
 
-    /** "00:40" (24 h) or "12:40" (12 h, no AM/PM) from the renderer's time. */
+    /** "00:40" (24 h) or "12:40" (12 h; the AM/PM suffix is [amPm]) from the renderer's time. */
     fun timeString(hour: Int, minute: Int, is24h: Boolean): String {
         val h = if (is24h) hour else (hour % 12).let { if (it == 0) 12 else it }
         return if (is24h) String.format(Locale.ROOT, "%02d:%02d", h, minute) else String.format(Locale.ROOT, "%d:%02d", h, minute)
     }
 
-    /** Burn-in shift per minute: (0,0) -> (2,0) -> (2,2) -> (0,2). */
-    fun burnInShiftX(minute: Int): Float = if (minute % 4 == 1 || minute % 4 == 2) 2f else 0f
-    fun burnInShiftY(minute: Int): Float = if (minute % 4 == 2 || minute % 4 == 3) 2f else 0f
+    /** 12 h suffix (locale.en_12h): "AM" / "PM", empty in 24 h. */
+    fun amPm(hour: Int, is24h: Boolean): String = if (is24h) "" else if (hour < 12) "AM" else "PM"
+
+    /** Maximum burn-in shift (design px) in each direction (spec §6: (dx, dy) in [-4, 4]). */
+    const val BURN_IN_MAX_SHIFT = 4
+
+    /**
+     * Burn-in shift for a minute: a deterministic hash of the minute key mapped to [-4, 4] per axis, so the offset
+     * changes every minute and visits the whole square (not a fixed small cycle). [axis] 0 = x, 1 = y.
+     */
+    fun burnInShift(minuteKey: Long, axis: Int): Int {
+        var h = minuteKey * 0x9E3779B97F4A7C15uL.toLong() + axis * 0x632BE59BD9B4E019L
+        h = h xor (h ushr 31)
+        h *= 0x7FB5D329728EA185L
+        h = h xor (h ushr 27)
+        val span = 2 * BURN_IN_MAX_SHIFT + 1
+        return (Math.floorMod(h, span.toLong()) - BURN_IN_MAX_SHIFT).toInt()
+    }
+
+    /** Graph double tap: 1 -> 2 -> 3 -> 4 -> 5 -> 1 hours (like the other AAPS faces). */
+    fun nextTimeFrame(current: Int): Int = current.coerceIn(1, 5) % 5 + 1
+
+    // ------------------------------------------------------------------ text width estimate
+
+    /**
+     * Conservative width estimate (design px) of [s] at [size] px: upper bounds of the per-glyph advance (in em) of
+     * the default Android sans (Roboto / Google Sans) at Semibold / Bold. Used by the worst-case tests and as a
+     * plausibility bound; the face itself measures with Paint.
+     */
+    fun estimateWidth(s: String, size: Float): Float {
+        var em = 0f
+        for (c in s) em += when (c) {
+            in '0'..'9'           -> 0.60f
+            ',', '.', ':', '′', '\'' -> 0.30f
+            ' '                   -> 0.28f
+            '·'                   -> 0.30f
+            '-', '–', '(', ')'    -> 0.40f
+            '+', '%'              -> 0.70f
+            'm', 'w', 'M', 'W'    -> 0.92f
+            'i', 'l', 'j', 'I', 'f', 't', 'r' -> 0.38f
+            in 'A'..'Z'           -> 0.72f
+            else                  -> 0.60f
+        }
+        return em * size
+    }
 
     // ------------------------------------------------------------------ orbit geometry
 
@@ -488,9 +621,9 @@ object OrbitFaceLogic {
         else                  -> 0
     }
 
-    /** x of a reading [t] when the right end of the history (x 265) is [now]. */
-    fun sparkX(t: Long, now: Long): Float =
-        SPARK_X_NOW - (now - t).toFloat() / SPARK_HISTORY_MS * (SPARK_X_NOW - SPARK_X0)
+    /** x of a reading [t] when the right end of the history (x 265) is [now] and the window is [windowMs]. */
+    fun sparkX(t: Long, now: Long, windowMs: Long = SPARK_HISTORY_MS): Float =
+        SPARK_X_NOW - (now - t).toFloat() / windowMs * (SPARK_X_NOW - SPARK_X0)
 
     /** Gap rule (graph.gaps): readings more than 15 min apart are not joined. */
     const val SPARK_GAP_MS = 15 * 60_000L

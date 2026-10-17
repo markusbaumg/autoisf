@@ -15,9 +15,9 @@ class OrbitBolusGuardTest {
 
     private fun check(
         prefOn: Boolean = true, ambient: Boolean = false, wearControl: Boolean = true,
-        amount: Double = 0.5, maxBolus: Double = 3.0, reachable: Boolean = true,
-        lastPhone: Long = now - 60_000L, bgTime: Long = now - 120_000L
-    ) = guard.check(OrbitBolusGuard.Input(prefOn, ambient, wearControl, amount, maxBolus, reachable, lastPhone, bgTime))
+        amount: Double = 0.5, maxBolus: Double = 3.0, reachable: Boolean? = true,
+        lastPhone: Long = now - 60_000L, bgTime: Long = now - 120_000L, firstStart: Boolean = false
+    ) = guard.check(OrbitBolusGuard.Input(prefOn, ambient, wearControl, amount, maxBolus, reachable, lastPhone, bgTime, firstStart))
 
     @Test fun defaultsAreHardened() {
         assertThat(OrbitBolusGuard.WINDOW_MS).isEqualTo(800L)
@@ -37,10 +37,17 @@ class OrbitBolusGuardTest {
         assertThat(check(amount = 1.0).state).isEqualTo(State.IDLE)
         // ambient wins over everything else (never drawn, never active)
         assertThat(check(ambient = true, lastPhone = 0L, bgTime = 0L).state).isEqualTo(State.HIDDEN)
+        // first start (nothing ever received): hidden, not disabled
+        assertThat(check(firstStart = true, lastPhone = 0L, bgTime = 0L)).isEqualTo(OrbitBolusGuard.Check(State.HIDDEN, Reason.FIRST_START))
     }
 
     @Test fun disabled() {
         assertThat(check(reachable = false)).isEqualTo(OrbitBolusGuard.Check(State.DISABLED, Reason.NO_PHONE))
+        // reachability unknown until the first CapabilityClient answer
+        assertThat(check(reachable = null)).isEqualTo(OrbitBolusGuard.Check(State.DISABLED, Reason.NO_PHONE))
+        // max bolus never synced from the phone: no 3 U fallback
+        assertThat(check(maxBolus = Double.NaN)).isEqualTo(OrbitBolusGuard.Check(State.DISABLED, Reason.NO_MAX_BOLUS))
+        assertThat(check(maxBolus = 0.0).reason).isEqualTo(Reason.NO_MAX_BOLUS)
         assertThat(check(lastPhone = 0L).reason).isEqualTo(Reason.NO_PHONE)
         assertThat(check(lastPhone = now - OrbitBolusGuard.DATA_FRESH_MS).state).isEqualTo(State.IDLE)
         assertThat(check(lastPhone = now - OrbitBolusGuard.DATA_FRESH_MS - 1).reason).isEqualTo(Reason.NO_PHONE)
@@ -113,8 +120,11 @@ class OrbitBolusGuardTest {
     }
 
     @Test fun hitArea() {
-        // r = 40 around (57, 225)
-        assertThat(BolusTapGesture.isInside(57f + 39f, 225f, 57f, 225f, 40f)).isTrue()
-        assertThat(BolusTapGesture.isInside(57f + 29f, 225f + 29f, 57f, 225f, 40f)).isFalse()
+        // r = 44 around (57, 225), at least 8 px from the graph zone (x 143)
+        assertThat(OrbitBolusGuard.HIT_R).isEqualTo(44f)
+        assertThat(BolusTapGesture.isInside(57f + 43f, 225f, 57f, 225f, OrbitBolusGuard.HIT_R)).isTrue()
+        assertThat(BolusTapGesture.isInside(57f + 32f, 225f + 32f, 57f, 225f, OrbitBolusGuard.HIT_R)).isFalse()
+        assertThat(57f + OrbitBolusGuard.HIT_R + 8f).isAtMost(143f)
+        assertThat(OrbitBolusGuard.SEND_FLASH_MS).isEqualTo(150L)
     }
 }

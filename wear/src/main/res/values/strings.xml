@@ -254,7 +254,6 @@
     <string name="orbit_minutes">%1$d′</string>
     <string name="orbit_hours">%1$d h</string>
     <string name="orbit_days">%1$d d</string>
-    <string name="orbit_old">old</string>
     <string name="orbit_waiting">Waiting for AAPS</string>
     <string name="orbit_phone_lost">Phone disconnected · %1$s</string>
     <string name="orbit_no_data">No data · %1$s</string>
@@ -270,6 +269,10 @@
     <string name="orbit_bolus_refused_stale">No current BG. No request sent.</string>
     <string name="orbit_bolus_refused_max">Amount above the max bolus. No request sent.</string>
     <string name="orbit_bolus_pending">A request is already running</string>
+    <string name="orbit_loop_lgs">LGS</string>
+    <string name="orbit_sentinel_low">LOW</string>
+    <string name="orbit_week">W%1$d</string>
+    <string name="orbit_bolus_refused_max_unknown">Max bolus not synced from the phone yet. No request sent.</string>
     <string name="increment">increment</string>
     <string name="decrement">decrement</string>
     <string name="abbreviation_average">avg</string>
