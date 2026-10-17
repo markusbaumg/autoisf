@@ -5,6 +5,7 @@
     <string name="label_watchface_circle">AAPS(Circle)</string>
     <string name="label_watchface_digital_style">AAPS(DigitalStyle)</string>
     <string name="label_watchface_custom">AAPS(Custom)</string>
+    <string name="label_watchface_glass" translatable="false">AAPS Glass</string>
     <string name="label_actions_tile">AAPS(Actions)</string>
     <string name="label_temp_target_tile">AAPS(Temp Target)</string>
     <string name="label_quick_wizard_tile">AAPS(Quick Wizard)</string>
@@ -235,6 +236,25 @@
     <string name="key_include_external" translatable="false">include_external</string>
     <string name="key_switch_external" translatable="false">switch_external</string>
     <string name="key_last_selected_watchface" translatable="false">last_selected_watchface</string>
+    <string name="pref_glass_bolus_double_tap_summary">Glass face: tap the +U ball twice within 0.8 s to request a bolus. The phone checks it and you confirm on the watch. Needs Wear control on the phone; never above the phone\'s max bolus.</string>
+    <string name="glass_waiting">Waiting for AAPS</string>
+    <string name="glass_phone_disconnected">Phone disconnected · %1$s</string>
+    <string name="glass_no_data">No data · %1$s</string>
+    <string name="glass_no_profile">No profile</string>
+    <string name="glass_loop_off">Loop off</string>
+    <string name="glass_loop_off_short">off</string>
+    <string name="glass_loop_age">Loop %1$s</string>
+    <string name="glass_loop_open">Open</string>
+    <string name="glass_reservoir">Reservoir %1$s</string>
+    <string name="glass_phone_battery">Phone %1$d %%</string>
+    <string name="glass_cob">COB %1$s</string>
+    <string name="glass_low_caption">LOW</string>
+    <string name="glass_hours">%1$d h</string>
+    <string name="glass_days">%1$d d</string>
+    <string name="glass_bolus_refused_no_phone">Phone disconnected: no bolus request</string>
+    <string name="glass_bolus_refused_stale">Data too old: no bolus request</string>
+    <string name="glass_bolus_refused_max">Above the phone\'s max bolus</string>
+    <string name="glass_bolus_pending">A request is already running</string>
     <string name="increment">increment</string>
     <string name="decrement">decrement</string>
     <string name="abbreviation_average">avg</string>
