@@ -688,10 +688,12 @@
             android:exported="true"
             android:label="@string/action_confirm"
             android:launchMode="singleInstance" />
-        <!-- Quick-bolus picker, opened only by the Orbit face ("+ U" ball, "Auswahl" mode). Not exported. -->
+        <!-- Quick-bolus picker, opened only by the Orbit face ("+ U" ball, "Auswahl" mode). Not exported. Its own task
+             (no affinity), so closing it never lands in a menu or wizard left in the app's task. -->
         <activity
             android:name=".interaction.actions.QuickBolusActivity"
             android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:exported="false"
             android:label="@string/quick_bolus_title"
             android:launchMode="singleTop"

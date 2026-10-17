@@ -183,8 +183,33 @@ class QuickBolusPickerTest {
         // in range, high
         assertThat(QuickBolusPicker.block(150.0, 0, arrowFlat, 1.0, 1)).isEqualTo(Block.NONE)
         assertThat(QuickBolusPicker.block(250.0, 1, "↗", 5.0, 1)).isEqualTo(Block.NONE)
-        // old data: the guard's STALE, not a block
-        assertThat(QuickBolusPicker.block(50.0, -1, arrowFlat, 0.0, 20)).isEqualTo(Block.NONE)
+        // the low / fall block never depends on the age: at the 12-min stale boundary and on old data it still holds
+        // (the guard's STALE wins in why(), so this is only stricter)
+        assertThat(QuickBolusPicker.block(50.0, -1, arrowFlat, 0.0, 11)).isEqualTo(Block.LOW)
+        assertThat(QuickBolusPicker.block(50.0, -1, arrowFlat, 0.0, 12)).isEqualTo(Block.LOW)
+        assertThat(QuickBolusPicker.block(65.0, -1, arrowFlat, 0.0, 20)).isEqualTo(Block.LOW)
+        assertThat(QuickBolusPicker.block(39.0, -1, "", 0.0, 13)).isEqualTo(Block.LOW)
+        assertThat(QuickBolusPicker.block(150.0, 0, "⇊", -12.0, 12)).isEqualTo(Block.FALLING_FAST)
+        // no reading at all: nothing to block on (the guard's STALE)
+        assertThat(QuickBolusPicker.block(0.0, 0, "", null, null)).isEqualTo(Block.NONE)
+    }
+
+    @Test fun lowAtTheStaleBoundaryIsBlockedThroughSnapshot() {
+        val p = ready()
+        // exactly 12:00.000 old: the guard still accepts the reading for this millisecond, the low must block
+        val bgTime = now - BolusRequestGuard.DATA_FRESH_MS
+        val s = p.screen(QuickBolusPicker.Snapshot(input(bgTime = bgTime), QuickBolusPicker.block(50.0, -1, "→", 0.0, 12)))
+        assertThat(s.why).isEqualTo(Why.LOW)
+        assertThat(s.buttons.none { it.enabled }).isTrue()
+    }
+
+    @Test fun maxBolusTextNeverRoundsUp() {
+        assertThat(QuickBolusPicker.maxBolusText(1.45, Locale.GERMANY)).isEqualTo("1,45")
+        assertThat(QuickBolusPicker.maxBolusText(1.499, Locale.GERMANY)).isEqualTo("1,49")
+        assertThat(QuickBolusPicker.maxBolusText(2.0, Locale.GERMANY)).isEqualTo("2,0")
+        assertThat(QuickBolusPicker.maxBolusText(1.5, Locale.GERMANY)).isEqualTo("1,5")
+        assertThat(QuickBolusPicker.maxBolusText(10.0, Locale.US)).isEqualTo("10.0")
+        assertThat(QuickBolusPicker.maxBolusText(0.3, Locale.GERMANY)).isEqualTo("0,3")
     }
 
     @Test fun singleRequestThenNothing() {

@@ -1992,8 +1992,9 @@ class OrbitWatchface : WatchFace() {
         if (isAmbient || isHeadless) return
         aapsLogger.info(LTag.WEAR, "OrbitWatchface: double tap opens the quick-bolus picker")
         try {
+            // own task (taskAffinity ""), cleared: never stacked on a menu or wizard left in the app's task
             startActivity(Intent(this, QuickBolusActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             })
         } catch (e: Exception) {
             aapsLogger.error(LTag.WEAR, "OrbitWatchface: quick-bolus picker failed to open", e)

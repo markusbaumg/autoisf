@@ -9,7 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.view.WindowManager
+import androidx.annotation.VisibleForTesting
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.rx.bus.RxBus
@@ -52,6 +52,7 @@ class QuickBolusActivity : DaggerActivity() {
     @Inject lateinit var complicationDataRepository: ComplicationDataRepository
 
     private val handler = Handler(Looper.getMainLooper())
+    private val clock: () -> Long = testClock ?: { System.currentTimeMillis() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var guard: BolusRequestGuard
     private lateinit var picker: QuickBolusPicker
@@ -93,13 +94,14 @@ class QuickBolusActivity : DaggerActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        guard = BolusRequestGuard(clock = { System.currentTimeMillis() }, store = BolusRequestPrefs.lastSentStore { sp })
-        picker = QuickBolusPicker({ System.currentTimeMillis() }, guard, BolusRequestPrefs.pickerAmounts(sp))
+        // no FLAG_KEEP_SCREEN_ON: screen timeout and wrist-down must be able to end the picker
+        guard = BolusRequestGuard(clock = clock, store = BolusRequestPrefs.lastSentStore { sp })
+        picker = QuickBolusPicker(clock, guard, BolusRequestPrefs.pickerAmounts(sp))
         view = QuickBolusView(this).apply {
             locale = Locale.getDefault()
             contentDescription = getString(R.string.quick_bolus_title)
             onAnyTouch = { picker.onTouch() }
+            isInputLocked = { picker.inputLocked() }
             onAmount = { onAmountTap(it) }
             onClose = { if (picker.onClose()) close("close button") }
         }
@@ -126,7 +128,7 @@ class QuickBolusActivity : DaggerActivity() {
     }
 
     private fun snapshot(): QuickBolusPicker.Snapshot = QuickBolusPicker.snapshot(
-        data, System.currentTimeMillis(),
+        data, clock(),
         prefOn = BolusRequestPrefs.enabled(sp) && BolusRequestPrefs.mode(sp) == BolusRequestPrefs.Mode.PICKER,
         wearControl = preferences.get(BooleanKey.WearControl),
         maxBolus = BolusRequestPrefs.maxBolus(sp, getString(R.string.key_treatments_safety_max_bolus)),
@@ -135,7 +137,7 @@ class QuickBolusActivity : DaggerActivity() {
 
     private fun redraw() {
         if (finishing) return
-        val now = System.currentTimeMillis()
+        val now = clock()
         view.header = QuickBolusView.header(data, now, view.labels, view.locale)
         view.screen = picker.screen(snapshot())
     }
@@ -207,6 +209,10 @@ class QuickBolusActivity : DaggerActivity() {
     }
 
     companion object {
+
+        /** Robolectric only (wear/src/test): a clock that follows the test's looper time. Always null on the watch. */
+        @VisibleForTesting
+        @Volatile internal var testClock: (() -> Long)? = null
 
         private const val TICK_MS = 250L
         private const val SPIN_FRAME_MS = 50L

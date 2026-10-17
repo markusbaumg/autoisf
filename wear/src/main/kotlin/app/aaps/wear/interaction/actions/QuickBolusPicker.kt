@@ -195,14 +195,15 @@ class QuickBolusPicker(
 
         /**
          * Low (below the low mark, under 54 mg/dL, the sensor's LOW sentinel) or falling fast (double arrow or the
-         * fast delta) on a FRESH / AGING reading: no quick bolus. Old data is the guard's STALE.
+         * fast delta) on any reading, whatever its age: no quick bolus. Old data is also the guard's STALE.
          */
         fun block(sgv: Double, sgvLevel: Long, slopeArrow: String, deltaMgdl: Double?, ageMinutes: Long?): Block {
-            val age = FaceState.bgAge(ageMinutes)
-            if (FaceState.isOld(age)) return Block.NONE
-            val range = OrbitFaceLogic.range(sgv, sgvLevel, slopeArrow, deltaMgdl, age)
+            // any real reading counts, whatever its age: the low block never depends on the stale boundary (the guard's
+            // STALE has priority in [why] anyway, so this only makes the picker stricter)
+            if (ageMinutes == null) return Block.NONE
+            val range = OrbitFaceLogic.range(sgv, sgvLevel, slopeArrow, deltaMgdl, FaceState.BgAge.FRESH)
             return when {
-                FaceState.isLow(range) || OrbitFaceLogic.sentinelLow(sgv, ageMinutes) -> Block.LOW
+                FaceState.isLow(range) || (sgv > 0.0 && sgv <= OrbitFaceLogic.SENTINEL_LOW_MGDL) -> Block.LOW
                 OrbitFaceLogic.fastFall(slopeArrow, deltaMgdl)                         -> Block.FALLING_FAST
                 else                                                                   -> Block.NONE
             }
@@ -226,6 +227,16 @@ class QuickBolusPicker(
             )
             val ageMin = FaceState.ageMinutes(bg.timeStamp, now)
             return Snapshot(input, block(bg.sgv, bg.sgvLevel, bg.slopeArrow, bg.deltaMgdl, ageMin))
+        }
+
+        /**
+         * The phone's max bolus for the "max X U" line: rounded DOWN to 0.01 U, one decimal when that is exact
+         * ("max 1,45 U", "max 2,0 U"), so it never reads higher than the value the guard compares with.
+         */
+        fun maxBolusText(maxBolus: Double, locale: Locale): String {
+            val cents = kotlin.math.floor(maxBolus * 100.0 + 1e-6).toLong()
+            return if (cents % 10L == 0L) String.format(locale, "%.1f", cents / 100.0)
+            else String.format(locale, "%.2f", cents / 100.0)
         }
 
         /** "0,5" / "1,0" / "1,5" with the watch locale's decimal separator. */

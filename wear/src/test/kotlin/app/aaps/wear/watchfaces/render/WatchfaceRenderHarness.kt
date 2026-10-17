@@ -412,6 +412,8 @@ class WatchfaceRenderHarness {
         PickerState("normal_3", allow15 = true, data = pickerIn),
         PickerState("over_max_3", allow15 = true, maxBolus = 1.0, data = pickerIn),
         PickerState("over_max_2", maxBolus = 0.5, data = pickerIn),
+        // max bolus 1,45: the line reads "max 1,45 U" (never rounded up to 1,5 next to a struck 1,5)
+        PickerState("over_max_145", allow15 = true, maxBolus = 1.45, data = pickerIn),
         PickerState("urgent_low", allow15 = true) { now -> data(now, 2.9, "\u21ca", "-0.6", -1, ageMin = 1, st = status(now, iob = "0.40")) },
         PickerState("low", allow15 = true) { now -> data(now, 3.6, "→", "-0.1", -1, ageMin = 1, st = status(now, iob = "0.40")) },
         PickerState("falling_fast", allow15 = true) { now -> data(now, 8.2, "\u21ca", "-0.6", 0, ageMin = 1) },

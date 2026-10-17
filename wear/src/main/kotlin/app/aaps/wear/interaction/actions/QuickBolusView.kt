@@ -13,6 +13,7 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import app.aaps.wear.R
 import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.interaction.actions.QuickBolusPicker.Phase
@@ -102,6 +103,11 @@ class QuickBolusView(context: Context) : View(context) {
     var onAmount: ((Double) -> Unit)? = null
     var onClose: (() -> Unit)? = null
     var onAnyTouch: (() -> Unit)? = null
+    /** The picker's input lock (a DOWN while it runs never becomes a tap, even if it lifts later). */
+    var isInputLocked: () -> Boolean = { false }
+
+    private val touch = QuickBolusTouch()
+    private val touchSlopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -126,13 +132,24 @@ class QuickBolusView(context: Context) : View(context) {
 
     // ---------------------------------------------------------------- drawing
 
-    override fun onDraw(canvas: Canvas) {
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        layoutGrid()
+    }
+
+    /** The 450 px design grid, centred in the view (touch uses it too, also before the first draw). */
+    private fun layoutGrid() {
         val w = width.toFloat()
         val h = height.toFloat()
         val side = min(w, h)
+        if (side <= 0f) return
         scale = side / 450f
         offX = (w - side) / 2f
         offY = (h - side) / 2f
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        layoutGrid()
         canvas.drawColor(Color.BLACK)
         val s = screen ?: return
         canvas.save()
@@ -216,7 +233,8 @@ class QuickBolusView(context: Context) : View(context) {
             val label = QuickBolusPicker.amountText(b.amount, locale)
             val is15 = abs(b.amount - 1.5) < 1e-6
             when {
-                chosen                       -> drawChosen(canvas, x, label, s.phase == Phase.WAITING)
+                chosen && s.phase == Phase.NO_ANSWER -> drawFailed(canvas, x, label)
+                chosen                       -> drawChosen(canvas, x, label, spinning = true)
                 waiting                      -> drawDim(canvas, x, label)
                 b.enabled                    -> drawActive(canvas, x, label, is15, if (s.inputLocked) LOCKED_ALPHA else 255)
                 else                         -> drawOff(canvas, x, label, is15, strike = b.overMax)
@@ -235,8 +253,9 @@ class QuickBolusView(context: Context) : View(context) {
         setStroke(2.5f, withAlpha(Color.WHITE, IDLE_RING_ALPHA * alpha / 255))
         canvas.drawCircle(x, BUTTON_Y, r - 1.25f, stroke)
         if (is15) {
-            // 1,5: a second, outer ring (shape, not colour: never amber)
-            setStroke(2.5f, withAlpha(OUTER_15, alpha))
+            // 1,5: a second, outer ring (shape, not colour: never amber), thin and grey, quieter than the buttons'
+            // own ring so the largest dose never looks selected or focused
+            setStroke(1.5f, withAlpha(OUTER_15, OUTER_15_ALPHA * alpha / 255))
             canvas.drawCircle(x, BUTTON_Y, r + OUTER_15_GAP, stroke)
         }
         drawAmount(canvas, x, label, withAlpha(Color.WHITE, alpha), withAlpha(BOLUS_TEXT, alpha))
@@ -251,7 +270,7 @@ class QuickBolusView(context: Context) : View(context) {
         canvas.drawCircle(x, BUTTON_Y, r - 1f, stroke)
         stroke.pathEffect = null
         if (is15) {
-            setStroke(1.5f, withAlpha(OUTER_15, 70))
+            setStroke(1.5f, withAlpha(OUTER_15, OUTER_15_ALPHA / 2))
             canvas.drawCircle(x, BUTTON_Y, r + OUTER_15_GAP, stroke)
         }
         if (strike) {
@@ -287,6 +306,18 @@ class QuickBolusView(context: Context) : View(context) {
             canvas.drawArc(rect, spinnerDeg, 110f, false, stroke)
         }
         drawAmount(canvas, x, label, Color.WHITE, Color.WHITE)
+    }
+
+    /** NO_ANSWER: the sent amount, dimmed (not live, not tappable) with an amber outline as the "Keine Antwort" line. */
+    private fun drawFailed(canvas: Canvas, x: Float, label: String) {
+        val r = BUTTON_R
+        setFill(DIM_FILL)
+        canvas.drawCircle(x, BUTTON_Y, r, fill)
+        setStroke(2f, withAlpha(TXT3, 160))
+        canvas.drawCircle(x, BUTTON_Y, r - 1f, stroke)
+        setStroke(2.5f, withAlpha(AMBER, 200))
+        canvas.drawCircle(x, BUTTON_Y, r + SPIN_GAP, stroke)
+        drawAmount(canvas, x, label, TXT3, TXT3)
     }
 
     private fun drawAmount(canvas: Canvas, x: Float, label: String, colour: Int, unitColour: Int) {
@@ -325,7 +356,7 @@ class QuickBolusView(context: Context) : View(context) {
         }
         drawCloseButton(canvas)
         val max = if (s.maxBolus.isNaN()) labels.maxUnknown
-        else String.format(locale, labels.maxFormat, QuickBolusPicker.amountText(s.maxBolus, locale))
+        else String.format(locale, labels.maxFormat, QuickBolusPicker.maxBolusText(s.maxBolus, locale))
         drawText(canvas, max, CX, MAX_Y, 17f, tf500, TXT3)
     }
 
@@ -370,24 +401,51 @@ class QuickBolusView(context: Context) : View(context) {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val s = screen ?: return true
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) onAnyTouch?.invoke()
-        if (event.actionMasked != MotionEvent.ACTION_UP) return true
-        val x = (event.x - offX) / max(scale, 0.01f)
-        val y = (event.y - offY) / max(scale, 0.01f)
-        hit(s, x, y)
+        val sc = max(scale, 0.01f)
+        val x = (event.x - offX) / sc
+        val y = (event.y - offY) / sc
+        val slop = touchSlopPx / sc
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN         -> {
+                onAnyTouch?.invoke()
+                touch.down(targetAt(s, x, y), x, y, locked = isInputLocked())
+            }
+
+            MotionEvent.ACTION_MOVE         -> touch.move(x, y, slop)
+            MotionEvent.ACTION_POINTER_DOWN,
+            MotionEvent.ACTION_CANCEL       -> touch.cancel()
+
+            MotionEvent.ACTION_UP           -> fire(s, touch.up(targetAt(s, x, y), x, y, slop))
+        }
         return true
     }
 
-    /** A tap at design coordinates ([x], [y]): an amount button, the close button or nothing. */
-    fun hit(s: QuickBolusPicker.Screen, x: Float, y: Float) {
-        val n = s.buttons.size
-        s.buttons.forEachIndexed { i, b ->
-            if (hypot(x - buttonX(i, n), y - BUTTON_Y) <= BUTTON_R + HIT_PAD) {
-                onAmount?.invoke(b.amount)
-                return
-            }
+    /** Runs the callback of a decided tap ([QuickBolusTouch.up]). */
+    private fun fire(s: QuickBolusPicker.Screen, target: Int) {
+        when {
+            target == QuickBolusTouch.CLOSE -> onClose?.invoke()
+            target >= 0 && target < s.buttons.size -> onAmount?.invoke(s.buttons[target].amount)
         }
-        if (s.phase == Phase.CHOOSING && hypot(x - CX, y - CLOSE_Y) <= CLOSE_HIT_R) onClose?.invoke()
+    }
+
+    /** What lies under design coordinates ([x], [y]): an amount index, [QuickBolusTouch.CLOSE] or [QuickBolusTouch.NONE]. */
+    fun targetAt(s: QuickBolusPicker.Screen, x: Float, y: Float): Int {
+        val n = s.buttons.size
+        for (i in 0 until n) if (hypot(x - buttonX(i, n), y - BUTTON_Y) <= BUTTON_R + HIT_PAD) return i
+        if (s.phase == Phase.CHOOSING && hypot(x - CX, y - CLOSE_Y) <= closeHitR()) return QuickBolusTouch.CLOSE
+        return QuickBolusTouch.NONE
+    }
+
+    /** The × hit radius in design px: the family's 24 dp touch radius (never below [CLOSE_HIT_R], never into the buttons). */
+    fun closeHitR(): Float {
+        val dp = CLOSE_HIT_DP * resources.displayMetrics.density / max(currentScale(), 0.01f)
+        return min(max(CLOSE_HIT_R, dp), CLOSE_HIT_MAX)
+    }
+
+    /** The design-to-view scale, also before the first draw. */
+    private fun currentScale(): Float {
+        val side = min(width, height).toFloat()
+        return if (side > 0f) side / 450f else scale
     }
 
     // ---------------------------------------------------------------- paint helpers
@@ -457,10 +515,14 @@ class QuickBolusView(context: Context) : View(context) {
         const val HIT_PAD = 4f
         const val LINE1_Y = 324f
         const val LINE2_Y = 352f
-        const val CLOSE_Y = 384f
-        const val CLOSE_R = 21f
+        const val CLOSE_Y = 387f
+        const val CLOSE_R = 24f
         const val CLOSE_HIT_R = 30f
-        const val MAX_Y = 422f
+        /** The family's minimum touch radius (as Orbit's ball). */
+        const val CLOSE_HIT_DP = 24f
+        /** Stays clear of the amount buttons' hit circles (they end at y 300). */
+        const val CLOSE_HIT_MAX = 80f
+        const val MAX_Y = 425f
         const val MAX_LINE_W = 330f
 
         private const val BG_SIZE = 46f
@@ -490,7 +552,9 @@ class QuickBolusView(context: Context) : View(context) {
         private const val CHOSEN_FILL = 0xFF6A76FF.toInt()
         private const val BOLUS_TEXT = 0xFFE8EBFF.toInt()
         private const val INDIGO = 0xFF7888FF.toInt()
-        private const val OUTER_15 = 0xFFE8EBFF.toInt()
+        /** The 1,5 button's second ring: grey (txt3) at about 70 %, 1.5 px; quieter than the buttons' white ring. */
+        private const val OUTER_15 = 0xFF6F7A99.toInt()
+        private const val OUTER_15_ALPHA = 180
         private const val DISABLED_FILL = 0xFF12152A.toInt()
         private const val DIM_FILL = 0xFF161A33.toInt()
         private const val DIM_TEXT = 0xFF3C4466.toInt()
