@@ -57,7 +57,21 @@ object GlassFaceLogic {
      * Status slot / footer: widest line. UX round 3: the footer sits at y 406 (the content block moved down off the
      * system status icon), where the chord at the cap bottom is about 239 px on the 450 grid.
      */
-    const val FOOTER_MAX_WIDTH = 236f
+    /**
+     * Glass/Orbit UX round 1: the footer moves up to y 394 and its width is the chord at its cap bottom less a 16 px
+     * margin to the round edge on each side (the Watch5 Pro's raised bezel shades the outer 1 mm; at 236 px the "%"
+     * ended 6 px from the edge). See [chordWidth].
+     */
+    const val FOOTER_Y = 394f
+    const val EDGE_MARGIN = 16f
+    const val FOOTER_MAX_WIDTH = 216f
+
+    /** Width of the screen chord at [y] (450 grid) less [margin] to the round edge on each side. */
+    fun chordWidth(y: Float, margin: Float = EDGE_MARGIN): Float {
+        val r = 225f - margin
+        val dy = y - 225f
+        return if (abs(dy) >= r) 0f else 2f * kotlin.math.sqrt(r * r - dy * dy)
+    }
 
     /**
      * Footer text size and the floor a W1-W6 owner text may shrink to before it is ellipsised (UX round 3: 22/18 ->
@@ -600,7 +614,7 @@ object GlassFaceLogic {
     const val BALL_Y = 324f
     const val BALL_R = 28f
 
-    /** Pill row band (UX round 4: borderless, text centred at y 364). */
+    /** Pill row band (UX round 4: borderless; Glass/Orbit UX round 1: text centred at y 360). */
     const val PILL_Y0 = 350f
 
     /** Hit-area clips: 2 px under the card, 8 px left of the graph (which starts at [SPARK_X0_BALL]). */
@@ -680,14 +694,14 @@ object GlassFaceLogic {
     fun loopLabelAllowed(health: LoopHealth): Boolean = health != LoopHealth.OPEN
 
     /** Pill row width budget on the 450 grid (the chord at the pill row's lower edge less the rounded ends). */
-    const val PILL_ROW_MAX_WIDTH = 320f
+    const val PILL_ROW_MAX_WIDTH = 296f // Glass/Orbit UX round 1: 320 -> 296, x 77..373 (16 px from the edge at y 372)
 
     /**
      * UX round 4: with the ball shown the pill row moves right of its hit area: x 140..392 (the chord at the row's
      * lower edge), centred at 266.
      */
     const val PILL_ROW_BALL_X0 = SPARK_X0_BALL
-    const val PILL_ROW_BALL_X1 = 392f
+    const val PILL_ROW_BALL_X1 = 372f // Glass/Orbit UX round 1: 392 -> 372, 16 px from the round edge (the harness checks 14)
 
     /** (centre, max width) of the pill row with or without the ball. */
     fun pillRowFrame(ballShown: Boolean): Pair<Float, Float> =

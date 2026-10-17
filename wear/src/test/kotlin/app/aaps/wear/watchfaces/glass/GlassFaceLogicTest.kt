@@ -406,10 +406,11 @@ class GlassFaceLogicTest {
     }
 
     @Test fun footerMaxWidthFitsTheChordAtTheFooter() {
-        // UX round 3: footer centre y 406, 26 px (cap bottom about y 416): the chord there is about 238 px
-        val capBottom = 406f + 0.36f * GlassFaceLogic.FOOTER_SIZE
-        val chord = 2f * kotlin.math.sqrt(225f * 225f - (capBottom - 225f) * (capBottom - 225f))
-        assertThat(GlassFaceLogic.FOOTER_MAX_WIDTH).isAtMost(chord)
+        // Glass/Orbit UX round 1: footer centre y 394, 26 px (cap bottom about y 403): the chord there less 16 px to the
+        // round edge on each side is about 217 px (at 236 px the "%" ended 6 px from the edge)
+        val capBottom = GlassFaceLogic.FOOTER_Y + 0.36f * GlassFaceLogic.FOOTER_SIZE
+        assertThat(GlassFaceLogic.FOOTER_MAX_WIDTH).isAtMost(GlassFaceLogic.chordWidth(capBottom, 16f))
+        assertThat(GlassFaceLogic.chordWidth(225f, 16f)).isEqualTo(418f)
         // warnings stay 22 px or larger (a 1.2 mm cap height on the Watch5 Pro)
         assertThat(GlassFaceLogic.FOOTER_MIN_SIZE).isAtLeast(22f)
         assertThat(GlassFaceLogic.FOOTER_SIZE).isAtLeast(26f)
@@ -424,7 +425,9 @@ class GlassFaceLogicTest {
 
     @Test fun longOwnerTextShrinksToTheFloorThenEllipsises() {
         // real German / French status texts at a worst-case 10 px per character (at FOOTER_SIZE)
-        for (s in listOf("Telefon getrennt · 23 Std", "Keine Daten · 3 Std", "Téléphone déconnecté · 23 h", "Pas de données · 23 h", "Boucle désactivée")) {
+        // Glass/Orbit UX round 1: the footer budget is the bezel-safe chord (216 px); the French "Téléphone déconnecté ·
+        // 23 h" (270 px) is now cut at the 22 px floor, its age kept (see below)
+        for (s in listOf("Telefon getrennt · 23 Std", "Keine Daten · 3 Std", "Pas de données · 23 h", "Boucle désactivée")) {
             val (size, drawn, width) = fitOwner(s)
             assertThat(size).isAtLeast(GlassFaceLogic.FOOTER_MIN_SIZE)
             assertThat(width).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH + 0.01f)
@@ -432,9 +435,12 @@ class GlassFaceLogicTest {
         }
         // "Kein Profil" = 110 px: full size
         assertThat(fitOwner("Kein Profil").first).isEqualTo(GlassFaceLogic.FOOTER_SIZE)
-        // "Téléphone déconnecté · 23 h" = 270 px: shrinks, above the floor
-        assertThat(fitOwner("Téléphone déconnecté · 23 h").first)
-            .isWithin(0.01f).of(GlassFaceLogic.FOOTER_SIZE * GlassFaceLogic.FOOTER_MAX_WIDTH / 270f)
+        // "Telefon getrennt · 23 Std" = 250 px: shrinks, above the floor
+        assertThat(fitOwner("Telefon getrennt · 23 Std").first)
+            .isWithin(0.01f).of(GlassFaceLogic.FOOTER_SIZE * GlassFaceLogic.FOOTER_MAX_WIDTH / 250f)
+        val fr = fitOwner("Téléphone déconnecté · 23 h")
+        assertThat(fr.second).endsWith(" · 23 h")
+        assertThat(fr.first).isEqualTo(GlassFaceLogic.FOOTER_MIN_SIZE)
         // a translation far too long: the floor, then "…"
         val long = "Téléphone déconnecté depuis longtemps · 23 h"
         val (size, drawn, width) = fitOwner(long)
@@ -699,11 +705,14 @@ class GlassFaceLogicTest {
     }
 
     @Test fun pillRowMovesRightOfTheBall() {
-        // UX round 4: without the ball centred at 225 (320 px); with it right of the hit area, to the chord at x 392
+        // UX round 4: without the ball centred at 225 (320 px); with it right of the hit area, to the bezel-safe chord
         assertThat(GlassFaceLogic.pillRowFrame(ballShown = false)).isEqualTo(225f to GlassFaceLogic.PILL_ROW_MAX_WIDTH)
         val (c, w) = GlassFaceLogic.pillRowFrame(ballShown = true)
         assertThat(c - w / 2f).isAtLeast(GlassFaceLogic.BALL_HIT_RIGHT + 8f)
-        assertThat(c + w / 2f).isAtMost(392f)
+        // Glass/Orbit UX round 1: both ends 16 px or more inside the round edge at the row's lower edge (y 372)
+        val half = GlassFaceLogic.chordWidth(372f, 16f) / 2f
+        assertThat(c + w / 2f).isAtMost(225f + half)
+        assertThat(GlassFaceLogic.PILL_ROW_MAX_WIDTH / 2f).isAtMost(half)
     }
 
     @Test fun predictionsSuppressed() {

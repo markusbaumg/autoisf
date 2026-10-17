@@ -261,7 +261,6 @@ class GlassWatchface : WatchFace() {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val dash35 = DashPathEffect(floatArrayOf(3f, 5f), 0f)
     private val dash24 = DashPathEffect(floatArrayOf(2f, 4f), 0f)
     private val dash65 = DashPathEffect(floatArrayOf(6f, 5f), 0f)
     private val rect = RectF()
@@ -621,20 +620,19 @@ class GlassWatchface : WatchFace() {
         metaDeltaW = if (showDelta) text.measureText(deltaText) else 0f
         metaSepW = if (showDelta && showAge) text.measureText(META_SEP) else 0f
         var total = metaDeltaW + metaSepW + if (showAge) text.measureText(ageText) else 0f
-        // UX round 4: the TIEF/HOCH pill sits right-aligned in the chip column, the delta line centres in the space
-        // left of it (never under the comma of the larger digits)
+        // Glass/Orbit UX round 1: the delta line and the TIEF/HOCH pill are ONE group centred on the dial (with the
+        // pill right-aligned the line jumped sideways exactly when the BG went low or very high)
         val capW = if (captionText.isNotEmpty()) captionPillWidth() else 0f
-        captionX = HERO_X1 - HERO_PAD - capW / 2f
-        val left = HERO_X0 + HERO_PAD
-        val right = if (capW > 0f) HERO_X1 - HERO_PAD - capW - CAPTION_GAP else HERO_X1 - HERO_PAD
-        metaSize = maxOf(META_MIN_SIZE, GlassFaceLogic.fitSize(META_SIZE, total, right - left))
+        val capGap = if (capW > 0f && total > 0f) CAPTION_GAP else 0f
+        val avail = HERO_X1 - HERO_X0 - 2f * HERO_PAD - capW - capGap
+        metaSize = maxOf(META_MIN_SIZE, GlassFaceLogic.fitSize(META_SIZE, total, avail))
         val k = metaSize / META_SIZE
         metaDeltaW *= k
         metaSepW *= k
         total *= k
         metaWidth = total
-        val centre = if (capW > 0f) (left + right) / 2f else hero.metaCentreX
-        metaX = centre - total / 2f
+        metaX = hero.metaCentreX - (total + capGap + capW) / 2f
+        captionX = metaX + total + capGap + capW / 2f
     }
 
     private var captionX = 0f
@@ -899,8 +897,12 @@ class GlassWatchface : WatchFace() {
         }, aa = true)
         if (link == PhoneLink.LOST_FRESH) drawPhoneOff(canvas, min(metaX + metaWidth + 20f, HERO_X1 - 20f), hero.metaY, TXT2)
 
-        // sparkline (UX round 4: no band fill, the two dashed range lines frame it)
-        drawSparkGuides(canvas, withAlpha(Color.WHITE, 46), withAlpha(Color.WHITE, 60), aa = true)
+        // sparkline (Glass/Orbit UX round 1): the target range as a solid band (1.5:1 on black, the dotted guides
+        // vanished in sunlight), green only while in range, neutral grey otherwise; 1 px edges
+        val inBand = range == Range.IN
+        fill.reset(); fill.isAntiAlias = true; fill.color = if (inBand) BAND_IN else BAND_OUT
+        canvas.drawRect(sparkX0, highY, sparkEndX, lowY, fill)
+        drawSparkGuides(canvas, if (inBand) withAlpha(GREEN_BAND_EDGE, 89) else BAND_OUT_EDGE, withAlpha(Color.WHITE, 60), aa = true)
         if (hasHistory) {
             line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE
             line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = 3f
@@ -1035,11 +1037,10 @@ class GlassWatchface : WatchFace() {
         }
     }
 
-    /** Target band dashes and, only when a forecast follows it, the dotted now line (without, now is the plot's edge). */
+    /** Target band edges (solid 1 px) and, only when a forecast follows it, the dotted now line (without, now is the plot's edge). */
     private fun drawSparkGuides(canvas: Canvas, bandColour: Int, nowColour: Int, aa: Boolean) {
         line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE; line.strokeWidth = 1f
         line.color = bandColour
-        line.pathEffect = dash35
         canvas.drawLine(sparkX0, lowY, sparkEndX, lowY, line)
         canvas.drawLine(sparkX0, highY, sparkEndX, highY, line)
         if (sparkForecast) {
@@ -1242,18 +1243,18 @@ class GlassWatchface : WatchFace() {
         drawCentred(canvas, amountText, bx, by - 4f, tf700, BALL_AMOUNT_SIZE, textColour)
         when {
             armed                   -> {
-                setText(tf600, BALL_SUB_SIZE, true, Paint.Align.CENTER)
-                text.textSize = GlassFaceLogic.fitSize(BALL_SUB_SIZE, text.measureText(againText), 2f * r - 6f)
-                text.color = Color.WHITE
-                canvas.drawText(againText, bx, baseline(by + 14f), text)
+                // Glass/Orbit UX round 1: a confirm tick ("tap again to send") instead of "nochmal", which did not fit
+                // the ball at the 18 px floor and touched the countdown ring
+                stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 2.6f
+                stroke.color = Color.WHITE; stroke.strokeCap = Paint.Cap.ROUND; stroke.strokeJoin = Paint.Join.ROUND
+                canvas.drawLine(bx - 8f, by + 12f, bx - 2.5f, by + 17f, stroke)
+                canvas.drawLine(bx - 2.5f, by + 17f, bx + 8f, by + 7f, stroke)
             }
 
             ball == BallState.SENT  -> drawCentred(canvas, "…", bx, by + 14f, tf700, BALL_SUB_SIZE, withAlpha(BALL_UNIT_COL, 191))
             else                    -> drawCentred(canvas, "U", bx, by + 14f, tf600, BALL_SUB_SIZE, if (disabled) TXT3 else BALL_UNIT_COL)
         }
     }
-
-    private val againText by lazy { getString(R.string.halo_bolus_again) }
 
     private fun drawAmbient(canvas: Canvas) {
         val lowBit = lowBitAmbient
@@ -1649,7 +1650,7 @@ class GlassWatchface : WatchFace() {
         private const val META_MIN_SIZE = 24f
         private const val META_SEP = " · "
         // UX round 4: borderless pills (text 26 px, units 20 px), a dot in the 22 px gap
-        private const val PILL_Y = 364f
+        private const val PILL_Y = 360f // Glass/Orbit UX round 1: 4 px up, 11 px or more above the raised footer
         private const val PILL_PAD = 4f
         private const val PILL_GAP = 22f
         private const val PILL_INNER_GAP = 7f
@@ -1667,7 +1668,7 @@ class GlassWatchface : WatchFace() {
         /** Flavour effects (flavor.client / flavor.pumpcontrol): no predictions; pumpcontrol has no loop pill. */
         private val IS_PUMPCONTROL = BuildConfig.FLAVOR == "pumpcontrol"
         private val IS_CLIENT = BuildConfig.FLAVOR.startsWith("aapsclient")
-        private const val FOOTER_Y = 406f
+        private const val FOOTER_Y = GlassFaceLogic.FOOTER_Y
         private const val FOOTER_SEP = "  ·  "
         private const val BALL_BOX = 44f
         private const val RING_R = 32f
@@ -1676,6 +1677,11 @@ class GlassWatchface : WatchFace() {
         private val BG_CENTRE = 0xFF0D101C.toInt()
         private val BG_MID = 0xFF06070D.toInt()
         private val IN_COL = 0xFF3DDC97.toInt()
+        /** Sparkline target band (Glass/Orbit UX round 1): solid, 1.5:1 on black in range, neutral grey out of range. */
+        private const val BAND_IN = 0xFF12301F.toInt()
+        private const val BAND_OUT = 0xFF1A1E25.toInt()
+        private const val BAND_OUT_EDGE = 0xFF2E343E.toInt()
+        private const val GREEN_BAND_EDGE = 0xFF3DDC97.toInt()
         private val HIGH_COL = 0xFFFFB547.toInt()
         private val LOW_COL = 0xFFFF5A6E.toInt()
         private val LOW_TEXT_COL = 0xFFFFD6DC.toInt()

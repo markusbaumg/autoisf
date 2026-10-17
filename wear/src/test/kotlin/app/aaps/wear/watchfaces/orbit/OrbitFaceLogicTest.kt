@@ -290,10 +290,11 @@ class OrbitFaceLogicTest {
     @Test fun basalBall() {
         assertThat(OrbitFaceLogic.basalBall("0,85 U/h", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("0,85", "U/h", Ring.NEUTRAL))
         assertThat(OrbitFaceLogic.basalBall("0.85 U/h", tbrHint = false).value).isEqualTo("0.85")
-        assertThat(OrbitFaceLogic.basalBall("0,00 U/h", tbrHint = true)).isEqualTo(OrbitFaceLogic.Ball("0,00", "TBR", Ring.AMBER))
+        // an absolute TBR keeps its unit (the ring / value colour marks the TBR); only a "%" rate is labelled TBR
+        assertThat(OrbitFaceLogic.basalBall("0,00 U/h", tbrHint = true)).isEqualTo(OrbitFaceLogic.Ball("0,00", "U/h", Ring.AMBER))
         // basal.zero_abs without a known TBR still deserves attention
         assertThat(OrbitFaceLogic.basalBall("0,00 U/h", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("0,00", "U/h", Ring.AMBER))
-        assertThat(OrbitFaceLogic.basalBall("1,20 U/h", tbrHint = true)).isEqualTo(OrbitFaceLogic.Ball("1,20", "TBR", Ring.TEAL))
+        assertThat(OrbitFaceLogic.basalBall("1,20 U/h", tbrHint = true)).isEqualTo(OrbitFaceLogic.Ball("1,20", "U/h", Ring.TEAL))
         // basal.tbr_percent: a "%" rate is a TBR even without the treatment hint
         assertThat(OrbitFaceLogic.basalBall("120%", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("120%", "TBR", Ring.TEAL))
         assertThat(OrbitFaceLogic.basalBall("0%", tbrHint = false).ring).isEqualTo(Ring.AMBER)
@@ -337,7 +338,7 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.cobBall("0g", en).label).isEqualTo("COB")
         // spec v2: COB > 0 is neutral, not amber
         assertThat(OrbitFaceLogic.cobBall("12g", de).ring).isEqualTo(Ring.NEUTRAL)
-        assertThat(OrbitFaceLogic.cobBall("20(30)g", de)).isEqualTo(OrbitFaceLogic.Ball("20(30)g", "KH", Ring.NEUTRAL))
+        assertThat(OrbitFaceLogic.cobBall("20(30)g", de)).isEqualTo(OrbitFaceLogic.Ball("20g", "KH", Ring.NEUTRAL))
         assertThat(OrbitFaceLogic.cobBall("--g", de)).isEqualTo(OrbitFaceLogic.Ball("--", "KH", Ring.DIM))
         assertThat(OrbitFaceLogic.ttBall("8,0", 2)).isEqualTo(OrbitFaceLogic.Ball("8,0", "TT", Ring.VIOLET))
         assertThat(OrbitFaceLogic.ttBall("4,4 - 5,0", 2)!!.value).isEqualTo("4,4-5,0")
@@ -437,8 +438,10 @@ class OrbitFaceLogicTest {
         // UX round 3: satellites and the round bolus button keep 20 px (1.5 mm) to the raised bezel
         assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R).isAtMost(225f - 20f)
         assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BOLUS_HALF).isAtMost(225f - 20f)
-        // the satellites cover the track (they sit on it)
-        assertThat(OrbitFaceLogic.ORBIT_R).isLessThan(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R)
+        // Glass/Orbit UX round 1: the satellites sit ON the orbit (the ring breaks around them)
+        assertThat(OrbitFaceLogic.SAT_R).isEqualTo(OrbitFaceLogic.ORBIT_R)
+        // the date on the ring at 6 o'clock keeps 16 px or more to the bezel (its cap bottom at about +0.36 em)
+        assertThat(225f - (OrbitFaceLogic.ORBIT_R + 0.36f * 24f)).isAtLeast(16f)
         // symmetric layout: LOOP/IOB and COB/BASAL mirror each other, TT and the bolus button are the 3/9 o'clock pair
         assertThat(OrbitFaceLogic.DEG_LOOP + OrbitFaceLogic.DEG_IOB).isEqualTo(360f)
         assertThat(OrbitFaceLogic.DEG_COB + OrbitFaceLogic.DEG_BASAL).isEqualTo(360f)
@@ -478,19 +481,25 @@ class OrbitFaceLogicTest {
     }
 
     @Test fun gapWidths() {
-        // "00:40" at 30 px is about 80 px wide -> (80 + 16) / 2 / 192 rad = 14.3 deg (text width ±8 px)
-        assertThat(OrbitFaceLogic.gapHalfDeg(80f)).isWithin(0.1f).of(14.32f)
+        // an 80 px text -> (80 + 16) / 2 / 172 rad = 16.0 deg (text width ±8 px)
+        assertThat(OrbitFaceLogic.gapHalfDeg(80f)).isWithin(0.1f).of(15.99f)
         assertThat(OrbitFaceLogic.gapHalfDeg(400f)).isEqualTo(OrbitFaceLogic.MAX_GAP_DEG)
-        assertThat(180f - OrbitFaceLogic.MAX_GAP_DEG).isGreaterThan(OrbitFaceLogic.DEG_BASAL + OrbitFaceLogic.BALL_HALF_DEG)
+        // the date gap never runs into the break of the 4 and 8 o'clock satellites
+        assertThat(180f - OrbitFaceLogic.MAX_GAP_DEG).isGreaterThan(OrbitFaceLogic.DEG_BASAL + OrbitFaceLogic.BALL_GAP_DEG)
+        // the ring stops 8 px before a satellite's shell: chord(gap) = BALL_R + GAP_MARGIN
+        val chord = 2f * OrbitFaceLogic.ORBIT_R * kotlin.math.sin(Math.toRadians(OrbitFaceLogic.BALL_GAP_DEG / 2.0)).toFloat()
+        assertThat(chord).isWithin(0.01f).of(OrbitFaceLogic.BALL_R + OrbitFaceLogic.GAP_MARGIN)
     }
 
     @Test fun worstCaseWidths() {
         // ball value: 24 px up to 60 px, 19 px bold beyond, shrink when even that is too wide
         assertThat(OrbitFaceLogic.ballValueSize(50f)).isEqualTo(24f)
         assertThat(OrbitFaceLogic.ballValueSize(70f)).isEqualTo(19f)
-        val tiny = OrbitFaceLogic.ballValueSize(110f)
-        assertThat(tiny).isLessThan(19f)
-        assertThat(110f * tiny / 24f).isWithin(0.01f).of(OrbitFaceLogic.BALL_VALUE_HARD_MAX)
+        val small = OrbitFaceLogic.ballValueSize(80f)
+        assertThat(small).isLessThan(19f)
+        assertThat(80f * small / 24f).isWithin(0.01f).of(OrbitFaceLogic.BALL_VALUE_HARD_MAX)
+        // never below the family's 18 px floor
+        assertThat(OrbitFaceLogic.ballValueSize(110f)).isEqualTo(OrbitFaceLogic.MIN_TEXT_PX)
         // the hero group (BG + glyph) never reaches the 3 o'clock TT ball
         assertThat(OrbitFaceLogic.CX + OrbitFaceLogic.HERO_GROUP_MAX / 2f)
             .isLessThan(OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_TT) - OrbitFaceLogic.BALL_R)
@@ -518,7 +527,7 @@ class OrbitFaceLogicTest {
             // the conservative estimate may step "6,4" + arrow down two steps (the real Roboto width keeps 116 or more)
             assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("6,4", 108f), true)).isAtLeast(OrbitFaceLogic.HERO_SIZE - 8f)
             // ball values: "20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "Offen"
-            for (v in listOf("20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "0,85", "Offen", "2 Std")) {
+            for (v in listOf("120g", "12,40", "-0,35", "120%", "0,85", "Offen", "2 Std")) {
                 val size = OrbitFaceLogic.ballValueSize(OrbitFaceLogic.estimateWidth(v, 24f))
                 assertThat(OrbitFaceLogic.estimateWidth(v, size)).isAtMost(OrbitFaceLogic.BALL_VALUE_HARD_MAX + 0.01f)
                 assertThat(size * s).isAtLeast(11f)
@@ -570,7 +579,24 @@ class OrbitFaceLogicTest {
         val loop = OrbitFaceLogic.moon(49, gapT, gapD, false, shown)
         assertThat(loop.kind).isEqualTo(MoonKind.RIM)
         assertThat(loop.ball).isEqualTo(OrbitFaceLogic.IDX_LOOP)
-        assertThat(OrbitFaceLogic.BALL_OCCLUDE_DEG).isWithin(0.1f).of(10.0f)
+        assertThat(OrbitFaceLogic.BALL_OCCLUDE_DEG).isWithin(0.1f).of(13.36f)
+    }
+
+    @Test fun dateLineWithTempTarget() {
+        val m: (String) -> Float = { OrbitFaceLogic.estimateWidth(it, 24f) }
+        assertThat(OrbitFaceLogic.dateLine("Sa 17. Okt", null, 24f, 20f, 196f, m)).isEqualTo("Sa 17. Okt" to "")
+        assertThat(OrbitFaceLogic.dateLine("Sa 17. Okt", "5,5", 24f, 20f, 196f, m)).isEqualTo("Sa 17. Okt · " to "TT 5,5")
+        // a range does not fit next to the date at 20 px: the TT replaces the date
+        assertThat(OrbitFaceLogic.dateLine("Sa 17. Okt", "5,0-6,0", 24f, 20f, 196f, m)).isEqualTo("" to "TT 5,0-6,0")
+        assertThat(OrbitFaceLogic.dateLine("", "5,5", 24f, 20f, 196f, m)).isEqualTo("" to "TT 5,5")
+    }
+
+    @Test fun loopPillFoldsIntoTheSatelliteNextToACaption() {
+        val loop = OrbitFaceLogic.Slot(6, "Loop 23′", OrbitFaceLogic.Tone.ALERT)
+        assertThat(OrbitFaceLogic.foldLoopPill(loop, captionInDelta = true, loopBallShown = true)).isTrue()
+        assertThat(OrbitFaceLogic.foldLoopPill(loop, captionInDelta = false, loopBallShown = true)).isFalse()
+        assertThat(OrbitFaceLogic.foldLoopPill(loop, captionInDelta = true, loopBallShown = false)).isFalse()
+        assertThat(OrbitFaceLogic.foldLoopPill(OrbitFaceLogic.Slot(8, "Reservoir 5 U", OrbitFaceLogic.Tone.ALERT), true, true)).isFalse()
     }
 
     @Test fun angleDiffWraps() {
@@ -582,21 +608,19 @@ class OrbitFaceLogicTest {
     // ------------------------------------------------------------ sparkline
 
     @Test fun sparkline() {
-        assertThat(OrbitFaceLogic.sparkY(45.0)).isEqualTo(OrbitFaceLogic.SPARK_Y_BOTTOM)
-        assertThat(OrbitFaceLogic.sparkY(252.0)).isEqualTo(OrbitFaceLogic.SPARK_Y_TOP)
+        // log scale 40..400 mg/dL: urgent lows and very highs stay inside the plot
+        assertThat(OrbitFaceLogic.sparkY(40.0)).isEqualTo(OrbitFaceLogic.SPARK_Y_BOTTOM)
         assertThat(OrbitFaceLogic.sparkY(400.0)).isEqualTo(OrbitFaceLogic.SPARK_Y_TOP)
+        assertThat(OrbitFaceLogic.sparkY(500.0)).isEqualTo(OrbitFaceLogic.SPARK_Y_TOP)
         assertThat(OrbitFaceLogic.sparkY(20.0)).isEqualTo(OrbitFaceLogic.SPARK_Y_BOTTOM)
-        assertThat(OrbitFaceLogic.sparkY(252.0, OrbitFaceLogic.SPARK_Y_TOP_PILL, OrbitFaceLogic.SPARK_Y_BOTTOM_PILL)).isEqualTo(OrbitFaceLogic.SPARK_Y_TOP_PILL)
+        assertThat(OrbitFaceLogic.sparkY(54.0)).isLessThan(OrbitFaceLogic.SPARK_Y_BOTTOM - 5f)
+        assertThat(OrbitFaceLogic.sparkY(400.0, OrbitFaceLogic.SPARK_Y_TOP_PILL, OrbitFaceLogic.SPARK_Y_BOTTOM_PILL)).isEqualTo(OrbitFaceLogic.SPARK_Y_TOP_PILL)
         // the 10 mmol/L (180 mg/dL) high line sits at about 35 % from the top
         val f = (OrbitFaceLogic.sparkY(180.0) - OrbitFaceLogic.SPARK_Y_TOP) / (OrbitFaceLogic.SPARK_Y_BOTTOM - OrbitFaceLogic.SPARK_Y_TOP)
         assertThat(f).isWithin(0.02f).of(0.35f)
         assertThat(OrbitFaceLogic.sparkClamp(30.0)).isEqualTo(-1)
-        assertThat(OrbitFaceLogic.sparkClamp(300.0)).isEqualTo(1)
+        assertThat(OrbitFaceLogic.sparkClamp(500.0)).isEqualTo(1)
         assertThat(OrbitFaceLogic.sparkClamp(120.0)).isEqualTo(0)
-        // one chevron per clamped run (no sawtooth): runs end at a different clamp, a gap break or the last reading
-        val clamps = intArrayOf(0, 1, 1, 1, 0, -1, -1, 1, 1)
-        val breaks = BooleanArray(clamps.size).also { it[0] = true; it[3] = true }
-        assertThat(OrbitFaceLogic.clampMarks(clamps, breaks)).containsExactly(2, 3, 6, 8).inOrder()
         assertThat(OrbitFaceLogic.sparkX(now, now)).isEqualTo(OrbitFaceLogic.SPARK_X_NOW)
         assertThat(OrbitFaceLogic.sparkX(now - OrbitFaceLogic.SPARK_HISTORY_MS, now)).isWithin(0.01f).of(OrbitFaceLogic.SPARK_X0)
         assertThat(OrbitFaceLogic.predictionX(5)).isWithin(0.01f).of(OrbitFaceLogic.SPARK_X1)

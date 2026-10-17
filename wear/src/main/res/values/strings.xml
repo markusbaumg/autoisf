@@ -262,7 +262,7 @@
     <string name="orbit_hours">%1$d h</string>
     <string name="orbit_days">%1$d d</string>
     <string name="orbit_waiting">Waiting for AAPS</string>
-    <string name="orbit_phone_lost">Phone disconnected · %1$s</string>
+    <string name="orbit_phone_lost">Phone lost · %1$s</string>
     <string name="orbit_no_data">No data · %1$s</string>
     <string name="orbit_no_profile">No profile</string>
     <string name="orbit_loop_off">Loop off</string>

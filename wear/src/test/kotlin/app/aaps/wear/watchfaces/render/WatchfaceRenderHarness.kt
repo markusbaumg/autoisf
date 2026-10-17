@@ -34,6 +34,7 @@ import app.aaps.wear.watchfaces.orbit.OrbitWatchface
 import app.aaps.wear.watchfaces.utils.SimpleUi
 import app.aaps.wear.watchfaces.utils.WatchFace
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -223,6 +224,7 @@ class WatchfaceRenderHarness {
         assumeTrue("set -PwatchfaceRenderOut=<dir> to render", out != null)
         out!!
         val states = states()
+        val edgeHits = ArrayList<String>()
         for (face in Face.entries) {
             val dir = File(out, face.id).apply { mkdirs() }
             val rendered = ArrayList<Pair<String, Bitmap>>()
@@ -230,9 +232,29 @@ class WatchfaceRenderHarness {
                 val bmp = render(face, s)
                 FileOutputStream(File(dir, "${s.id}.png")).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 rendered += s.id to bmp
+                edgeHit(bmp)?.let { edgeHits += "${face.id}/${s.id}: $it" }
             }
             writeSheet(face, rendered, File(out, "${face.id}_sheet.png"))
         }
+        // Glass/Orbit UX round 1: no drawn content (text, glyphs) within 14 px of the round edge (450 grid), where the
+        // Watch5 Pro's raised bezel shades it. Checked after all renders are written, so a failure still leaves them.
+        assertTrue("content within $EDGE_MARGIN_PX px of the bezel:\n" + edgeHits.joinToString("\n"), edgeHits.isEmpty())
+    }
+
+    /**
+     * First bright pixel (any channel > [EDGE_LEVEL]) closer than [EDGE_MARGIN_PX] (scaled from the 450 grid) to the
+     * round edge, as "(x,y) d px", or null. The faint background glow stays below the level.
+     */
+    private fun edgeHit(bmp: Bitmap): String? {
+        val r = bmp.width / 2f
+        val margin = EDGE_MARGIN_PX * bmp.width / 450f
+        for (y in 0 until bmp.height) for (x in 0 until bmp.width) {
+            val d = kotlin.math.hypot(x + 0.5f - r, y + 0.5f - r)
+            if (d < r - margin || d > r - 1f) continue
+            val c = bmp.getPixel(x, y)
+            if (maxOf(Color.red(c), Color.green(c), Color.blue(c)) > EDGE_LEVEL) return "($x,$y) ${"%.1f".format(r - d)} px from the edge"
+        }
+        return null
     }
 
     // ------------------------------------------------------------------ rendering
@@ -418,3 +440,6 @@ class WatchfaceRenderHarness {
         private val SHOWN_TIME: ZonedDateTime = ZonedDateTime.of(2026, 10, 17, 14, 27, 0, 0, ZONE)
     }
 }
+
+private const val EDGE_MARGIN_PX = 14f
+private const val EDGE_LEVEL = 110
