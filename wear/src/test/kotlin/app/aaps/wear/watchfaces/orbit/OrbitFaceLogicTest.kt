@@ -518,6 +518,37 @@ class OrbitFaceLogicTest {
         }
     }
 
+    @Test fun planetOrbsKeepClear() {
+        // variant planets (experimental): the orbs sit on the ring beside their values, symmetric and collision free
+        val o = OrbitFaceLogic
+        fun x(i: Int) = o.pointX(o.ORBIT_R, o.ORB_DEGS[i])
+        fun y(i: Int) = o.pointY(o.ORBIT_R, o.ORB_DEGS[i])
+        val sats = intArrayOf(o.IDX_LOOP, o.IDX_IOB, o.IDX_BASAL, o.IDX_COB)
+        // mirror symmetric: LOOP / IOB and KH / BASAL
+        assertThat(x(o.IDX_LOOP) + x(o.IDX_IOB)).isWithin(0.01f).of(2f * o.CX)
+        assertThat(y(o.IDX_LOOP)).isWithin(0.01f).of(y(o.IDX_IOB))
+        assertThat(o.ORB_R[o.IDX_LOOP]).isGreaterThan(o.ORB_R[o.IDX_COB])
+        for (i in sats) {
+            val r = o.ORB_R[i]
+            // 6 px or more to its own and every other value disc (r BALL_R around the text)
+            for (j in sats) {
+                val d = kotlin.math.hypot(x(i) - o.pointX(o.SAT_R, o.BALL_DEGS[j]), y(i) - o.pointY(o.SAT_R, o.BALL_DEGS[j]))
+                assertThat(d - r - o.BALL_R).isAtLeast(6f)
+            }
+            // 8 px or more to the bolus button at 9 o'clock and the TT position at 3 o'clock
+            for (deg in floatArrayOf(o.DEG_BOLUS, o.DEG_TT)) {
+                val d = kotlin.math.hypot(x(i) - o.pointX(o.SAT_R, deg), y(i) - o.pointY(o.SAT_R, deg))
+                assertThat(d - r - o.BOLUS_HALF).isAtLeast(8f)
+            }
+            // glow-free black margin of 20 px or more to the display edge
+            assertThat(o.ORBIT_R + r).isAtMost(205f)
+            // the widest hero (200 px), delta row and chart stay inside x 125..325: 40 px or more to every orb
+            assertThat(kotlin.math.abs(x(i) - o.CX) - r - o.HERO_MAX_WIDTH / 2f).isAtLeast(40f)
+            // the orb sits on a drawn part of the ring, outside its value's break
+            assertThat(kotlin.math.abs(o.angleDiff(o.ORB_DEGS[i], o.BALL_DEGS[i]))).isGreaterThan(o.BALL_GAP_DEG)
+        }
+    }
+
     @Test fun gapWidths() {
         // an 80 px text -> (80 + 16) / 2 / 170 rad = 16.2 deg (text width ±8 px; Glass/Orbit UX round 4: orbit r 170)
         assertThat(OrbitFaceLogic.gapHalfDeg(80f)).isWithin(0.1f).of(16.18f)

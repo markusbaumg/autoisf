@@ -28,12 +28,15 @@ object OrbitFaceLogic {
      * EXPERIMENTAL (temporary): Orbit design variants, switched at compile time so each can be rendered by the
      * harness. [Variant.CLASSIC] is the UX round 6 face (labels around a thin ring); [Variant.DISCS] brings back the
      * signature status balls: four softly lit discs at 10:30 / 1:30 / 4:30 / 7:30 on the orbit, the bolus ball at 9.
+     * [Variant.PLANETS] keeps the classic text layout and adds glowing orbs ON a brighter orbit ring, each beside its
+     * value (toward 3 / 9 o'clock), the ring lit in the orb's colour around it; LOOP / IOB orbs are larger.
      */
-    enum class Variant { CLASSIC, DISCS }
+    enum class Variant { CLASSIC, DISCS, PLANETS }
 
     /** The variant this build draws. */
-    val VARIANT: Variant = Variant.DISCS
+    val VARIANT: Variant = Variant.PLANETS
     val DISCS: Boolean get() = VARIANT == Variant.DISCS
+    val PLANETS: Boolean get() = VARIANT == Variant.PLANETS
 
     const val CX = 225f
     const val CY = 225f
@@ -101,6 +104,19 @@ object OrbitFaceLogic {
     const val IDX_BASAL = 2
     const val IDX_COB = 3
     const val IDX_TT = 4
+
+    /**
+     * Variant planets: each orb sits on the ring [PLANET_OFFSET_DEG] from its value, toward 3 / 9 o'clock (the
+     * 12 / 6 o'clock sides hold the time, the date and the warning pill). The TT has no orb (it lives in the date line).
+     */
+    const val PLANET_OFFSET_DEG = 19f
+    val ORB_DEGS = floatArrayOf(
+        DEG_LOOP - PLANET_OFFSET_DEG, DEG_IOB + PLANET_OFFSET_DEG, DEG_BASAL - PLANET_OFFSET_DEG, DEG_COB + PLANET_OFFSET_DEG, DEG_TT
+    )
+    /** Orb radii by importance: LOOP / IOB 14, BASAL / KH 11 (TT never draws one). */
+    val ORB_R = floatArrayOf(14f, 14f, 11f, 11f, 0f)
+    /** Half span (deg) of the lit ring segment around an orb. */
+    const val ORB_RING_LIT_DEG = 14f
 
     /** bgAge thresholds (states.md §1) in minutes since the last BG. */
     const val AGING_FROM_MIN = FaceState.AGING_MIN        // age label amber
