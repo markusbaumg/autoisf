@@ -58,3 +58,17 @@ No changes to dosing math, limits or constraints. Phone and watch APKs must be i
   6ff302f5638b25502a0434554b64099ff735380d914a279857dfd2bbcd4b166b (apksigner 36.0.0).
 - app-full-release.apk sha256 4484d059e8968dca89fb2796e5c34329bd4827d86cf2865d2f586915d7af509c
 - wear-full-release.apk sha256 3871db09f8ab5aa2e9c42f991c604e8660409f172667bc59808b56ed9e7fc667
+
+## 2026-10-17 – polish round (branch feature/kusi/watchface-polish, 08d4637cd7)
+
+- **Orbit** redesigned: ring close to the bezel, status discs with depth (LOOP, IOB, KH, U/h, TT), delta and age back,
+  loop stopped = solid red disc with ⚠ plus "⚠ Loop 23'" word, armed ball "+0,5 nochmal" (no "2×"). Panel 8.5 / 8.6 / 8.5.
+- **Glass**: smaller BG with room in its card, new sparkline (target band, clear now dot), low values on a fixed
+  40 .. low+50 window so 3,5 / 2,6 / 2,2 stay apart even after a meal peak. Panel 7.4 → fixed / 8.5 / 8.6.
+- **Confirm screen** (watch bolus/carbs/wizard): big amount, effect ≈ BG drop (dose × profile ISF), IOB now → after,
+  carbs covered (dose × IC), timing, warnings in words (show only, slider unchanged). Panel 8.6 ×3. Needs phone+watch
+  as a matched pair (EventData ConfirmAction.details).
+- Settings screen: checkboxes visible again (the bolus-request toggle was invisible).
+- Battery: the watch no longer asks all 16 complications to update on every reading (was 32 broadcasts/min).
+- Safety: confirm details read the profile ISF without running AutoISF (no loop-input side effect); trend only for a
+  current reading. Renders: `renders/polish-2026-10-17/`.
