@@ -99,6 +99,9 @@ class WatchfaceRenderHarness {
 
     // ------------------------------------------------------------------ data
 
+    /** States in which Orbit drew no date (must stay empty). */
+    private val dateMisses = ArrayList<String>()
+
     /** Locale of the phone that "sent" the data of the state being rendered (German: decimal comma). */
     private var phoneGerman = true
 
@@ -239,6 +242,7 @@ class WatchfaceRenderHarness {
         // Glass/Orbit UX round 1: no drawn content (text, glyphs) within 14 px of the round edge (450 grid), where the
         // Watch5 Pro's raised bezel shades it. Checked after all renders are written, so a failure still leaves them.
         assertTrue("content within $EDGE_MARGIN_PX px of the bezel:\n" + edgeHits.joinToString("\n"), edgeHits.isEmpty())
+        assertTrue("no date drawn in:\n" + dateMisses.joinToString("\n"), dateMisses.isEmpty())
     }
 
     /**
@@ -314,6 +318,8 @@ class WatchfaceRenderHarness {
         }
         frame()
         frame()
+        // Glass/Orbit UX round 5 (time/date in every state): Orbit draws the date line in every state
+        if (wf is OrbitWatchface && wf.drawnDateText.isBlank()) dateMisses += "orbit/${s.id}"
         roundMask(bmp)
         return bmp
     }
