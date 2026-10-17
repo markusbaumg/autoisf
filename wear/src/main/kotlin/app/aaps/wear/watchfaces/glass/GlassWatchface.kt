@@ -454,7 +454,7 @@ class GlassWatchface : WatchFace() {
         timePaint.typeface = tf400
         timePaint.textSize = TIME_SIZE
         val timeW = timePaint.measureText(timeText)
-        setText(tf500, 17f)
+        setText(tf500, AM_PM_SIZE)
         val amPmW = amPmText?.let { AM_PM_GAP + text.measureText(it) } ?: 0f
         timeX = CX - (timeW + amPmW) / 2f
         amPmX = timeX + timeW + AM_PM_GAP
@@ -859,7 +859,7 @@ class GlassWatchface : WatchFace() {
         val y = timeY - (fm.ascent + fm.descent) / 2f
         canvas.drawText(timeText, timeX, y, timePaint)
         amPmText?.let {
-            setText(tf500, 17f, aa)
+            setText(tf500, AM_PM_SIZE, aa)
             text.color = suffixColour
             canvas.drawText(it, amPmX, y, text)
         }
@@ -930,7 +930,7 @@ class GlassWatchface : WatchFace() {
         }
 
         // pills (UX round 4: borderless, separated by dots like the footer: one rhythm for the lower stack)
-        drawPillSeparators(canvas, TXT3, aa = true)
+        drawPillSeparators(canvas, TXT2, aa = true) // rework: TXT3 dots were too faint to separate the values
         drawPillContents(canvas, ambient = false, lowBit = false)
 
         // footer = status slot
@@ -1170,7 +1170,7 @@ class GlassWatchface : WatchFace() {
         runs.forEachIndexed { i, run ->
             if (i >= xs.size) return@forEachIndexed
             if (i > 0) {
-                text.color = if (lowBit) Color.WHITE else if (ambient) A_TXT3 else TXT3
+                text.color = if (lowBit) Color.WHITE else if (ambient) A_TXT2 else TXT2
                 canvas.drawText(FOOTER_SEP, xs[i - 1] + text.measureText(runs[i - 1].text), y, text)
             }
             text.color = when {
@@ -1301,7 +1301,7 @@ class GlassWatchface : WatchFace() {
         }
 
         // pills: borderless as in interactive
-        drawPillSeparators(canvas, c(A_TXT3), aa)
+        drawPillSeparators(canvas, c(A_TXT2), aa)
         drawPillContents(canvas, ambient = true, lowBit = lowBit)
 
         drawFooter(canvas, footerAmbient, footerAmbientX, footerAmbientSize, ambient = true, aa = aa)
@@ -1418,10 +1418,11 @@ class GlassWatchface : WatchFace() {
         if (r == Range.LOW || r == Range.URGENT_LOW) {
             // UX round 4 (P0 contrast): red digits on a red bloom measured 2.0-2.6:1. The bloom under the digits stays
             // at or below 20 % and the hue moves to a glow along the card rim (digits now about 3.5:1 or better).
-            blob(c, p, 110f, 112f, 340f, 284f, withAlpha(colour, (40 * k).toInt()), 40f)
-            p.reset(); p.isAntiAlias = true; p.style = Paint.Style.STROKE; p.strokeWidth = 14f
+            // Glass rework (P0, measured on the renders): the digits must reach 4.5:1 on every pixel around them, so
+            // the interior bloom is gone and the rim glow is a thin band that stays outside the 16 px digit margin.
+            p.reset(); p.isAntiAlias = true; p.style = Paint.Style.STROKE; p.strokeWidth = 6f
             p.color = withAlpha(colour, (150 * k).toInt())
-            p.maskFilter = BlurMaskFilter(10f * 1.73f, BlurMaskFilter.Blur.NORMAL)
+            p.maskFilter = BlurMaskFilter(5f * 1.73f, BlurMaskFilter.Blur.NORMAL)
             c.drawRoundRect(HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, HERO_R, p)
             p.maskFilter = null
         } else {
@@ -1437,7 +1438,9 @@ class GlassWatchface : WatchFace() {
         p.strokeWidth = 1f
         p.color = withAlpha(Color.WHITE, 22)
         c.drawCircle(CX, CX, 225f - 3f, p)
-        glass(c, p, HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, 35, 11, 60, 100)
+        // low cards: a darker pane (less white lift behind the red digits)
+        if (r == Range.LOW || r == Range.URGENT_LOW) glass(c, p, HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, 16, 6, 60, 90)
+        else glass(c, p, HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, 35, 11, 60, 100)
         return bmp
     }
 
@@ -1620,6 +1623,8 @@ class GlassWatchface : WatchFace() {
         private const val TIME_Y_NO_DATE = 80f
         private const val TIME_SIZE = 40f
         private const val AM_PM_GAP = 4f
+        /** 12 h suffix: at the 18 px text floor (was 17). */
+        private const val AM_PM_SIZE = 18f
         private const val DATE_Y = 97f
         private const val DATE_SIZE = 24f
         /** Physical text floor (Halo's [app.aaps.wear.watchfaces.halo.HaloLayout.MIN_TEXT_PX]): 384 px screens keep it. */
@@ -1644,7 +1649,7 @@ class GlassWatchface : WatchFace() {
         private const val META_MIN_SIZE = 24f
         private const val META_SEP = " · "
         // UX round 4: borderless pills (text 26 px, units 20 px), a dot in the 22 px gap
-        private const val PILL_Y = 362f
+        private const val PILL_Y = 364f
         private const val PILL_PAD = 4f
         private const val PILL_GAP = 22f
         private const val PILL_INNER_GAP = 7f

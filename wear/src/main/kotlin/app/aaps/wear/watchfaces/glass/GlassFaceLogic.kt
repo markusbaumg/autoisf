@@ -166,8 +166,10 @@ object GlassFaceLogic {
      * word moved to the delta line, so the digits get 216 px; without the chip the full inner card width (12 px padding).
      * UX round 4: 128 -> 150 px (about 107 px cap height, the digits fill about two thirds of the card), 240 px next to
      * the chip, 300 px without it (the card widened to x 63..387).
+     * Glass rework: 150 -> 134 px (about 95 px cap height, Halo's scale; 107 px read "too big"), with 16 px of glass
+     * above the cap so the digits no longer touch the card's top edge or its rim glow.
      */
-    const val BG_SIZE = 150f
+    const val BG_SIZE = 134f
     const val BG_SIZE_STEP = 2f
     const val BG_MIN_SIZE = 80f
     const val BG_MAX_WIDTH = 240f
@@ -489,9 +491,9 @@ object GlassFaceLogic {
      */
     const val SPARK_X0 = 70f
     const val SPARK_X0_BALL = 140f
-    const val SPARK_Y0 = 292f
+    const val SPARK_Y0 = 294f
     const val SPARK_X1 = 380f
-    const val SPARK_Y1 = 340f
+    const val SPARK_Y1 = 342f
     const val SPARK_INSET = 4f
     const val SPARK_HISTORY = 36
     const val SPARK_TOTAL = 48
@@ -591,18 +593,18 @@ object GlassFaceLogic {
 
     /**
      * UX round 2: docked at the left end of the sparkline band (the plot starts right of it).
-     * UX round 4: (90, 322), 10 px under the card, 30 px or more from the bezel; its hit area reaches 78 px down from
+     * UX round 4: (90, 322); Glass rework (92, 324), 10 px under the card, 30 px or more from the bezel; its hit area reaches 78 px down from
      * the card to the bezel and 88 px across, the pill row moves right of it.
      */
-    const val BALL_X = 90f
-    const val BALL_Y = 322f
+    const val BALL_X = 92f
+    const val BALL_Y = 324f
     const val BALL_R = 28f
 
-    /** Pill row band (UX round 4: borderless, text centred at y 362). */
-    const val PILL_Y0 = 348f
+    /** Pill row band (UX round 4: borderless, text centred at y 364). */
+    const val PILL_Y0 = 350f
 
     /** Hit-area clips: 2 px under the card, 8 px left of the graph (which starts at [SPARK_X0_BALL]). */
-    const val BALL_HIT_TOP = 286f
+    const val BALL_HIT_TOP = 288f
     const val BALL_HIT_RIGHT = 132f
 
     /** Hit radius on the 450 grid at xhdpi: 48 px = 24 dp, the family's 48 dp target (the face scales it to stay 24 dp). */
@@ -621,21 +623,23 @@ object GlassFaceLogic {
     /**
      * UX round 3: the card is y 120..274 (the time and date moved below the system status icon).
      * UX round 4: x 63..387, y 116..284 for the 150 px digits; the delta line at y 266, about 8 px under the comma.
+     * Glass rework: y 120..286 (14 px under the date); 134 px digits with the cap from y 133 to the baseline at 228,
+     * the chip centred on the cap (y 180), the delta line at y 268: 10 px between the comma's tail and the delta.
      */
     const val HERO_X0 = 63f
     const val HERO_X1 = 387f
-    const val HERO_Y0 = 116f
-    const val HERO_Y1 = 284f
-    const val META_Y = 266f
+    const val HERO_Y0 = 120f
+    const val HERO_Y1 = 286f
+    const val META_Y = 268f
 
     /** Trend chip column (UX round 4: r 18 -> 24). */
     const val CHIP_X = 352f
     const val CHIP_R = 24f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
-        showChip  -> if (metaEmpty) HeroLayout(198f, 202f, BG_MAX_WIDTH, 200f, 225f, META_Y) else HeroLayout(198f, 178f, BG_MAX_WIDTH, 176f, 225f, META_Y)
-        metaEmpty -> HeroLayout(225f, 202f, BG_MAX_WIDTH_NO_CHIP, 200f, 225f, META_Y)
-        else      -> HeroLayout(225f, 178f, BG_MAX_WIDTH_NO_CHIP, 176f, 225f, META_Y)
+        showChip  -> if (metaEmpty) HeroLayout(198f, 205f, BG_MAX_WIDTH, 203f, 225f, META_Y) else HeroLayout(198f, 182f, BG_MAX_WIDTH, 180f, 225f, META_Y)
+        metaEmpty -> HeroLayout(225f, 205f, BG_MAX_WIDTH_NO_CHIP, 203f, 225f, META_Y)
+        else      -> HeroLayout(225f, 182f, BG_MAX_WIDTH_NO_CHIP, 180f, 225f, META_Y)
     }
 
     /**
