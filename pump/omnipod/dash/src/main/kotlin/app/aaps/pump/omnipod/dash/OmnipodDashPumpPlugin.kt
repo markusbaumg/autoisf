@@ -777,7 +777,7 @@ class OmnipodDashPumpPlugin @Inject constructor(
             } catch (e: Exception) {
                 errorGettingStatus = e
                 aapsLogger.debug(LTag.PUMP, "waitForBolusDeliveryToComplete errorGettingStatus=$errorGettingStatus")
-                Thread.sleep(BOLUS_RETRY_INTERVAL_MS) // retry every 3 sec
+                Thread.sleep(BOLUS_RETRY_INTERVAL_MS) // retry every 2 sec
             }
             if (errorGettingStatus != null) {
                 return@forEach
@@ -790,11 +790,13 @@ class OmnipodDashPumpPlugin @Inject constructor(
                 val percent = ((requestedBolusAmount - remainingUnits) / requestedBolusAmount) * 100
                 rxBus.send(EventOverviewBolusProgress(rh, percent = percent.toInt()))
 
-                val sleepSeconds = if (bolusCanceled)
+                // BOLUS_RETRY_INTERVAL_MS is already milliseconds: multiplied by 1000 as well, a
+                // cancelled bolus waited 2000 s before the next status read (upstream f1ef21e29d)
+                val sleepMillis = if (bolusCanceled)
                     BOLUS_RETRY_INTERVAL_MS
                 else
-                    estimateBolusDeliverySeconds(remainingUnits)
-                Thread.sleep(sleepSeconds * 1000.toLong())
+                    estimateBolusDeliverySeconds(remainingUnits) * 1000L
+                Thread.sleep(sleepMillis)
             } else {
                 // delivery is complete. If pod is Kaput, we are handling this in getPodStatus
                 return@defer Single.just(podStateManager.lastBolus!!.deliveredUnits()!!)
