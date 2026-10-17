@@ -10,7 +10,6 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.WeekFields
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.atan
 import kotlin.math.max
 import kotlin.math.min
 
@@ -41,17 +40,29 @@ object OrbitFaceLogic {
      * the track. The orbit moves in 170 -> 163 so every disc's outer edge keeps [BEZEL_MARGIN] (6 % of the screen:
      * 23 px at 384, 29 px at 480) to the glass edge, at every screen size and burn-in shift.
      */
-    const val ORBIT_R = 163f
-    const val SAT_R = ORBIT_R
+    /**
+     * Orbit discs round 2 (owner: "too flat, the total width, the poles and the discs are not visible"): the orbit uses
+     * the whole dial again (r 195, 30 px from the glass edge) and the discs ride on it just inside the line (centres on
+     * r 175): their outer edge keeps [BEZEL_MARGIN] to the glass edge (the render harness's 14 px no-content band), so
+     * the ring runs through the outer third of every disc and reads as the axis they are threaded on.
+     */
+    /**
+     * Orbit discs round 3 (review: disc values too small for arm's length): r 35 -> 39 discs on r 171, so the outer edge
+     * keeps [BEZEL_MARGIN] and the values reach 28 px.
+     */
+    const val ORBIT_R = 195f
+    const val SAT_R = 171f
 
-    /** Orbit discs round 1: minimum distance of a disc's outer edge to the bezel (6 % of the 450 grid, 27 px). */
-    const val BEZEL_MARGIN = 27f
+    /** Orbit discs round 2: minimum distance of a disc's outer edge to the bezel (the 14 px no-content band + 1). */
+    const val BEZEL_MARGIN = 15f
+    /** Orbit discs round 2: AOD disc centres, 6 px in, so the outlines keep [BEZEL_MARGIN] under the burn-in shift. */
+    const val AMB_SAT_R = SAT_R - 6f
     /**
      * Glass/Orbit UX round 4: r 32 -> 35 (a 70 px disc, 5.4 mm): at 32 the two-line "LOOP" label was cut by the dashed
      * ring (the chord at the label was only 55 px; now 64). The orbit moves in 2 px (172 -> 170) so the discs keep the
      * 20 px (1.5 mm) to the raised bezel.
      */
-    const val BALL_R = 35f
+    const val BALL_R = 39f
 
     /**
      * Glass/Orbit UX round 2: the bolus button at 9 o'clock 32 -> 28 px, one rank below the four satellites (at 32 it
@@ -65,10 +76,17 @@ object OrbitFaceLogic {
      * Orbit discs round 1: the bolus button is one step larger than the status discs (r 37) and carries a persistent
      * halo ring [BOLUS_HALO_GAP] px outside it, so it never reads as a fifth status value.
      */
-    const val BOLUS_HALF = BALL_R + 2f
-    const val BOLUS_HALO_GAP = 4f
-    /** Outer radius of the bolus button including its halo ring (the track breaks around it). */
-    const val BOLUS_OUTER = BOLUS_HALF + BOLUS_HALO_GAP + 1f
+    /**
+     * Orbit discs round 3 (review: the glass bolus ball read as a fifth status disc): a solid indigo button of r 40 with
+     * a white ring (no glass light, no halo ring), one step larger than the r 39 discs.
+     */
+    const val BOLUS_HALF = 40f
+    /** Outer radius of the bolus button (its white ring sits inside [BOLUS_HALF]; 1.5 px anti-alias / shadow air). */
+    const val BOLUS_OUTER = BOLUS_HALF + 1.5f
+    /** Orbit discs round 2: the larger bolus button (with its halo) sits on r 168, so it keeps [BEZEL_MARGIN] too. */
+    const val BOLUS_R = 225f - BEZEL_MARGIN - BOLUS_OUTER
+    val BOLUS_X: Float get() = pointX(BOLUS_R, DEG_BOLUS)
+    val BOLUS_Y: Float get() = pointY(BOLUS_R, DEG_BOLUS)
 
     /** Hit circle radius around the bolus button centre (spec §4.12): 48 px = 24 dp at xhdpi, the family target. */
     const val BOLUS_HIT_R = 48f
@@ -156,19 +174,30 @@ object OrbitFaceLogic {
      * stacks the date above it ([DATE_STACK_Y]), so the chart ends 8 px higher.
      */
     /** Glass/Orbit UX round 6: x 140..310, y 304..348, shorter and lower (less of a dashboard box). */
-    /** Orbit discs round 1: x 157..293, 12 px clear of the KH / basal discs at 7:30 / 4:30 on the r 163 orbit. */
-    const val SPARK_X0 = 157f
-    const val SPARK_X_NOW = 273f
-    const val SPARK_X1 = 293f
-    const val SPARK_Y_TOP = 304f
-    const val SPARK_Y_BOTTOM = 348f
+    /** Orbit discs round 2: x 150..300 (150 px), 12 px or more clear of the KH / basal discs over its whole height. */
+    /**
+     * Orbit discs round 3: x 158..292, y 310..350: 12 px or more clear of the larger r 39 KH / basal discs, 10 px or
+     * more under a HOCH / TIEF pill on the delta row. The chart is hidden while a W4-W9 pill holds the bottom.
+     */
+    const val SPARK_X0 = 158f
+    const val SPARK_X_NOW = 274f
+    const val SPARK_X1 = 292f
+    const val SPARK_Y_TOP = 310f
+    const val SPARK_Y_BOTTOM = 350f
 
     /**
      * Delta row centre and the pill row under it (its own row, 8 px or more below the delta baseline: never over the
      * delta). UX round 2: delta 22 -> 26 px, pills 28 -> 32 px tall with 22 px text, the row 12 px below the delta.
      */
-    const val DELTA_ROW_Y = 276f // Glass/Orbit UX round 1: 266 -> 276 under the 128 px hero
-    const val DELTA_SIZE = 26f
+    /**
+     * Orbit discs round 3 (review: the arrow beside the BG pointed straight into the TT disc at 3 o'clock and pushed the
+     * digits onto the bolus button): the trend arrow leads the delta row, as on Halo ("→ +0,1 · 2′"); the BG digits
+     * stand alone, centred. [DELTA_ARROW_W] is the arrow box, [DELTA_ARROW_GAP] the space before the delta.
+     */
+    const val DELTA_ARROW_W = 30f
+    const val DELTA_ARROW_GAP = 10f
+    const val DELTA_ROW_Y = 282f // Orbit discs round 2: 276 -> 282 under the 140 px hero
+    const val DELTA_SIZE = 30f // Orbit discs round 2: 26 -> 30 (Halo M: 32), the second reading after the BG
 
     /**
      * Glass/Orbit UX round 2: a W4-W9 pill (and a TIEF/HOCH caption that cannot sit on the delta row) takes the date's
@@ -178,52 +207,63 @@ object OrbitFaceLogic {
      * Glass/Orbit UX round 5 (time/date in every state): the W4-W9 pill sits on the ring at 6 o'clock 5 px low and the
      * date (with its TT) moves up to [DATE_STACK_Y] above it instead of disappearing.
      */
-    const val SLOT_Y = CY + ORBIT_R + 5f
-    const val DATE_STACK_Y = 366f // Orbit discs round 1: 367 -> 366 with the pill row on the r 163 orbit
-    /** Height and text of the pill row at 6 o'clock (one step below the delta-row pill). */
-    const val ROW_PILL_H = 28f
-    const val ROW_PILL_TEXT = 20f
-
-    /** UX round 3: status pills 34 px tall with 25 px text (a 1.4 mm cap height: the face's only W-level message). */
-    const val SLOT_H = 34f
-    const val SLOT_TEXT = 25f
+    /**
+     * Orbit discs round 2: the date sits inside the orbit at the bottom ([DATE_Y]), the ring runs on under it. A W4-W9
+     * pill takes the date's place (the ring breaks around it) and the date stacks above it.
+     */
+    /**
+     * Orbit discs round 4 (review: the date touched the ring at 6 o'clock): 394 -> 382, the date line keeps
+     * [DATE_RING_CLEAR] to the ring's inner edge (descenders included) with no break in the ring, and it never moves:
+     * a W4-W9 warning takes the chart's slot instead ([ROW_Y]).
+     */
+    const val DATE_Y = 382f
+    /** Minimum distance between the date glyphs and the inner edge of the ring. */
+    const val DATE_RING_CLEAR = 6f
 
     /**
-     * UX round 3: a W1-W3 pill that replaces the delta row sits 6 px lower, so the comma tail of a struck "6,4" never
-     * touches it (Glass/Orbit UX round 2: 2 px higher, so the chart below stays in its one fixed box).
+     * Orbit discs round 4 (review: 13-14 px caps were too small for a safety message): every warning (W1-W9) is set as
+     * coloured words at 24 px semibold (a 17 px cap, as the TIEF / HOCH word), frameless as on Halo, with the alert
+     * triangle in front when it fits. Never shrunk below this size unless the text cannot fit at all.
      */
-    /** Glass/Orbit UX round 5: on the delta row itself (it replaces the delta), clear of the KH / basal discs. */
-    const val SLOT_IN_DELTA_Y = DELTA_ROW_Y + 8f // 8 px low: the comma tail of a struck 132 px "6,4" stays clear
-    const val SLOT_IN_DELTA_H = 32f
-    const val SLOT_IN_DELTA_TEXT = 22f
+    const val WARN_TEXT = 24f
+    /** Half the glyph box of a [WARN_TEXT] line above / below its centre (cap top; baseline plus descender). */
+    const val WARN_ABOVE = 11f
+    const val WARN_BELOW = 13.5f
+    /** Width of the alert triangle (17.5 px) and its gap before the words. */
+    const val WARN_ICON_W = 26f
 
     /**
-     * Rework: text budget of a W1-W3 pill in the delta row. At [SLOT_MAX_WIDTH] its rounded ends touched the 4 and 8
-     * o'clock satellites (0.7 px); 180 px keeps 8 px or more (the text shrinks to fit, the age is never cut).
+     * Orbit discs round 4: a W4-W9 warning (reservoir, phone battery, no profile) takes the chart's slot (the chart is
+     * hidden then); the date stays at 6 o'clock. Its words keep [WARN_DISC_CLEAR] to the KH / basal discs.
      */
-    const val SLOT_IN_DELTA_MAX_WIDTH = 164f // Glass/Orbit UX round 6: 172 -> 164, the pill clear of the KH value on the 384 px round. Glass/Orbit UX round 4: 180 -> 172 for the r 35 discs
+    const val ROW_Y = 320f // centred between the delta row and the date (312 read as a second delta line)
 
     /**
-     * Glass/Orbit UX round 5: the whole delta-row pill (text, icon, padding) is clamped to the horizontal gap between
-     * the KH and basal discs at the pill's lower edge minus [SAT_CLEAR] on each side.
+     * Glass/Orbit UX round 5: a W1-W3 warning sits on the delta row itself (it replaces the delta). Orbit discs round 4:
+     * 2 px above the delta row centre, so the 24 px words (with descenders) pass above the KH / basal discs.
      */
-    /** Orbit discs round 1: measured in 2D, from the pill's rounded end to the disc (the disc sits below the pill). */
-    fun slotInDeltaMaxPillWidth(): Float {
-        val capR = SLOT_IN_DELTA_H / 2f
-        val dy = pointY(SAT_R, DEG_BASAL) - SLOT_IN_DELTA_Y
-        val d = BALL_R + SAT_CLEAR + capR
-        val endX = if (abs(dy) >= d) pointX(SAT_R, DEG_BASAL) else pointX(SAT_R, DEG_BASAL) - kotlin.math.sqrt(d * d - dy * dy)
-        return 2f * (endX + capR - CX) - 0.1f // 0.1 px float headroom
+    const val SLOT_IN_DELTA_Y = DELTA_ROW_Y + 2f
+    const val WARN_DISC_CLEAR = 8f
+
+    /**
+     * Orbit discs round 4: the widest centred text line at [cy] (its glyph box [above] / [below] the centre) that keeps
+     * [clear] to the KH and basal discs, measured in 2D from the box corner to the disc; capped at [cap].
+     */
+    fun textLineMaxWidth(cy: Float, above: Float, below: Float, clear: Float = WARN_DISC_CLEAR, cap: Float = DELTA_ROW_MAX_WIDTH): Float {
+        val dx = pointX(SAT_R, DEG_BASAL)
+        val dy = pointY(SAT_R, DEG_BASAL)
+        val ny = dy.coerceIn(cy - above, cy + below)
+        val d = BALL_R + clear
+        val gap = abs(ny - dy)
+        if (gap >= d) return cap
+        return min(cap, 2f * (dx - kotlin.math.sqrt(d * d - gap * gap) - CX))
     }
-
-    /** Width of the pill row at 6 o'clock (its rounded ends keep 12 px or more to the bezel). */
-    const val PILL_ROW_MAX_WIDTH = 184f // Glass/Orbit UX round 6: 196 -> 184. Before: Glass/Orbit UX round 5: 216 -> 196, the row sits 5 px lower
 
     /**
      * UX round 3: the TIEF/HOCH caption follows the delta on the delta row (as Glass), 30 px tall, so a W4-W9 pill
      * gets the whole pill row (TIEF + "Telefon getrennt · 14′" side by side would not fit between the satellites).
      */
-    const val CAPTION_H = 30f
+    const val CAPTION_H = 32f // Orbit discs round 3: 30 -> 32 with the 24 px TIEF / HOCH word
     const val CAPTION_GAP = 10f
 
     /**
@@ -232,6 +272,11 @@ object OrbitFaceLogic {
      */
     const val TIME_Y = 76f
     const val TIME_SIZE = 38f
+    /**
+     * Orbit discs round 2: the time sits inside the r 195 orbit; the ring breaks only for the system status icon at 12
+     * o'clock (y 23-49 on the Watch5 Pro, about 30 px wide): +-12 deg is a 81 px opening.
+     */
+    const val TIME_GAP_DEG = 12f
     /** Default sparkline window (key_chart_time_frame, hours). */
     const val DEFAULT_TIME_FRAME_H = 3
     const val SPARK_HISTORY_MS = DEFAULT_TIME_FRAME_H * 60 * 60_000L
@@ -241,12 +286,24 @@ object OrbitFaceLogic {
     /** Width budgets (design px) for the worst-case text checks. */
     const val HERO_MAX_WIDTH = 200f
     /** Orbit discs round 1: 150, the stacked date (above a warning pill) keeps 8 px to the 4:30 / 7:30 discs. */
-    const val DATE_LINE_MAX_WIDTH = 150f
-    /** UX round 4: 212 -> 200, a HOCH/TIEF pill at the row's end keeps 20 px or more to the 4 and 8 o'clock satellites. */
-    const val DELTA_ROW_MAX_WIDTH = 200f
+    const val DATE_LINE_MAX_WIDTH = 146f // Orbit discs round 3: 150 -> 146, the stacked date keeps 8 px to the r 39 discs
 
-    /** UX round 3: 210 (was 230): a delta-row pill keeps clear of the 4 and 8 o'clock satellites. */
-    const val SLOT_MAX_WIDTH = 210f
+    /**
+     * Orbit discs round 4: the orbit ring's stroke (3.5 px, review: 2.5 px in grey tones vanished outdoors). It runs
+     * unbroken behind every disc and the bolus button; only the 12 o'clock break for the system icon remains.
+     */
+    const val TRACK_W = 3.5f
+
+    /** Inner edge of the ring (the date and every other text keep their clearance to this). */
+    const val RING_INNER_R = ORBIT_R - TRACK_W / 2f
+
+    /** Distance of a point to the ring's inner edge (positive inside). */
+    fun ringClear(x: Float, y: Float): Float = RING_INNER_R - kotlin.math.hypot(x - CX, y - CY)
+    /** UX round 4: 212 -> 200, a HOCH/TIEF pill at the row's end keeps 20 px or more to the 4 and 8 o'clock satellites. */
+    /** Orbit discs round 2: 220 with the discs further out (the row keeps 20 px or more to them). */
+    /** Orbit discs round 3: 250 with the arrow in the row (the row sits between the discs, clear of all of them). */
+    const val DELTA_ROW_MAX_WIDTH = 250f
+
 
     // ------------------------------------------------------------------ localised words
 
@@ -509,11 +566,12 @@ object OrbitFaceLogic {
      * LOOP ball. Loop off: amber ring, pause glyph, "AUS". Never looped: dashed grey "--" over "LOOP" (UX round 3: also
      * with pump data but no loop run; "Pumpe" read like a pump alarm). Otherwise the age coloured by health.
      */
+    /** Orbit discs round 3: loop off = pause glyph + "AUS" as the value over the "LOOP" label (says WHAT is off). */
     fun loopBall(
         openApsStatus: Long, externalStatus: String, iobSum: String, now: Long, labels: Labels, mode: LoopMode = LoopMode.UNKNOWN,
         realRun: Boolean = true
     ): Ball {
-        if (loopOff(externalStatus, iobSum)) return Ball("", labels.loopOffShort, Ring.AMBER, pause = true)
+        if (loopOff(externalStatus, iobSum)) return Ball(labels.loopOffShort, "LOOP", Ring.AMBER, pause = true)
         val age = loopAgeMinutes(openApsStatus, now)
         val health = loopHealth(age, realRun)
         // loop.open: neutral dashed loop.ok ring with "Offen"; the age is not an alarm
@@ -568,7 +626,11 @@ object OrbitFaceLogic {
      * floor competed with the values; the 4 o'clock rate and a "%" are self-evident). Only the unknown "--" keeps its
      * "U/h" label, so an empty satellite still says what is missing.
      */
-    const val BASAL_LABEL = "BASAL"
+    /**
+     * Orbit discs round 3 (review: "BAS" was cryptic): the absolute rate is labelled with its unit "U/h" (as Halo's
+     * "0,85 U/h"); a percent TBR keeps "TBR".
+     */
+    const val BASAL_LABEL = "U/h"
 
     fun basalBall(currentBasal: String, tbrHint: Boolean): Ball {
         val value = basalValue(currentBasal)
@@ -606,6 +668,7 @@ object OrbitFaceLogic {
     /**
      * Temp target active (level 2): violet "TT". Profile target, APS-adjusted or unknown: none (tt.profile).
      * Glass/Orbit UX round 1: drawn on the date line at 6 o'clock ([dateLine]), not as a 5th satellite (lopsided).
+     * Orbit discs round 2: a violet disc at 3 o'clock again (each disc one status; it pairs with the bolus button).
      */
     fun ttBall(tempTarget: String, tempTargetLevel: Int): Ball? {
         if (tempTargetLevel != 2) return null
@@ -622,10 +685,16 @@ object OrbitFaceLogic {
      * the disc's chord at their outer edge ([discTextMaxWidth]); a long value or label shrinks toward the floor, the
      * label first (a short label token, then no tracking), never the value below its floor.
      */
-    const val BALL_VALUE_SIZE = 22f
+    /** Orbit discs round 2: the value 22 -> 24 px semibold (an arm's-length read), the label stays at the floor. */
+    /**
+     * Orbit discs round 3 (review: a 17 px cap is below arm's length): value 28 px (a 20 px cap), label at the 18 px
+     * floor, the pair vertically centred in the r 39 disc with a 6 px gap between the value baseline and the label cap.
+     */
+    /** Orbit discs round 4 (review: arm's length): value 28 -> 30 px (a 22 px cap; "1,25" / "0,85" fit the r 39 chord). */
+    const val BALL_VALUE_SIZE = 30f
     const val BALL_LABEL_SIZE = 18f
-    const val BALL_VALUE_DY = 10f
-    const val BALL_LABEL_DY = 11f
+    const val BALL_VALUE_DY = 10.5f
+    const val BALL_LABEL_DY = 13f
     /** Half the cap height of the default sans in em (cap about 0.71 em). */
     const val CAP_HALF_EM = 0.36f
     /** Minimum inner padding between a disc text and the disc edge. */
@@ -662,7 +731,7 @@ object OrbitFaceLogic {
     }
 
     /** Short label token for a disc whose label does not fit at the floor ("BASAL" -> "BAS", as English uses "COB"). */
-    fun shortLabel(label: String): String = if (label == BASAL_LABEL) "BAS" else label
+    fun shortLabel(label: String): String = if (label == "BASAL") "BAS" else label
 
     /**
      * Date line at 6 o'clock with an active temp target ([tt] null: the date alone). "Sa 17. Okt · TT 5,5" when it
@@ -688,12 +757,16 @@ object OrbitFaceLogic {
      * BG and arrow read as one group centred on the dial.
      */
     /** Glass/Orbit UX round 1: 224 -> 250 with the 44 px arrow; [heroClear] keeps the group off the satellites. */
-    const val HERO_GROUP_MAX = 262f // Glass/Orbit UX round 5: 250 -> 262 with LOOP / IOB at 10:20 / 1:40
+    const val HERO_GROUP_MAX = 276f // Orbit discs round 2: 262 -> 276, the discs moved out to r 175
     /**
      * Orbit discs round 1: while the bolus button is shown, the group keeps 8 px to it and its halo at 9 o'clock on the
      * r 163 orbit (226 px; the BG steps down a size or two, the button never overlaps a digit).
      */
-    const val HERO_GROUP_MAX_BOLUS = 2f * (SAT_R - BOLUS_OUTER - 8f)
+    /** Orbit discs round 3: the BG digits keep [HERO_SIDE_CLEAR] to the bolus button (was 8 px, read cramped). */
+    const val HERO_SIDE_CLEAR = 20f
+    const val HERO_GROUP_MAX_BOLUS = 2f * (BOLUS_R - BOLUS_OUTER - HERO_SIDE_CLEAR)
+    /** Orbit discs round 3: while the TT disc is shown at 3 o'clock, the (centred) digits keep [HERO_SIDE_CLEAR] to it. */
+    const val HERO_GROUP_MAX_TT = 2f * (SAT_R - BALL_R - HERO_SIDE_CLEAR)
     /**
      * Glass/Orbit UX round 3: the gap between the last digit and the arrow scales with the digits (0.12 em, 14 px at
      * 118: "6,4→" read as one glyph at 10 px), and the arrow box never goes below [HERO_GLYPH_MIN_W]: a long value
@@ -708,7 +781,7 @@ object OrbitFaceLogic {
      * Hero start size (UX round 1: 108 -> 120; Glass/Orbit UX round 1: 128). Glass/Orbit UX round 3: 118 (about an
      * 84 px cap): at 128 the LOOP satellite sat 5-8 px from the first digit. Widths are measured at [HERO_REF] px.
      */
-    const val HERO_SIZE = 132f // Glass/Orbit UX round 5: 120 -> 132 (the family's ~95 px cap). Glass/Orbit UX round 4: 118 -> 120 (with the 4 px lower centre line, a narrow value grows a step)
+    const val HERO_SIZE = 140f // Orbit discs round 2: 132 -> 140 (Halo M). Before: Glass/Orbit UX round 5: 120 -> 132 (the family's ~95 px cap). Glass/Orbit UX round 4: 118 -> 120 (with the 4 px lower centre line, a narrow value grows a step)
     const val HERO_REF = 108f
 
     /** Arrow box width at hero [size] (scaled, floored at [HERO_GLYPH_MIN_W]). */
@@ -721,7 +794,7 @@ object OrbitFaceLogic {
         widthAt108 * size / HERO_REF + if (glyph) heroGlyphGap(size) + heroGlyphW(size) else 0f
 
     /** Hero centre line (the digits are centred on it). Glass/Orbit UX round 1: 190 -> 198, away from LOOP / IOB. */
-    const val HERO_Y = 198f // Glass/Orbit UX round 5: 202 -> 198, LOOP / IOB moved up and the 132 px digits need room below
+    const val HERO_Y = 196f // Orbit discs round 2: 198 -> 196. Before: Glass/Orbit UX round 5: 202 -> 198, LOOP / IOB moved up and the 132 px digits need room below
 
     /**
      * The hero group keeps this much clear space to the 10 and 2 o'clock satellites (LOOP, IOB). Glass/Orbit UX round
@@ -756,9 +829,10 @@ object OrbitFaceLogic {
      * [HERO_SIZE], stepped down by 4 until the group fits [HERO_GROUP_MAX] and (UX round 4) keeps clear of the
      * satellites ([heroClear]); minimum 60.
      */
+    /** Orbit discs round 3: steps of 2 px (a squeezed "22,2" keeps the largest size that fits). */
     fun heroSize(widthAt108: Float, glyph: Boolean, maxGroup: Float = HERO_GROUP_MAX): Float {
         var size = HERO_SIZE
-        while (size > HERO_MIN_SIZE && (heroGroupWidth(widthAt108, size, glyph) > maxGroup || !heroClear(widthAt108, size, glyph))) size -= 4f
+        while (size > HERO_MIN_SIZE && (heroGroupWidth(widthAt108, size, glyph) > maxGroup || !heroClear(widthAt108, size, glyph))) size -= 2f
         return size
     }
 
@@ -852,67 +926,12 @@ object OrbitFaceLogic {
     fun pointX(r: Float, deg: Float): Float = CX + r * kotlin.math.sin(Math.toRadians(deg.toDouble())).toFloat()
     fun pointY(r: Float, deg: Float): Float = CY - r * kotlin.math.cos(Math.toRadians(deg.toDouble())).toFloat()
 
-    /** Text margin on each side of a track gap (UX round 1: the cut is the text width ±8 px, centred on it). */
-    const val GAP_MARGIN = 8f
-
-    /** Glass/Orbit UX round 3: one constant 6 px break between the ring and every satellite / the bolus button. */
-    const val SAT_GAP_MARGIN = 6f
-
-    /** Half angle (deg) of the track gap that holds a text of [textWidth]: (w + 16) / 2 / r rad, capped at [maxDeg]. */
-    fun gapHalfDeg(textWidth: Float, maxDeg: Float = MAX_GAP_DEG): Float =
-        min(Math.toDegrees(((textWidth + 2f * GAP_MARGIN) / 2f / ORBIT_R).toDouble()).toFloat(), maxDeg)
-
-    /** Angular half width of the part of the track (r [ORBIT_R]) that a ball (r [BALL_R] at [SAT_R]) covers. */
-    val BALL_HALF_DEG: Float = Math.toDegrees(
-        kotlin.math.acos(((ORBIT_R * ORBIT_R + SAT_R * SAT_R - BALL_R * BALL_R) / (2f * ORBIT_R * SAT_R)).toDouble())
-    ).toFloat()
-
-    /**
-     * Glass/Orbit UX round 1: half angle of the track break around a satellite (the ring stops [GAP_MARGIN] px before
-     * its shell) and around the bolus button.
-     */
-    val BALL_GAP_DEG: Float = Math.toDegrees(2.0 * kotlin.math.asin(((BALL_R + SAT_GAP_MARGIN) / (2f * ORBIT_R)).toDouble())).toFloat()
-    val BOLUS_GAP_DEG: Float = Math.toDegrees(2.0 * kotlin.math.asin(((BOLUS_OUTER + SAT_GAP_MARGIN) / (2f * ORBIT_R)).toDouble())).toFloat()
-
-    /** The time and date gaps may grow until they meet the break of the nearest ball (60 deg away from 0 and 180). */
-    val MAX_GAP_DEG: Float = (180f - DEG_BASAL) - BALL_GAP_DEG - 0.5f
-
-    /** Glass/Orbit UX round 5: the time gap meets the LOOP / IOB breaks, now 50 deg from 12 o'clock. */
-    val MAX_TIME_GAP_DEG: Float = DEG_IOB - BALL_GAP_DEG - 0.5f
-
-    /** Moon occlusion limit for a ball (it lights the ball's rim inside the break) and for the bolus button. */
-    val BALL_OCCLUDE_DEG: Float = BALL_GAP_DEG
-    val BOLUS_OCCLUDE_DEG: Float = max(BOLUS_GAP_DEG, Math.toDegrees(atan((BOLUS_HALF * 1.1f / SAT_R).toDouble())).toFloat() + 1.5f)
-
     /** Signed shortest angular difference a - b in (-180, 180]. */
     fun angleDiff(a: Float, b: Float): Float {
         var d = (a - b) % 360f
         if (d > 180f) d -= 360f
         if (d <= -180f) d += 360f
         return d
-    }
-
-    enum class MoonKind { HIDDEN, DOT, RIM }
-
-    /** [ball] is the index into [BALL_DEGS] for RIM; [rimDeg] is the arc centre on the ball rim (clockwise from 12). */
-    data class Moon(val kind: MoonKind, val deg: Float, val ball: Int = -1, val rimDeg: Float = 0f)
-
-    /**
-     * Minute moon at 6 deg per minute. Hidden in the time/date gaps and behind the bolus button; behind a shown
-     * ball ([ballShown]) it becomes a rim highlight that sweeps from the trailing side over the outer rim to the
-     * leading side.
-     */
-    fun moon(minute: Int, gapTimeDeg: Float, gapDateDeg: Float, bolusShown: Boolean, ballShown: BooleanArray? = null): Moon {
-        val deg = (minute % 60) * 6f
-        if (abs(angleDiff(deg, 0f)) < gapTimeDeg + 2f || abs(angleDiff(deg, 180f)) < gapDateDeg + 2f) return Moon(MoonKind.HIDDEN, deg)
-        if (bolusShown && abs(angleDiff(deg, DEG_BOLUS)) < BOLUS_OCCLUDE_DEG) return Moon(MoonKind.HIDDEN, deg)
-        for (i in BALL_DEGS.indices) {
-            if (ballShown != null && !ballShown[i]) continue
-            val diff = angleDiff(deg, BALL_DEGS[i])
-            if (abs(diff) < BALL_OCCLUDE_DEG)
-                return Moon(MoonKind.RIM, deg, i, BALL_DEGS[i] + diff / BALL_OCCLUDE_DEG * 90f)
-        }
-        return Moon(MoonKind.DOT, deg)
     }
 
     // ------------------------------------------------------------------ sparkline

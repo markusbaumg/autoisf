@@ -102,6 +102,9 @@ class WatchfaceRenderHarness {
     /** States in which Orbit drew no date (must stay empty). */
     private val dateMisses = ArrayList<String>()
 
+    /** Orbit discs round 4: states in which Orbit's date glyphs came closer than 6 px to the ring's inner edge. */
+    private val dateRingHits = ArrayList<String>()
+
     /** Locale of the phone that "sent" the data of the state being rendered (German: decimal comma). */
     private var phoneGerman = true
 
@@ -211,7 +214,11 @@ class WatchfaceRenderHarness {
             data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14))
         },
         RenderState("en_no_data_ever", lang = "en") { _ -> ComplicationData() },
-        RenderState("en_ball_idle", lang = "en", ball = Ball.IDLE, data = inRange)
+        RenderState("en_ball_idle", lang = "en", ball = Ball.IDLE, data = inRange),
+        // Orbit discs round 3: worst cases of the squeezed hero, between the bolus button at 9 and the TT disc at 3
+        RenderState("ball_tt_very_high", ball = Ball.IDLE) { now -> data(now, 22.2, "\u21c8", "+1.2", 1, st = status(now, tt = "8.0", ttLevel = 2)) },
+        RenderState("ball_tt_10_5", ball = Ball.IDLE) { now -> data(now, 10.5, "↗", "+0.3", 1, st = status(now, tt = "8.0", ttLevel = 2)) },
+        RenderState("ball_tt_mgdl_224", ball = Ball.IDLE) { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true, st = status(now, tt = "144", ttLevel = 2)) }
     )
 
     // ------------------------------------------------------------------ test
@@ -243,6 +250,7 @@ class WatchfaceRenderHarness {
         // Watch5 Pro's raised bezel shades it. Checked after all renders are written, so a failure still leaves them.
         assertTrue("content within $EDGE_MARGIN_PX px of the bezel:\n" + edgeHits.joinToString("\n"), edgeHits.isEmpty())
         assertTrue("no date drawn in:\n" + dateMisses.joinToString("\n"), dateMisses.isEmpty())
+        assertTrue("date closer than ${OrbitFaceLogic.DATE_RING_CLEAR} px to the ring:\n" + dateRingHits.joinToString("\n"), dateRingHits.isEmpty())
     }
 
     /**
@@ -320,6 +328,12 @@ class WatchfaceRenderHarness {
         frame()
         // Glass/Orbit UX round 5 (time/date in every state): Orbit draws the date line in every state
         if (wf is OrbitWatchface && wf.drawnDateText.isBlank()) dateMisses += "orbit/${s.id}"
+        if (wf is OrbitWatchface && wf.drawnDateText.isNotBlank()) {
+            val b = wf.drawnDateBox
+            val clear = listOf(b.left to b.top, b.right to b.top, b.left to b.bottom, b.right to b.bottom)
+                .minOf { (x, y) -> OrbitFaceLogic.ringClear(x, y) }
+            if (clear < OrbitFaceLogic.DATE_RING_CLEAR) dateRingHits += "orbit/${s.id}: '${wf.drawnDateText}' ${"%.1f".format(clear)} px"
+        }
         roundMask(bmp)
         return bmp
     }
@@ -338,8 +352,7 @@ class WatchfaceRenderHarness {
         val (x, y) = when (face) {
             Face.HALO  -> HaloLayout(px.toFloat(), 2f).let { it.ballX to it.ballY }
             Face.GLASS -> GlassFaceLogic.BALL_X * scale to GlassFaceLogic.BALL_Y * scale
-            Face.ORBIT -> OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS) * scale to
-                OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS) * scale
+            Face.ORBIT -> OrbitFaceLogic.BOLUS_X * scale to OrbitFaceLogic.BOLUS_Y * scale
         }
         wf.tapOffline(TapType.UP, x.toInt(), y.toInt(), eventTime)
         shadowOf(Looper.getMainLooper()).idle()
