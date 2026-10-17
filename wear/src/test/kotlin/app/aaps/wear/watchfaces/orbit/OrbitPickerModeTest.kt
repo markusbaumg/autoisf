@@ -1,7 +1,9 @@
 package app.aaps.wear.watchfaces.orbit
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Looper
@@ -139,6 +141,12 @@ class OrbitPickerModeTest {
         val intent = startedActivity()
         assertThat(intent).isNotNull()
         assertThat(intent!!.component?.className).isEqualTo(QuickBolusActivity::class.java.name)
+        // its own fresh task (with the manifest's taskAffinity=""): closing it lands on the face, never on a menu behind it
+        assertThat(intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK).isEqualTo(Intent.FLAG_ACTIVITY_NEW_TASK)
+        assertThat(intent.flags and Intent.FLAG_ACTIVITY_CLEAR_TASK).isEqualTo(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val app = RuntimeEnvironment.getApplication()
+        val info = app.packageManager.getActivityInfo(ComponentName(app, QuickBolusActivity::class.java), 0)
+        assertThat(info.taskAffinity.orEmpty()).isNotEqualTo(app.packageName)
     }
 
     @Test fun pickerModeSingleTapOpensNothing() {

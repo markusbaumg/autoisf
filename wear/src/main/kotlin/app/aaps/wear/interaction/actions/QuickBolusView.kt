@@ -103,6 +103,8 @@ class QuickBolusView(context: Context) : View(context) {
     var onAmount: ((Double) -> Unit)? = null
     var onClose: (() -> Unit)? = null
     var onAnyTouch: (() -> Unit)? = null
+    /** Called once, after the first frame with content was drawn (the activity starts the input lock from then). */
+    var onFirstDraw: (() -> Unit)? = null
     /** The picker's input lock (a DOWN while it runs never becomes a tap, even if it lifts later). */
     var isInputLocked: () -> Boolean = { false }
 
@@ -152,6 +154,11 @@ class QuickBolusView(context: Context) : View(context) {
         layoutGrid()
         canvas.drawColor(Color.BLACK)
         val s = screen ?: return
+        onFirstDraw?.let { cb ->
+            onFirstDraw = null
+            // after this frame: the callback may redraw, which must not happen inside onDraw
+            post(cb)
+        }
         canvas.save()
         canvas.translate(offX, offY)
         canvas.scale(scale, scale)

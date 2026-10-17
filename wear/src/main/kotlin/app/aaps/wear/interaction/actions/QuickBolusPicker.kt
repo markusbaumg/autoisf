@@ -16,7 +16,9 @@ import kotlin.math.abs
  * Pure logic with an injected clock, unit tested; the activity only draws [screen] and feeds taps and ticks in.
  *
  * - Nothing is preselected and nothing is remembered: every picker starts in [Phase.CHOOSING].
- * - Every input is ignored for [INPUT_LOCK_MS] after opening (the double tap that opened it, a sleeve).
+ * - Every input is ignored for [INPUT_LOCK_MS] after opening (the double tap that opened it, a sleeve). With
+ *   [lockFromShown] (the activity) the lock is measured from the moment the picker is really on screen ([onShown]: first
+ *   drawn frame, window focus, end of the open animation), not from construction: until then every input is ignored.
  * - [screen] and [onAmountTap] re-run the full [BolusRequestGuard] check (phone reachable with an answer that arrived
  *   after opening and is fresh, data < 12 min, max bolus known, Wear control, nothing pending) for every amount; an
  *   amount above the max bolus is greyed out on its own. A low or a fast fall ([Block]) turns every amount off.
@@ -30,7 +32,13 @@ class QuickBolusPicker(
     private val clock: () -> Long,
     val guard: BolusRequestGuard,
     /** 0.5 / 1.0 (+ 1.5 with the switch), [app.aaps.wear.watchfaces.common.BolusRequestPrefs.pickerAmounts]. */
-    val amounts: List<Double>
+    val amounts: List<Double>,
+    /**
+     * True (QuickBolusActivity): the input lock starts at [onShown], not at construction, and everything is locked until
+     * then. A Wear activity launch takes a few hundred ms before its first frame; measured from onCreate, the lock the user
+     * sees would shrink to ~200-400 ms and a slow third tap on the ball (right over the 0,5 button) could count.
+     */
+    private val lockFromShown: Boolean = false
 ) {
 
     enum class Phase { CHOOSING, WAITING, NO_ANSWER, CLOSED }
@@ -84,10 +92,29 @@ class QuickBolusPicker(
     private var lastTouch = openedAt
     private var noAnswerAt = 0L
 
+    /** Start of the input lock: [openedAt], or with [lockFromShown] the last [onShown] (null = not on screen yet). */
+    var lockStart: Long? = if (lockFromShown) null else openedAt
+        private set
+
     /** True for the first [INPUT_LOCK_MS] (a clock set back keeps it locked until the lock has really passed). */
     fun inputLocked(): Boolean {
-        val dt = clock() - openedAt
+        val start = lockStart ?: return true
+        val dt = clock() - start
         return dt < INPUT_LOCK_MS
+    }
+
+    /**
+     * The picker is visible (first frame drawn, window focus gained, open animation complete; called for each). While the
+     * input lock still runs (or has not started), it (re)starts now, so it always covers [INPUT_LOCK_MS] after the LAST of
+     * these signals that came in time; once the lock is over a late signal changes nothing. Returns true when it restarted.
+     */
+    fun onShown(): Boolean {
+        if (!lockFromShown || phase != Phase.CHOOSING) return false
+        if (lockStart != null && !inputLocked()) return false
+        val now = clock()
+        lockStart = now
+        if (now > lastTouch) lastTouch = now
+        return true
     }
 
     /** Re-check every amount (call on open, on every data change and on every tap). */

@@ -102,6 +102,21 @@ class QuickBolusActivityTest {
         return ComplicationData(bgData = bg, statusData = st, lastUpdateTimestamp = now)
     }
 
+    private fun injectFor(allow15: Boolean) {
+        sp.putBoolean(BolusRequestPrefs.KEY_ALLOW_1_5, allow15)
+        val repo = mock<ComplicationDataRepository> { on { complicationData } doReturn MutableStateFlow(data(now())) }
+        val prefs = mock<Preferences> { on { get(any<BooleanKey>()) } doReturn true }
+        app.inject = { a ->
+            (a as QuickBolusActivity).also {
+                it.sp = sp
+                it.preferences = prefs
+                it.rxBus = rxBus
+                it.aapsLogger = AAPSLoggerTest()
+                it.complicationDataRepository = repo
+            }
+        }
+    }
+
     /** Opens the picker, then waits until the phone answered after opening (3 s re-ask) and the input lock is over. */
     private fun open(allow15: Boolean, ready: Boolean = true): QuickBolusActivity {
         sp.putBoolean(BolusRequestPrefs.KEY_ALLOW_1_5, allow15)
@@ -117,6 +132,8 @@ class QuickBolusActivityTest {
             }
         }
         controller = Robolectric.buildActivity(QuickBolusActivity::class.java).setup()
+        // Robolectric neither draws nor focuses the window by itself: the picker becomes "shown" (input lock start) here
+        controller.windowFocusChanged(true)
         idle()
         if (ready) idle(3_400L)
         return controller.get()
@@ -208,6 +225,41 @@ class QuickBolusActivityTest {
         verify(rxBus, never()).send(any())
         // a clean tap afterwards works
         tap(v, v.buttonX(0, 2), QuickBolusView.BUTTON_Y)
+        assertThat(sentAmounts()).containsExactly(0.5)
+    }
+
+    /**
+     * The input lock runs from the first frame on screen, not from onCreate: a slow third tap on the ball (right over
+     * 0,5 in the 3-amount layout) that arrives > 600 ms after onCreate but before / just after the first frame never counts.
+     */
+    @Test fun inputLockStartsAtTheFirstFrameNotAtOnCreate() {
+        injectFor(allow15 = true)
+        controller = Robolectric.buildActivity(QuickBolusActivity::class.java).create().start().postCreate(null).resume()
+        val a = controller.get()
+        val v = view(a)
+        // not on screen yet (no window, no frame): lay the view out by hand so taps hit the real button positions
+        v.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(450, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(450, android.view.View.MeasureSpec.EXACTLY)
+        )
+        v.layout(0, 0, 450, 450)
+        idle(3_400L) // 3,4 s after onCreate, the phone has answered: measured from onCreate the lock would be long over
+        assertThat(a.isFinishing).isFalse()
+        tap(v, v.buttonX(0, 3), QuickBolusView.BUTTON_Y)
+        verify(rxBus, never()).send(any())
+        // now the first frame (Robolectric does not draw by itself: draw it as the watch's first frame would)
+        controller.visible()
+        v.draw(android.graphics.Canvas(android.graphics.Bitmap.createBitmap(450, 450, android.graphics.Bitmap.Config.ARGB_8888)))
+        idle()
+        // a DOWN within 600 ms of the first frame never fires
+        idle(100L)
+        tap(v, v.buttonX(0, 3), QuickBolusView.BUTTON_Y)
+        idle(300L)
+        tap(v, v.buttonX(0, 3), QuickBolusView.BUTTON_Y)
+        verify(rxBus, never()).send(any())
+        // after the lock a clean tap sends
+        idle(QuickBolusPicker.INPUT_LOCK_MS)
+        tap(v, v.buttonX(0, 3), QuickBolusView.BUTTON_Y)
         assertThat(sentAmounts()).containsExactly(0.5)
     }
 

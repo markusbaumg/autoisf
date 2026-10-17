@@ -84,6 +84,61 @@ class QuickBolusPickerTest {
         assertThat(p.onAmountTap(0.5, snap())).isEqualTo(TapResult.Send(0.5))
     }
 
+    @Test fun lockFromShownIsLockedUntilShownThen600ms() {
+        val p = QuickBolusPicker({ now }, guard, three, lockFromShown = true)
+        now += 50
+        guard.onReachAnswer(true)
+        // long after construction, but not on screen yet: still locked, nothing counts
+        now = p.openedAt + 2_000
+        assertThat(p.lockStart).isNull()
+        assertThat(p.inputLocked()).isTrue()
+        assertThat(p.screen(snap()).inputLocked).isTrue()
+        assertThat(p.onAmountTap(0.5, snap())).isEqualTo(TapResult.Ignored)
+        assertThat(p.onClose()).isFalse()
+        // first frame: the lock runs 600 ms from now
+        assertThat(p.onShown()).isTrue()
+        val shownAt = now
+        now = shownAt + 599
+        assertThat(p.onAmountTap(0.5, snap())).isEqualTo(TapResult.Ignored)
+        assertThat(store.lastSentAt).isEqualTo(0L)
+        now = shownAt + 600
+        assertThat(p.inputLocked()).isFalse()
+        assertThat(p.onAmountTap(0.5, snap())).isEqualTo(TapResult.Send(0.5))
+    }
+
+    @Test fun laterShownSignalRestartsTheLockOnlyWhileItRuns() {
+        val p = QuickBolusPicker({ now }, guard, three, lockFromShown = true)
+        now += 50
+        guard.onReachAnswer(true)
+        assertThat(p.onShown()).isTrue() // first frame
+        now += 300
+        assertThat(p.onShown()).isTrue() // open animation done 300 ms later: lock runs 600 ms from here
+        val animDone = now
+        now = animDone + 599
+        assertThat(p.inputLocked()).isTrue()
+        assertThat(p.onAmountTap(0.5, snap())).isEqualTo(TapResult.Ignored)
+        now = animDone + 600
+        assertThat(p.inputLocked()).isFalse()
+        // a late signal after the lock never locks a usable picker again
+        now += 1_000
+        assertThat(p.onShown()).isFalse()
+        assertThat(p.inputLocked()).isFalse()
+    }
+
+    @Test fun withoutLockFromShownOnShownChangesNothing() {
+        val p = QuickBolusPicker({ now }, guard, three)
+        assertThat(p.lockStart).isEqualTo(p.openedAt)
+        now += 100
+        assertThat(p.onShown()).isFalse()
+        assertThat(p.lockStart).isEqualTo(p.openedAt)
+    }
+
+    @Test fun neverShownClosesOnIdle() {
+        val p = QuickBolusPicker({ now }, guard, three, lockFromShown = true)
+        now += QuickBolusPicker.IDLE_MS
+        assertThat(p.tick()).isEqualTo(Tick.CLOSE)
+    }
+
     @Test fun clockSetBackKeepsTheLock() {
         val p = QuickBolusPicker({ now }, guard, three)
         now -= 5_000

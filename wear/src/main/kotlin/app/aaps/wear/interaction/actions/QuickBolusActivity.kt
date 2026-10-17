@@ -42,6 +42,9 @@ import javax.inject.Inject
  *
  * Closes on screen off, onPause / onStop (wrist down, another screen), after 10 s without a touch, on ×, back or a
  * swipe. No rotary input. Nothing is remembered between two openings.
+ *
+ * The 600 ms input lock starts when the picker is really on screen (first drawn frame, window focus, end of the open
+ * animation; [QuickBolusPicker.onShown]), not in onCreate: until then every touch is ignored.
  */
 class QuickBolusActivity : DaggerActivity() {
 
@@ -96,7 +99,8 @@ class QuickBolusActivity : DaggerActivity() {
         super.onCreate(savedInstanceState)
         // no FLAG_KEEP_SCREEN_ON: screen timeout and wrist-down must be able to end the picker
         guard = BolusRequestGuard(clock = clock, store = BolusRequestPrefs.lastSentStore { sp })
-        picker = QuickBolusPicker(clock, guard, BolusRequestPrefs.pickerAmounts(sp))
+        // the 600 ms input lock runs from the first frame on screen, not from here (a Wear launch takes a few hundred ms)
+        picker = QuickBolusPicker(clock, guard, BolusRequestPrefs.pickerAmounts(sp), lockFromShown = true)
         view = QuickBolusView(this).apply {
             locale = Locale.getDefault()
             contentDescription = getString(R.string.quick_bolus_title)
@@ -104,6 +108,7 @@ class QuickBolusActivity : DaggerActivity() {
             isInputLocked = { picker.inputLocked() }
             onAmount = { onAmountTap(it) }
             onClose = { if (picker.onClose()) close("close button") }
+            onFirstDraw = { shown("first frame") }
         }
         setContentView(view)
         scope.launch {
@@ -114,8 +119,6 @@ class QuickBolusActivity : DaggerActivity() {
         }
         refreshReach()
         redraw()
-        // the input lock ends: redraw at full strength
-        handler.postDelayed({ redraw() }, QuickBolusPicker.INPUT_LOCK_MS + 10L)
         handler.postDelayed(ticker, TICK_MS)
         handler.postDelayed(reachTick, REACH_EVERY_MS)
         try {
@@ -125,6 +128,28 @@ class QuickBolusActivity : DaggerActivity() {
             aapsLogger.error(LTag.WEAR, "QuickBolusActivity: screen-off receiver failed", e)
         }
         aapsLogger.info(LTag.WEAR, "QuickBolusActivity: opened, amounts ${picker.amounts}")
+    }
+
+    /** The input lock ends: redraw at full strength. */
+    private val lockEnded = Runnable { redraw() }
+
+    /** First frame, window focus, end of the open animation: the 600 ms input lock (re)starts now while it still runs. */
+    private fun shown(why: String) {
+        if (finishing || !picker.onShown()) return
+        aapsLogger.debug(LTag.WEAR, "QuickBolusActivity: input lock from $why")
+        handler.removeCallbacks(lockEnded)
+        handler.postDelayed(lockEnded, QuickBolusPicker.INPUT_LOCK_MS + 10L)
+        redraw()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) shown("window focus")
+    }
+
+    override fun onEnterAnimationComplete() {
+        super.onEnterAnimationComplete()
+        shown("open animation done")
     }
 
     private fun snapshot(): QuickBolusPicker.Snapshot = QuickBolusPicker.snapshot(
