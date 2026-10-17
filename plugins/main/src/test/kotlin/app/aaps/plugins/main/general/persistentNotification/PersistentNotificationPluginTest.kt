@@ -12,6 +12,9 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.events.EventPreferenceChange
+import com.google.common.truth.Truth.assertThat
+import app.aaps.core.keys.StringKey
+import app.aaps.core.keys.BooleanKey
 import app.aaps.core.interfaces.rx.events.EventRefreshOverview
 import app.aaps.core.interfaces.ui.IconsProvider
 import app.aaps.core.interfaces.utils.DecimalFormatter
@@ -75,8 +78,7 @@ class PersistentNotificationPluginTest : TestBase() {
     private fun advance(ms: Long) = io.advanceTimeBy(ms, TimeUnit.MILLISECONDS)
 
     @Test fun `a burst of events gives one rebuild at once and one at the end of the window`() {
-        // the preference storm: thousands of writes forwarded by the open settings screen
-        repeat(200) { rxBus.send(EventPreferenceChange("key$it")) }
+        repeat(200) { rxBus.send(EventRefreshOverview("burst$it")) }
         rxBus.send(EventRefreshOverview("test"))
         io.triggerActions()
         verify(dummyServiceHelper, times(1)).startService(context)
@@ -90,23 +92,50 @@ class PersistentNotificationPluginTest : TestBase() {
     }
 
     @Test fun `events further apart than the window are each handled at once`() {
-        rxBus.send(EventPreferenceChange("a"))
+        rxBus.send(EventRefreshOverview("a"))
         io.triggerActions()
         verify(dummyServiceHelper, times(1)).startService(context)
         advance(PersistentNotificationPlugin.UPDATE_WINDOW_MS)
-        rxBus.send(EventPreferenceChange("b"))
+        rxBus.send(EventRefreshOverview("b"))
         io.triggerActions()
         verify(dummyServiceHelper, times(2)).startService(context)
     }
 
     @Test fun `the last event of a burst is never lost`() {
-        rxBus.send(EventPreferenceChange("first"))
+        rxBus.send(EventRefreshOverview("first"))
         io.triggerActions()
         advance(PersistentNotificationPlugin.UPDATE_WINDOW_MS / 2)
-        rxBus.send(EventPreferenceChange("last"))
+        rxBus.send(EventRefreshOverview("last"))
         io.triggerActions()
         verify(dummyServiceHelper, times(1)).startService(context)
         advance(PersistentNotificationPlugin.UPDATE_WINDOW_MS / 2)
         verify(dummyServiceHelper, times(2)).startService(context)
+    }
+
+    @Test fun `preference changes the text does not depend on do not rebuild`() {
+        // the preference storm: thousands of sync pointer writes forwarded by the open settings screen
+        repeat(200) { rxBus.send(EventPreferenceChange("ns_bolus_last_synced_id")) }
+        io.triggerActions()
+        advance(PersistentNotificationPlugin.UPDATE_WINDOW_MS * 2)
+        verify(dummyServiceHelper, times(0)).startService(context)
+    }
+
+    @Test fun `units, language and simple mode changes rebuild`() {
+        rxBus.send(EventPreferenceChange(StringKey.GeneralUnits.key))
+        io.triggerActions()
+        verify(dummyServiceHelper, times(1)).startService(context)
+        advance(PersistentNotificationPlugin.UPDATE_WINDOW_MS)
+        rxBus.send(EventPreferenceChange(StringKey.GeneralLanguage.key))
+        io.triggerActions()
+        verify(dummyServiceHelper, times(2)).startService(context)
+        advance(PersistentNotificationPlugin.UPDATE_WINDOW_MS)
+        rxBus.send(EventPreferenceChange(BooleanKey.GeneralSimpleMode.key))
+        io.triggerActions()
+        verify(dummyServiceHelper, times(3)).startService(context)
+    }
+
+    @Test fun `the preference keys the text depends on are pinned`() {
+        // ProfileUtil reads units, LocaleHelper reads simple_mode and then language
+        assertThat(PersistentNotificationPlugin.NOTIFICATION_PREFERENCE_KEYS).containsExactly("units", "language", "simple_mode")
     }
 }
