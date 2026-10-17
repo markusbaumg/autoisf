@@ -16,7 +16,7 @@ import kotlin.math.min
  * - text never goes below [MIN_TEXT_PX] (a 384 px screen would otherwise shrink a 17 px label to 14.5 px);
  * - the bolus tap target is a fixed 48 dp ([TAP_TARGET_DP]), not scaled.
  *
- * Current variant: "M", refined (rounds 1 to 3; round 3 enlarged only the loop pill text and the secondary line): ring R 158 (top at y 60, clear of the system status icon), hero 140 px
+ * Current variant: "M", refined (rounds 1 to 3; round 3 enlarged only the loop pill text and the secondary line; round 4 sizes the pill to its content): ring R 158 (top at y 60, clear of the system status icon), hero 140 px
  * (7.7 mm cap height), delta / secondary / bottom row on an even ~41 px step, and one bottom row COB - pill - IOB
  * with the values anchored at an equal gap to the pill (COB right-aligned, IOB left-aligned), so the row stays
  * balanced whatever the values are. The bolus ball (when enabled) takes the pill's slot but carries a loop badge.
@@ -42,6 +42,7 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val tailR = g(143f)
     val tailW = g(3f)
     val tailMaxAlpha = 90               // ~35 %: an echo of the trend, not a stroke
+    val tailMinLen = g(30f)             // shorter tails (a flat BG) are not drawn: a 1-2 mm faint tick looks like an artifact
     val tailTextClear = g(20f)          // the tail ends this far before the time / date boxes
     val knobR = g(13f)
     val knobSeparation = g(3.5f)        // dark ring around the knob, so it does not merge into the ring gradient
@@ -86,26 +87,46 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val secondarySize = font(26f)       // ~1.4 mm cap height: grey TT / basal line must read in sunlight
     val secondaryMaxW = g(180f)          // "TT 5.6 · 0.00U/h" shrinks to fit, clear of the ring ends
 
-    // Loop pill: loop glyph (a circular arrow in the state colour) and the loop age.
+    // Loop pill: loop glyph (a circular arrow in the state colour) and the loop age. The pill is sized to its content
+    // (round 4): equal inner padding on both sides and a fixed glyph-to-text gap, the glyph + text group centred, so
+    // the common "0'" does not sit in a lopsided, half-empty pill. [pillHalfW] is the widest pill (the layout boxes).
     val pillY = g(372f)
     val pillHalfW = g(46f)
+    val pillMinHalfW = g(30f)
     val pillHalfH = g(19f)
     val pillTextSize = font(26f)        // ~1.4 mm cap height: the only safety status on the face
-    val pillGlyphX = c - g(26f)
+    val pillPad = g(12f)                // inner ink padding, left of the glyph and right of the text
+    val pillGap = g(8f)                 // glyph ink to text ink
     val pillGlyphR = g(8.5f)            // ~1.4 mm: large enough to carry the state colour at a glance
     val pillGlyphStroke = g(3f)
     val pillGlyphHead = g(5f)
     val pillGlyphGlow = g(4f)
-    val pillTextX = c + g(12f)
-    /** Widest loop label that fits between the glyph (4 px gap) and the pill's right edge (6 px), centred at [pillTextX]. */
-    val pillTextMaxW = 2f * min(pillTextX - (pillGlyphX + pillGlyphR + pillGlyphStroke / 2f) - g(4f), c + pillHalfW - g(6f) - pillTextX)
+    /** Half the glyph's ink width (the arrow head stays inside the circle's ink). */
+    val pillGlyphInkHalf = pillGlyphR + pillGlyphStroke / 2f
+    /** Widest label ink that fits the widest pill at full size; wider labels ("120'") shrink to it. */
+    val pillTextMaxW = 2f * (pillHalfW - pillPad - pillGlyphInkHalf) - pillGap
     val pillStroke = g(1f)
+
+    /** Pill geometry for a label whose ink is [textInkW] wide (at full size): half width, glyph centre, text ink left. */
+    data class Pill(val halfW: Float, val glyphX: Float, val textLeft: Float, val textScale: Float)
+
+    fun pill(textInkW: Float): Pill {
+        val scale = HaloFaceLogic.fitScale(textInkW, pillTextMaxW)
+        val textW = textInkW * scale
+        val groupW = 2f * pillGlyphInkHalf + pillGap + textW
+        val halfW = (groupW / 2f + pillPad).coerceIn(pillMinHalfW, pillHalfW)
+        val glyphX = c - groupW / 2f + pillGlyphInkHalf
+        return Pill(halfW, glyphX, glyphX + pillGlyphInkHalf + pillGap, scale)
+    }
 
     // Bottom row: COB value (left, right-aligned) and IOB value (right, left-aligned) at the same gap to the pill.
     val rowY = pillY
     val rowPillGap = g(16f)
+    /** COB / IOB anchors for the widest pill (and the bolus ball); [cobRightFor] / [iobLeftFor] follow the drawn pill. */
     val cobRight = c - pillHalfW - rowPillGap
     val iobLeft = c + pillHalfW + rowPillGap
+    fun cobRightFor(halfW: Float) = c - halfW - rowPillGap
+    fun iobLeftFor(halfW: Float) = c + halfW + rowPillGap
     val rowValueSize = font(30f)
     val rowUnitSize = font(20f)
     val rowUnitGap = g(3f)

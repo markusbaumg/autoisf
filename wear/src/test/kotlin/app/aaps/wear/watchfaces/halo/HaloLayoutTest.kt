@@ -145,22 +145,34 @@ class HaloLayoutTest {
         }
     }
 
-    @Test fun loopGlyphKeepsItsGapInsideThePill() {
+    /** Approximate ink widths of loop labels at the 26 px pill size (Roboto semi-bold, measured on the watch: "0'" ~18 px). */
+    private val pillLabelInk = mapOf("0'" to 18f, "5'" to 18f, "25'" to 33f, "--" to 21f, "120'" to 48f)
+
+    @Test fun loopPillIsSizedToItsContentWithBalancedPadding() {
         for (d in diameters) {
             val l = HaloLayout(d)
-            val glyphLeft = l.pillGlyphX - l.pillGlyphR - l.pillGlyphStroke / 2f
-            val glyphRight = l.pillGlyphX + l.pillGlyphR + l.pillGlyphStroke / 2f
-            assertWithMessage("glyph inside the pill at d=$d").that(glyphLeft).isAtLeast(l.pillBox().left + 6f * l.u)
-            // Widest label "25'" (~3 x 0.55 em), centred at pillTextX: >= 4 px to the glyph and inside the pill.
-            val half = l.pillTextSize * 0.55f * 3f / 2f
-            assertWithMessage("glyph / text gap at d=$d").that(l.pillTextX - half - glyphRight).isAtLeast(4f * l.u)
-            assertWithMessage("text inside the pill at d=$d").that(l.pillTextX + half).isAtMost(l.pillBox().right)
-            // "25'" and "--" fit at full size (no shrink); longer labels ("120'") shrink to pillTextMaxW.
-            assertWithMessage("pill text max width at d=$d").that(l.pillTextMaxW).isAtLeast(2f * half)
-            // The inner gaps stay balanced: glyph pad on the left vs. text pad on the right differ by < 4 design px.
-            val leftPad = glyphLeft - l.pillBox().left
-            val rightPad = l.pillBox().right - (l.pillTextX + half)
-            assertWithMessage("pill pads at d=$d").that(kotlin.math.abs(leftPad - rightPad)).isAtMost(4f * l.u)
+            for ((label, ink26) in pillLabelInk) {
+                val ink = ink26 * l.pillTextSize / 26f
+                val p = l.pill(ink)
+                val left = l.c - p.halfW
+                val right = l.c + p.halfW
+                val glyphLeft = p.glyphX - l.pillGlyphInkHalf
+                val glyphRight = p.glyphX + l.pillGlyphInkHalf
+                val textRight = p.textLeft + ink * p.textScale
+                val leftPad = glyphLeft - left
+                val rightPad = right - textRight
+                assertWithMessage("\"$label\" pads $leftPad / $rightPad at d=$d").that(kotlin.math.abs(leftPad - rightPad)).isAtMost(3f)
+                assertWithMessage("\"$label\" pad at d=$d").that(minOf(leftPad, rightPad)).isAtLeast(l.pillPad - 0.01f)
+                assertWithMessage("\"$label\" glyph / text gap at d=$d").that(p.textLeft - glyphRight).isWithin(0.01f).of(l.pillGap)
+                assertWithMessage("\"$label\" inside the widest pill at d=$d").that(p.halfW).isAtMost(l.pillHalfW)
+                // The common labels ("0'" .. "25'", "--") are drawn at full size; only "120'" and longer shrink.
+                if (label != "120'") assertWithMessage("\"$label\" full size at d=$d").that(p.textScale).isEqualTo(1f)
+                // COB / IOB follow the drawn pill at the same gap on both sides.
+                assertWithMessage("\"$label\" row gaps at d=$d").that(left - l.cobRightFor(p.halfW)).isWithin(0.01f).of(l.iobLeftFor(p.halfW) - right)
+                assertWithMessage("\"$label\" row gap at d=$d").that(left - l.cobRightFor(p.halfW)).isWithin(0.01f).of(l.rowPillGap)
+            }
+            // "0'" pill is narrower than the widest one (no half-empty pill), "25'" grows it.
+            assertWithMessage("content sized at d=$d").that(l.pill(18f * l.u).halfW).isLessThan(l.pill(33f * l.u).halfW)
             // Safety status: >= 1.4 mm cap height on the 450 grid (26 design px).
             assertWithMessage("pill text size at d=$d").that(l.pillTextSize).isAtLeast(26f * l.u - 0.01f)
         }

@@ -417,12 +417,13 @@ class HaloWatchface : WatchFace() {
         // 6. arrow (BG colour) + delta, and the BG age once it is getting old
         drawDeltaLine(canvas, ageMin, if (stale) STALE else colour, DELTA, ageColour(level, DELTA), ambient = false)
 
-        // 7. IOB arc, IOB and COB
-        drawIobCob(canvas, ambient = false)
+        // 7. IOB arc, IOB and COB (anchored at the drawn pill, so both gaps to it stay equal)
+        buttonShown = bolusButtonEnabled()
+        val pill = if (buttonShown) null else measurePill(loopLabel(HaloFaceLogic.loopAgeMinutes(loopTime, now)))
+        drawIobCob(canvas, ambient = false, pill)
 
         // 8. loop pill (the bolus ball takes its slot when enabled and then carries the loop state as a badge)
-        buttonShown = bolusButtonEnabled()
-        if (!buttonShown) drawLoopPill(canvas, now, ambient = false)
+        if (pill != null) drawLoopPill(canvas, now, ambient = false, pill)
 
         // 9. secondary line: temp target (when active) and basal
         drawFitText(canvas, secondaryLine(), cx, L.secondaryY, L.secondarySize, tf500, SECONDARY, maxWidth = L.secondaryMaxW)
@@ -473,8 +474,9 @@ class HaloWatchface : WatchFace() {
         val grey = amb(AMB_GREY, lowBit)
         // BG age stays visible in ambient; amber/red when old/stale (low-bit: white, the struck-through BG marks stale).
         drawDeltaLine(canvas, ageMin, grey, grey, if (lowBit) Color.WHITE else ageColour(level, grey), ambient = true)
-        drawIobCob(canvas, ambient = true)
-        drawLoopPill(canvas, now, ambient = true)
+        val pill = measurePill(loopLabel(HaloFaceLogic.loopAgeMinutes(loopTime, now)))
+        drawIobCob(canvas, ambient = true, pill)
+        drawLoopPill(canvas, now, ambient = true, pill)
         if (st.tempTargetLevel == 2) drawFitText(canvas, secondaryLine(), cx, L.secondaryY, L.secondarySize, tf400, amb(AMB_DIM, lowBit), aa, L.secondaryMaxW)
     }
 
@@ -502,7 +504,8 @@ class HaloWatchface : WatchFace() {
         }
         if (firstTs == Long.MAX_VALUE) return
         val startA = HaloFaceLogic.angle(firstSgv)
-        if (abs(bgAngle - startA) < 1f) return
+        // A tail shorter than tailMinLen reads as a stray tick, not a trend (the arrow and delta carry it): skip it.
+        if (Math.toRadians(abs(bgAngle - startA).toDouble()) * L.tailR < L.tailMinLen) return
         // Inside the ring (clear of the knob and of the bolus ball), butt caps so segments do not overlap into beads.
         // Faint (an echo of the trend) and with a gap at 12 o'clock, so it never points at the time or the date.
         val r = arcRect(L.tailR)
@@ -607,7 +610,8 @@ class HaloWatchface : WatchFace() {
         canvas.drawText(age, x, y, text)
     }
 
-    private fun drawIobCob(canvas: Canvas, ambient: Boolean) {
+    /** [pill]: the drawn loop pill (its width sets the COB / IOB anchors); null when the bolus ball takes its slot. */
+    private fun drawIobCob(canvas: Canvas, ambient: Boolean, pill: HaloLayout.Pill?) {
         val lowBit = ambient && lowBitAmbient
         val aa = !lowBit
         val r = arcRect(L.iobR)
@@ -635,9 +639,9 @@ class HaloWatchface : WatchFace() {
         val cobColour = if (ambient) amb(0xFFAAAAAA.toInt(), lowBit) else COB_VALUE
         val iobColour = if (ambient) amb(0xFFBEBEBE.toInt(), lowBit) else IOB_VALUE
         val (cobValue, cobUnit) = HaloFaceLogic.valueUnit(st.cob, "g")
-        drawValueUnit(canvas, cobValue, cobUnit, L.cobRight, alignRight = true, cobColour, if (ambient) amb(AMB_DIM, lowBit) else withAlpha(COB_VALUE, L.rowUnitAlpha), aa)
+        drawValueUnit(canvas, cobValue, cobUnit, pill?.let { L.cobRightFor(it.halfW) } ?: L.cobRight, alignRight = true, cobColour, if (ambient) amb(AMB_DIM, lowBit) else withAlpha(COB_VALUE, L.rowUnitAlpha), aa)
         val (iobValue, iobUnit) = HaloFaceLogic.valueUnit(st.iobSum, "U")
-        drawValueUnit(canvas, iobValue, iobUnit, L.iobLeft, alignRight = false, iobColour, if (ambient) amb(AMB_DIM, lowBit) else withAlpha(IOB_VALUE, L.rowUnitAlpha), aa)
+        drawValueUnit(canvas, iobValue, iobUnit, pill?.let { L.iobLeftFor(it.halfW) } ?: L.iobLeft, alignRight = false, iobColour, if (ambient) amb(AMB_DIM, lowBit) else withAlpha(IOB_VALUE, L.rowUnitAlpha), aa)
     }
 
     /**
@@ -674,13 +678,13 @@ class HaloWatchface : WatchFace() {
      * with loop.lastRun.lastTBREnact (not the loop run time); see [HaloFaceLogic.loopAgeMinutes]. -1 (a run without
      * a new temp basal, or a phone restart) keeps the last valid time ([loopTime]); never received is UNKNOWN (grey).
      */
-    private fun drawLoopPill(canvas: Canvas, now: Long, ambient: Boolean) {
+    private fun drawLoopPill(canvas: Canvas, now: Long, ambient: Boolean, pill: HaloLayout.Pill) {
         val lowBit = ambient && lowBitAmbient
         val aa = !lowBit
         val age = HaloFaceLogic.loopAgeMinutes(loopTime, now)
         val state = HaloFaceLogic.loopState(age)
         val label = loopLabel(age)
-        rect.set(cx - L.pillHalfW, L.pillY - L.pillHalfH, cx + L.pillHalfW, L.pillY + L.pillHalfH)
+        rect.set(cx - pill.halfW, L.pillY - L.pillHalfH, cx + pill.halfW, L.pillY + L.pillHalfH)
         val corner = L.pillHalfH
         if (ambient) {
             resetPaint(aa).apply { style = Paint.Style.STROKE; strokeWidth = L.ambStroke; color = amb(0xFF6E6E6E.toInt(), lowBit) }
@@ -692,8 +696,8 @@ class HaloWatchface : WatchFace() {
                 state == LoopState.STALE -> RED
                 else                    -> 0xFF8C8C8C.toInt()
             }
-            drawLoopGlyph(canvas, L.pillGlyphX, L.pillY, glyph, aa, glow = false)
-            drawFitText(canvas, label, L.pillTextX, L.pillY, L.pillTextSize, tf600, amb(0xFFC8C8C8.toInt(), lowBit), aa, L.pillTextMaxW)
+            drawLoopGlyph(canvas, pill.glyphX, L.pillY, glyph, aa, glow = false)
+            drawPillText(canvas, label, pill, amb(0xFFC8C8C8.toInt(), lowBit), aa)
             return
         }
         resetPaint().apply {
@@ -717,14 +721,38 @@ class HaloWatchface : WatchFace() {
         canvas.drawRoundRect(rect, corner, corner, p)
         // WARN: muted amber glyph and text only (no glow, no tinted fill or border), so it reads as "check".
         val glyphColour = if (state == LoopState.WARN) AMBER_MUTED else loopColour(state)
-        drawLoopGlyph(canvas, L.pillGlyphX, L.pillY, glyphColour, aa = true, glow = state == LoopState.OK || state == LoopState.STALE)
+        drawLoopGlyph(canvas, pill.glyphX, L.pillY, glyphColour, aa = true, glow = state == LoopState.OK || state == LoopState.STALE)
         val textColour = when (state) {
             LoopState.OK    -> 0xFFD2F5E1.toInt()
             LoopState.WARN  -> AMBER_MUTED
             LoopState.STALE -> 0xFFFFD2D8.toInt()
             LoopState.UNKNOWN -> GREY
         }
-        drawFitText(canvas, label, L.pillTextX, L.pillY, L.pillTextSize, tf600, textColour, maxWidth = L.pillTextMaxW)
+        drawPillText(canvas, label, pill, textColour, aa = true)
+    }
+
+    /** Ink left edge of the last [measurePill] label at full size, relative to its drawing origin. */
+    private var pillInkLeft = 0f
+
+    /** Measures the loop label's ink and returns the content-sized pill for it. */
+    private fun measurePill(label: String): HaloLayout.Pill {
+        text.reset()
+        text.typeface = tf600
+        text.textSize = L.pillTextSize
+        text.getTextBounds(label, 0, label.length, bounds)
+        pillInkLeft = bounds.left.toFloat()
+        return L.pill(bounds.width().toFloat())
+    }
+
+    /** The loop label with its ink starting at [HaloLayout.Pill.textLeft] (a fixed gap after the glyph). */
+    private fun drawPillText(canvas: Canvas, label: String, pill: HaloLayout.Pill, colour: Int, aa: Boolean) {
+        text.reset()
+        text.isAntiAlias = aa
+        text.textAlign = Paint.Align.LEFT
+        text.typeface = tf600
+        text.textSize = L.pillTextSize * pill.textScale
+        text.color = colour
+        canvas.drawText(label, pill.textLeft - pillInkLeft * pill.textScale, baselineFor(L.pillY), text)
     }
 
     private fun loopColour(state: LoopState): Int = when (state) {
