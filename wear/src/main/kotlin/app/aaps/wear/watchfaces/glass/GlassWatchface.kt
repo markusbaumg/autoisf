@@ -448,7 +448,10 @@ class GlassWatchface : WatchFace() {
             phoneBattery = { getString(R.string.glass_phone_battery, it) },
             cob = { getString(R.string.glass_cob, it) },
             bgi = { "BGI $it" },
-            age = ageWords
+            age = ageWords,
+            phoneLostShort = { getString(R.string.glass_phone_disconnected_short, it) },
+            reservoirShort = { getString(R.string.glass_reservoir_short, it) },
+            phoneBatteryShort = { getString(R.string.glass_phone_battery_short, it) }
         )
     }
 
@@ -726,7 +729,7 @@ class GlassWatchface : WatchFace() {
     private var metaWidth = 0f
 
     /** One item of the status row; [w] and [x] are set by [layoutRow]. */
-    private class RowItem(val kind: RowKind, val a: String, val b: String, val colourA: Int, val colourB: Int, val keep: Int) {
+    private class RowItem(val kind: RowKind, val a: String, val b: String, val colourA: Int, val colourB: Int, val keep: Int, val short: String? = null) {
         var w = 0f
         var x = 0f
     }
@@ -751,7 +754,7 @@ class GlassWatchface : WatchFace() {
         }
         // a warning in words right after the loop: the most important thing the row says
         runs.filter { it.kind == GlassFaceLogic.RunKind.WARNING }.forEach {
-            items += RowItem(RowKind.TEXT, it.text, "", toneColour(it.tone), 0, GlassFaceLogic.ROW_KEEP_FIXED)
+            items += RowItem(RowKind.TEXT, it.text, "", toneColour(it.tone), 0, GlassFaceLogic.ROW_KEEP_FIXED, it.short?.takeIf { s -> s != it.text })
         }
         // Glass/Orbit UX round 2: the unit in its value's hue at 72 % (a grey unit read as noise beside the value)
         if (pills != Pills.LOOP_ONLY) items += RowItem(RowKind.VALUE_UNIT, iobText, iobUnit, iobColour, withAlpha(iobColour, 184), GlassFaceLogic.ROW_KEEP_IOB)
@@ -774,6 +777,16 @@ class GlassWatchface : WatchFace() {
             if (rowWidth(items) <= GlassFaceLogic.ROW_MAX_WIDTH) break
             if (size > soft) { size = max(soft, size - 1f); continue }
             val drop = GlassFaceLogic.rowDrop(IntArray(items.size) { items[it].keep })
+            // panel round 2: drop order KH, basal, then a long warning takes its short form ("Res. 5U"), IOB only after that
+            if (drop == null || items[drop].keep >= GlassFaceLogic.ROW_KEEP_IOB) {
+                val long = items.indexOfFirst { it.short != null }
+                if (long >= 0) {
+                    val t = items[long]
+                    items[long] = RowItem(t.kind, t.short!!, t.b, t.colourA, t.colourB, t.keep)
+                    size = minPx(PILL_VALUE_SIZE, PILL_VALUE_PX_MIN)
+                    continue
+                }
+            }
             if (drop != null) { items.removeAt(drop); size = minPx(PILL_VALUE_SIZE, PILL_VALUE_PX_MIN); continue }
             if (size > PILL_VALUE_MIN) { size -= 1f; continue }
             // last resort: the widest text item (a long warning) is cut before its " · <age>" tail

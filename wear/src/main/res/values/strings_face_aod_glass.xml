@@ -12,4 +12,8 @@
         <item>@string/face_aod_style_glass_bg</item>
         <item>@string/face_aod_style_glass_glance</item>
     </string-array>
+    <!-- status row short forms: a long warning shortens before IOB is dropped -->
+    <string name="glass_phone_disconnected_short">Phone · %1$s</string>
+    <string name="glass_reservoir_short">Res %1$s</string>
+    <string name="glass_phone_battery_short">Ph %1$d %%</string>
 </resources>

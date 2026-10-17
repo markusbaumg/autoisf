@@ -398,7 +398,8 @@ object GlassFaceLogic {
     enum class RunKind { WARNING, TT, COB, BASAL, BGI, RESERVOIR, PHONE_BATTERY }
 
     /** One run of the footer line; [keep] orders what is dropped first when the line is too wide (low first). */
-    data class Run(val text: String, val kind: RunKind, val tone: Tone, val keep: Int)
+    /** [short]: a shorter wording of a warning ("Res. 5U"), used by the status row before it drops IOB; null = none. */
+    data class Run(val text: String, val kind: RunKind, val tone: Tone, val keep: Int, val short: String? = null)
 
     /** Localised words used in the status slot. */
     data class SlotWords(
@@ -412,7 +413,11 @@ object GlassFaceLogic {
         val phoneBattery: (Int) -> String,
         val cob: (String) -> String,
         val bgi: (String) -> String,
-        val age: AgeWords
+        val age: AgeWords,
+        /** Short wordings for the status row (panel round 2: a long warning shortens before IOB is dropped). */
+        val phoneLostShort: ((String) -> String)? = null,
+        val reservoirShort: ((String) -> String)? = null,
+        val phoneBatteryShort: ((Int) -> String)? = null
     )
 
     data class FooterInput(
@@ -440,14 +445,14 @@ object GlassFaceLogic {
 
     private fun warningRun(w: Warning, i: FooterInput, words: SlotWords): Run? = when (w) {
         Warning.WAITING          -> Run(words.waiting, RunKind.WARNING, Tone.TXT2, 100)
-        Warning.PHONE_LOST       -> Run(words.phoneLost(ageText(i.dataAgeMinutes, words.age)), RunKind.WARNING, Tone.ALERT, 100)
+        Warning.PHONE_LOST       -> ageText(i.dataAgeMinutes, words.age).let { a -> Run(words.phoneLost(a), RunKind.WARNING, Tone.ALERT, 100, words.phoneLostShort?.invoke(a)) }
         Warning.NO_DATA          -> Run(words.noData(ageText(maxOf(i.dataAgeMinutes ?: 0, i.bgAgeMinutes ?: 0).takeIf { i.dataAgeMinutes != null || i.bgAgeMinutes != null }, words.age)), RunKind.WARNING, Tone.ALERT, 100)
         Warning.NO_PROFILE       -> Run(words.noProfile, RunKind.WARNING, Tone.WARN, 100)
         Warning.LOOP_OFF         -> Run(words.loopOff, RunKind.WARNING, Tone.WARN, 100)
         Warning.LOOP_BAD         -> Run(words.loopAge(ageText(i.loopAgeMinutes, words.age)), RunKind.WARNING, Tone.ALERT, 100)
-        Warning.RES_CRITICAL     -> Run(words.reservoir(i.reservoirString.trim()), RunKind.WARNING, Tone.ALERT, 100)
-        Warning.PHONE_BATTERY    -> phoneBatteryPercent(i.phoneBattery)?.let { Run(words.phoneBattery(it), RunKind.WARNING, if (it < 10) Tone.ALERT else Tone.WARN, 100) }
-        Warning.RES_LOW          -> Run(words.reservoir(i.reservoirString.trim()), RunKind.WARNING, Tone.WARN, 100)
+        Warning.RES_CRITICAL     -> i.reservoirString.trim().let { r -> Run(words.reservoir(r), RunKind.WARNING, Tone.ALERT, 100, words.reservoirShort?.invoke(r)) }
+        Warning.PHONE_BATTERY    -> phoneBatteryPercent(i.phoneBattery)?.let { Run(words.phoneBattery(it), RunKind.WARNING, if (it < 10) Tone.ALERT else Tone.WARN, 100, words.phoneBatteryShort?.invoke(it)) }
+        Warning.RES_LOW          -> i.reservoirString.trim().let { r -> Run(words.reservoir(r), RunKind.WARNING, Tone.WARN, 100, words.reservoirShort?.invoke(r)) }
         Warning.PHONE_LOST_FRESH -> null // glyph only
     }
 

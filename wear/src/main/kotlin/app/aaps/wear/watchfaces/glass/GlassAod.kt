@@ -247,6 +247,9 @@ object GlassAod {
 
         private fun setText(size: Float, weight: Int, colour: Int, aa: Boolean) {
             text.reset()
+            // Paint.reset() does not clear letterSpacing on every platform/runtime: set it explicitly, so the badge's
+            // 0.06 tracking never leaks into the next frame's time, date or hero (panel round 2)
+            text.letterSpacing = 0f
             text.isAntiAlias = aa
             text.textAlign = Paint.Align.LEFT
             text.typeface = tf(weight)

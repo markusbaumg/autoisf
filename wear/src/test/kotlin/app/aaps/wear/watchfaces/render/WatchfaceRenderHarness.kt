@@ -252,6 +252,10 @@ class WatchfaceRenderHarness {
         RenderState("no_profile") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, iob = "", cob = "", basal = "", external = "Kein Profil")) },
         RenderState("loop_never_pump") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = null)) },
         RenderState("reservoir_critical") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, reservoir = "5U", reservoirLevel = 2)) },
+        RenderState("reservoir_critical_zero_basal_kh") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, basal = "0.00 U/h", reservoir = "5U", reservoirLevel = 2)) },
+        RenderState("phone_lost_zero_basal_kh", phoneReachable = false) { now ->
+            data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14, basal = "0.00 U/h"))
+        },
         RenderState("phone_battery_low") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, battery = "8", batteryLevel = 0)) },
         RenderState("tt_active") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, tt = "8.0", ttLevel = 2, basal = "120%")) },
         RenderState("phone_lost_fresh", phoneReachable = false, data = inRange),

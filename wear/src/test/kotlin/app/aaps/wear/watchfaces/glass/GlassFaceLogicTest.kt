@@ -351,7 +351,10 @@ class GlassFaceLogicTest {
         phoneBattery = { "Tel $it %" },
         cob = { "KH $it" },
         bgi = { "BGI $it" },
-        age = de
+        age = de,
+        phoneLostShort = { "Tel. getrennt · $it" },
+        reservoirShort = { "Res. $it" },
+        phoneBatteryShort = { "Tel $it %" }
     )
 
     /** Rough width of the 18 px Medium face: 10 px per character (wider than Roboto, a worst case). */
@@ -393,6 +396,13 @@ class GlassFaceLogicTest {
         assertThat(footer(warnings = listOf(Warning.NO_PROFILE)).single().text).isEqualTo("Kein Profil")
         assertThat(footer(warnings = listOf(Warning.LOOP_OFF)).single().tone).isEqualTo(Tone.WARN)
         assertThat(footer(warnings = listOf(Warning.LOOP_BAD), loopAge = 23).single().text).isEqualTo("Loop 23′")
+    }
+
+    @Test fun warningRunsCarryTheirShortForm() {
+        // panel round 2: the status row shortens a long warning before it drops IOB
+        assertThat(footer(warnings = listOf(Warning.RES_CRITICAL), res = "5U", resLevel = 2)[0].short).isEqualTo("Res. 5U")
+        assertThat(footer(warnings = listOf(Warning.PHONE_BATTERY), batt = "8", battLevel = 0)[0].short).isEqualTo("Tel 8 %")
+        assertThat(footer(warnings = listOf(Warning.LOOP_OFF))[0].short).isNull()
     }
 
     @Test fun footerLowerWarningsLeadTheRuns() {
