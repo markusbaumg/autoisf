@@ -276,10 +276,12 @@ class OrbitFaceLogicTest {
 
     @Test fun redBudgetMutesLoopRing() {
         val alert = OrbitFaceLogic.Slot(6, "Loop 23′", Tone.ALERT)
-        assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, alert)).isTrue()
-        assertThat(OrbitFaceLogic.muteLoopRing(Range.URGENT_LOW, alert)).isTrue()
-        // family red budget: the pill names the loop (W6) or says the data is old (W2 / W3): the LOOP ring is muted
-        assertThat(OrbitFaceLogic.muteLoopRing(Range.IN, alert)).isTrue()
+        // Orbit polish round 4 (safety): a stopped loop (W6) is never muted, not even next to a low
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, alert)).isFalse()
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.URGENT_LOW, alert)).isFalse()
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.IN, alert)).isFalse()
+        // another alert next to a low spends the red budget; old data (W2 / W3) mutes the LOOP ring
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, OrbitFaceLogic.Slot(7, "Reservoir 5 U", Tone.ALERT))).isTrue()
         assertThat(OrbitFaceLogic.muteLoopRing(Range.STALE, OrbitFaceLogic.Slot(3, "Keine Daten · 17′", Tone.ALERT))).isTrue()
         assertThat(OrbitFaceLogic.muteLoopRing(Range.IN, OrbitFaceLogic.Slot(7, "Reservoir 5 U", Tone.ALERT))).isFalse()
         assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, OrbitFaceLogic.Slot(5, "Loop aus", Tone.WARN))).isFalse()
@@ -622,7 +624,8 @@ class OrbitFaceLogicTest {
 
     @Test fun loopPillFoldsIntoTheLoopSatellite() {
         val loop = OrbitFaceLogic.Slot(6, "Loop 23′", OrbitFaceLogic.Tone.ALERT)
-        assertThat(OrbitFaceLogic.foldLoopPill(loop, loopBallShown = true)).isTrue()
+        // Orbit polish round 4 (safety): a stopped loop keeps its "⚠ Loop 23′" words; only "Loop aus" folds
+        assertThat(OrbitFaceLogic.foldLoopPill(loop, loopBallShown = true)).isFalse()
         assertThat(OrbitFaceLogic.foldLoopPill(OrbitFaceLogic.Slot(5, "Loop aus", OrbitFaceLogic.Tone.WARN), loopBallShown = true)).isTrue()
         assertThat(OrbitFaceLogic.foldLoopPill(loop, loopBallShown = false)).isFalse()
         assertThat(OrbitFaceLogic.foldLoopPill(loop, loopBallShown = true, ambient = true)).isFalse() // no ring in ambient

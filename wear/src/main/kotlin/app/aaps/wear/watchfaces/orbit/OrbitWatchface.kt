@@ -78,6 +78,7 @@ import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * "AAPS Orbit": BG is the sun in the centre, status values are lit discs threaded on one orbit ring that uses the
@@ -1511,14 +1512,20 @@ class OrbitWatchface : WatchFace() {
         // Orbit discs round 4 (review: the amber-on-brown loop-off disc looked like the KH disc): a paused loop is the one
         // SOLID amber disc on the face, with "|| AUS" over "LOOP" in near-black and the strongest glow
         val pausedAmber = b.pause && !muted && family == AMBER
+        // Orbit polish round 4 (safety): a stopped loop (>= 15 min) is the loudest disc on the face, never quieter than a
+        // paused one: a SOLID lit red sphere with near-black "⚠ 23′" / "LOOP" and the strongest glow. WARN (6-14 min)
+        // stays an amber rim: green rim < amber rim < solid amber (off) < solid red (stopped).
+        val badRed = hot && hue == RED
         val key = hue xor (if (dim) 0x55000000 else 0) xor (if (hot) 0x2A000000 else 0) xor (if (pausedAmber) 0x3C000000 else 0) xor
-            (if (muted) 0x11000000 else 0)
+            (if (muted) 0x11000000 else 0) xor (if (badRed) 0x66000000 else 0)
         if (discShader[i] == null || discKey[i] != key) {
             discKey[i] = key
             // a muted late loop (the red budget is spent on the pill) keeps only its dashed red rim: a slate body, no glow
             discShader[i] = if (pausedAmber) solidAmberBody(x, y, r)
+            else if (badRed) solidRedBody(x, y, r)
             else discBody(x, y, r, if (muted) DISC_SLATE else bodyHue(hue), discStrength(dim, hot, muted, stale))
             val glowA = when {
+                badRed                -> DISC_BAD_GLOW_ALPHA
                 hot || pausedAmber    -> DISC_HOT_GLOW_ALPHA
                 dim || muted || stale -> 0
                 else                  -> DISC_GLOW_ALPHA
@@ -1536,6 +1543,7 @@ class OrbitWatchface : WatchFace() {
                 setStroke(1.8f, if (b.ring == Ring.DIM) DIM_RING else NEUTRAL_RING, true); stroke.pathEffect = ringDash
             }
 
+            badRed         -> setStroke(DISC_RIM, BAD_RIM, true)
             hot            -> setStroke(DISC_HOT_RIM, hue, true)
             pausedAmber    -> setStroke(DISC_RIM, PAUSED_RIM, true)
             family == null -> setStroke(1.5f, DIM_RING, true)
@@ -1545,15 +1553,17 @@ class OrbitWatchface : WatchFace() {
         canvas.drawCircle(x, y, rimR, stroke)
         stroke.pathEffect = null
         val valueColour = when {
+            badRed      -> BADGE_TXT
             pausedAmber -> PAUSED_TXT
             hot   -> if (hue == RED) HOT_RED_TXT else HOT_AMBER_TXT
             stale -> TXT2
             dim   -> DIM_TXT
             else  -> VAL_TXT
         }
-        val labelColour = if (pausedAmber) PAUSED_TXT else if (family == null || b.ring == Ring.DIM || stale) DIM_TXT else DISC_LABEL
+        val labelColour = if (badRed) BADGE_TXT else if (pausedAmber) PAUSED_TXT else if (family == null || b.ring == Ring.DIM || stale) DIM_TXT else DISC_LABEL
         val vy = if (b.label.isEmpty()) y else y - BALL_VALUE_DY
-        drawDiscValue(canvas, b, x, vy, ballSize[i], tf600, valueColour, if (pausedAmber) PAUSED_TXT else VAL_TXT, true, hollowPause = false)
+        if (!(badRed && drawBadValue(canvas, b.value, x, vy, ballSize[i])))
+            drawDiscValue(canvas, b, x, vy, ballSize[i], tf600, valueColour, if (pausedAmber) PAUSED_TXT else VAL_TXT, true, hollowPause = false)
         val label = ballLabelText[i] ?: b.label
         if (label.isNotEmpty()) drawText(canvas, label, x, y + BALL_LABEL_DY, ballLabelSize[i], tf500, labelColour, true, ballLabelTrack[i])
     }
@@ -1578,6 +1588,43 @@ class OrbitWatchface : WatchFace() {
         x - 0.34f * r, y - 0.42f * r, 1.42f * r,
         intArrayOf(AMBER_LIT, AMBER, AMBER_DEEP), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
     )
+
+    /** The stopped loop's solid red body, lit from the upper left (as [solidAmberBody]). */
+    private fun solidRedBody(x: Float, y: Float, r: Float): Shader = RadialGradient(
+        x - 0.34f * r, y - 0.42f * r, 1.42f * r,
+        intArrayOf(RED_LIT, RED, RED_DEEP), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
+    )
+
+    /**
+     * The stopped loop's value with a small alert triangle in front ("⚠ 23′"), near-black on the solid red disc, when
+     * both fit the value's chord at its size; returns false (the plain value is drawn) when they do not.
+     */
+    private fun drawBadValue(canvas: Canvas, value: String, x: Float, cy: Float, fullSize: Float): Boolean {
+        setText(fullSize, tf600)
+        val tw0 = text.measureText(value)
+        val iw = BAD_ICON_W
+        // the value may give up a few px for the triangle, never below BAD_VALUE_MIN (then the plain value)
+        var size = fullSize
+        repeat(3) { size = OrbitFaceLogic.fitSize(tw0, fullSize, OrbitFaceLogic.valueMaxWidth(size) - iw).coerceAtMost(fullSize) }
+        if (size < BAD_VALUE_MIN) return false
+        val tw = tw0 * size / fullSize
+        val x0 = x - (tw + iw) / 2f
+        canvas.save()
+        canvas.translate(x0 + BAD_ICON_SCALE * 7f, cy - 0.5f)
+        canvas.scale(BAD_ICON_SCALE, BAD_ICON_SCALE)
+        setStroke(1.9f, BADGE_TXT, true)
+        stroke.strokeJoin = Paint.Join.ROUND
+        stroke.strokeCap = Paint.Cap.ROUND
+        canvas.drawPath(warnIcon, stroke)
+        canvas.drawLine(0f, -1.5f, 0f, 2f, stroke)
+        canvas.drawPoint(0f, 4.2f, stroke)
+        canvas.restore()
+        setText(size, tf600)
+        text.textAlign = Paint.Align.LEFT
+        text.color = BADGE_TXT
+        canvas.drawText(value, x0 + iw, baseline(cy), text)
+        return true
+    }
 
     /** Glow in the state colour from the rim outwards ([DISC_GLOW] px). */
     private fun discGlow(x: Float, y: Float, r: Float, hue: Int, alpha: Int): Shader = RadialGradient(
@@ -1705,9 +1752,10 @@ class OrbitWatchface : WatchFace() {
                     canvas.drawPath(outlineSegment, stroke)
                 }
                 drawBolusAmount(canvas, amountY, Color.WHITE)
-                // Orbit discs round 4 (review: a tick read as "done / sent"): the family's "tap again" word, as Halo: "nochmal"
-                // when it fits the button's chord at the sub line, else "2×" (Halo's small-ball fallback)
-                drawText(canvas, armedWord(), bolusX, subY, armedWordSize, tf700, Color.WHITE, true)
+                // Orbit polish round 4 (review: "+0,5" over "2×" read like a double dose): always the "tap again" word,
+                // bold, fitted to the button's chord; "2×" only on a button under 50 px across (never on Orbit's 80 px)
+                val word = armedWord()
+                drawText(canvas, word, bolusX, bolusY + ARMED_WORD_DY, armedWordSize, tf700, Color.WHITE, true, ARMED_WORD_TRACK)
             }
 
             state == State.SENT  -> {
@@ -1754,15 +1802,28 @@ class OrbitWatchface : WatchFace() {
 
     private var armedWordSize = ARMED_WORD_SIZE
 
-    /** "nochmal" / "again" at 18 px bold when it fits [BOLUS_AMOUNT_MAX_W], else "2×" at 22 px bold. */
+    /**
+     * "nochmal" / "again" in bold, [ARMED_WORD_SIZE] shrunk to fit [BOLUS_AMOUNT_MAX_W], never below [ARMED_WORD_MIN].
+     * "2×" only when the button is under [ARMED_TWICE_BELOW] px across (as Halo's small ball); Orbit's is 80 px.
+     */
     private fun armedWord(): String {
-        setText(ARMED_WORD_SIZE, tf700)
-        if (text.measureText(labels.again) <= BOLUS_AMOUNT_MAX_W - 2f) {
-            armedWordSize = ARMED_WORD_SIZE
-            return labels.again
+        if (2f * OrbitFaceLogic.BOLUS_HALF < ARMED_TWICE_BELOW) {
+            armedWordSize = ARMED_TWICE_SIZE
+            return ARMED_TWICE
         }
-        armedWordSize = ARMED_TWICE_SIZE
-        return ARMED_TWICE
+        setText(ARMED_WORD_SIZE, tf700)
+        text.letterSpacing = ARMED_WORD_TRACK
+        val w = text.measureText(labels.again)
+        // the chord inside the 4 px countdown ring (r 39) with 2 px air, at the word's baseline (its edge nearest the rim)
+        val inner = OrbitFaceLogic.BOLUS_HALF - 1f - ARMED_RING_W / 2f - 2f
+        var size = ARMED_WORD_SIZE
+        repeat(3) {
+            val edge = ARMED_WORD_DY + OrbitFaceLogic.CAP_HALF_EM * size
+            val chord = 2f * sqrt(max(0f, inner * inner - edge * edge))
+            size = OrbitFaceLogic.fitSize(w, ARMED_WORD_SIZE, min(BOLUS_AMOUNT_MAX_W, chord)).coerceIn(ARMED_WORD_MIN, ARMED_WORD_SIZE)
+        }
+        armedWordSize = size
+        return labels.again
     }
 
     /** The bolus amount, 26 px bold, shrunk only to the button's chord (a long "+10,5" stays inside the ring). */
@@ -1986,7 +2047,11 @@ class OrbitWatchface : WatchFace() {
         private const val BOLUS_RING_W = 2f // Orbit discs round 4: 2.5 -> 2 px at 63 % white
         private const val IDLE_RING_ALPHA = 160
         private const val ARMED_RING_W = 4f
-        private const val ARMED_WORD_SIZE = 18f
+        private const val ARMED_WORD_SIZE = 17f
+        private const val ARMED_WORD_MIN = 15f
+        private const val ARMED_WORD_DY = 12f // 5 px under the amount's baseline, where the chord is widest
+        private const val ARMED_WORD_TRACK = -0.02f
+        private const val ARMED_TWICE_BELOW = 50f
         private const val ARMED_TWICE_SIZE = 22f
         private const val ARMED_TWICE = "2×"
         /** Pause glyph width (two 5 px bars 11 px apart) and its gap to "AUS", at the 28 px value size. */
@@ -2047,6 +2112,7 @@ class OrbitWatchface : WatchFace() {
         private const val DISC_GLOW = 10f
         private const val DISC_GLOW_ALPHA = 55
         private const val DISC_HOT_GLOW_ALPHA = 150
+        private const val DISC_BAD_GLOW_ALPHA = 175 // a stopped loop glows at least as strongly as a paused one
         private const val DISC_SHADOW_DY = 5f
         private const val DISC_SHADOW_SOFT = 8f
         private const val DISC_SPEC_ALPHA = 68
@@ -2073,6 +2139,12 @@ class OrbitWatchface : WatchFace() {
         private const val AMBER_DEEP = 0xFFD98A1E.toInt()
         private const val PAUSED_RIM = 0xFFFFE2A8.toInt()
         private const val PAUSED_TXT = 0xFF1A1206.toInt()
+        private const val RED_LIT = 0xFFFF9AA6.toInt()
+        private const val RED_DEEP = 0xFFD8364C.toInt()
+        private const val BAD_RIM = 0xFFFFC2CA.toInt()
+        private const val BAD_ICON_SCALE = 1.05f
+        private const val BAD_ICON_W = 18f // 14.7 px triangle + gap
+        private const val BAD_VALUE_MIN = 24f
         /** Idle bolus button: a solid indigo (white 4.6:1 or more on it). */
         private const val BOLUS_FILL = 0xFF4752D6.toInt() // Orbit discs round 4: 4F5FF0 -> 4752D6, the BG stays the hero
         /** Orbit discs round 4: the socket of an empty 3 / 9 o'clock station. */
@@ -2101,7 +2173,7 @@ class OrbitWatchface : WatchFace() {
         // Glass/Orbit UX round 1: a deeper indigo (white 7:1), the armed button no longer dominates the face
         // Glass/Orbit UX round 3: the family's armed indigo #5B63F5 (Glass), idle and armed differ by fill AND ring
         // Orbit discs round 3: armed is a brighter indigo than the solid idle button (plus the countdown and the tick)
-        private const val ARMED_FILL = 0xFF7484FF.toInt()
+        private const val ARMED_FILL = 0xFF5560E0.toInt() // Orbit polish round 4: white text 5.1:1 (was 3.2:1 on #7484FF)
         private const val NOW_HOLLOW = 0xFFC8C8C8.toInt()
         private const val PILL_ALERT = 0xFF3A1018.toInt()
         private const val PILL_WARN = 0xFF33240C.toInt()

@@ -495,8 +495,13 @@ object OrbitFaceLogic {
      * states without a satellite (reservoir, phone battery, no profile, data). Ambient keeps the pill (the satellite
      * has no ring there).
      */
+    /**
+     * Orbit polish round 4 (safety): only "Loop aus" (W5) folds. A stopped loop (W6, >= 15 min) keeps its red
+     * "⚠ Loop 23′" words in the W4-W9 slot as well as the solid red LOOP disc: it must never be quieter than a
+     * deliberately paused loop.
+     */
     fun foldLoopPill(slot: Slot?, loopBallShown: Boolean, ambient: Boolean = false): Boolean =
-        (slot?.rank == 5 || slot?.rank == 6) && loopBallShown && !ambient
+        slot?.rank == 5 && loopBallShown && !ambient
 
     /** First start: nothing has ever arrived from the phone. */
     fun firstStart(bgTimeStamp: Long, openApsStatus: Long, iobSum: String): Boolean = FaceState.firstStart(bgTimeStamp, openApsStatus, iobSum)
@@ -550,8 +555,12 @@ object OrbitFaceLogic {
      * "23′" under-signalled it): it draws a solid red ring and a red age. Muting stays for stale data (W2 / W3), where
      * the loop age only repeats that the data is gone.
      */
+    /**
+     * Orbit polish round 4 (safety): a stopped loop (W6) is never muted, not even next to a low or its own "Loop 23′"
+     * words: the solid red LOOP disc must stay at least as loud as a paused loop.
+     */
     fun muteLoopRing(range: Range, slot: Slot?, loopPillFolded: Boolean = false): Boolean =
-        slot?.rank == 2 || slot?.rank == 3 || (!loopPillFolded && ((isLow(range) && slot?.tone == Tone.ALERT) || slot?.rank == 6))
+        slot?.rank == 2 || slot?.rank == 3 || (!loopPillFolded && slot?.rank != 6 && isLow(range) && slot?.tone == Tone.ALERT)
 
     /** <= 5 OK, 6..14 WARN, >= 15 BAD. No loop run at all (-1) is NEVER: grey, never red. */
     fun loopHealth(ageMinutes: Long?, realRun: Boolean = true): LoopHealth =
