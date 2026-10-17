@@ -135,13 +135,13 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.deltaText("+0,1")).isEqualTo("+0,1")
         assertThat(GlassFaceLogic.deltaText("-0,4")).isEqualTo("-0,4")
         assertThat(GlassFaceLogic.deltaText("+12")).isEqualTo("+12")
-        assertThat(GlassFaceLogic.deltaText("0.0")).isEqualTo("+0.0")
+        assertThat(GlassFaceLogic.deltaText("0.0")).isEqualTo("±0.0")
         assertThat(GlassFaceLogic.deltaText("--")).isEqualTo("--")
         assertThat(GlassFaceLogic.deltaText("")).isEqualTo("--")
-        assertThat(GlassFaceLogic.pickDelta("d", "a", "dd", "ad", detailed = false, avg = true)).isEqualTo("a")
-        assertThat(GlassFaceLogic.pickDelta("d", "a", "dd", "ad", detailed = true, avg = false)).isEqualTo("dd")
-        assertThat(GlassFaceLogic.pickDelta("d", "a", "dd", "ad", detailed = true, avg = true)).isEqualTo("ad")
-        assertThat(GlassFaceLogic.pickDelta("d", "a", "dd", "ad", detailed = false, avg = false)).isEqualTo("d")
+        assertThat(GlassFaceLogic.pickDelta("+1", "+2", "+1,1", "+2,2", detailed = false, avg = true)).isEqualTo("+2")
+        assertThat(GlassFaceLogic.pickDelta("+1", "+2", "+1,1", "+2,2", detailed = true, avg = false)).isEqualTo("+1,1")
+        assertThat(GlassFaceLogic.pickDelta("+1", "+2", "+1,1", "+2,2", detailed = true, avg = true)).isEqualTo("+2,2")
+        assertThat(GlassFaceLogic.pickDelta("+1", "+2", "+1,1", "+2,2", detailed = false, avg = false)).isEqualTo("+1")
     }
 
     // ------------------------------------------------------------------ units: mmol / mg/dL
@@ -655,15 +655,15 @@ class GlassFaceLogicTest {
     @Test fun heroReflowsWithoutTheChip() {
         val chip = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = false)
         assertThat(chip.bgX).isEqualTo(GlassFaceLogic.BG_X_CHIP)
-        assertThat(chip.bgY).isEqualTo(178f)
-        assertThat(chip.chipY).isEqualTo(176f)
+        assertThat(chip.bgY).isEqualTo(183f)
+        assertThat(chip.chipY).isEqualTo(181f)
         // the delta line sits under the digits at full card width
         assertThat(chip.metaCentreX).isEqualTo(225f)
         assertThat(chip.metaY).isEqualTo(GlassFaceLogic.META_Y)
         assertThat(chip.bgMaxWidth).isEqualTo(GlassFaceLogic.BG_MAX_WIDTH)
         // empty meta line: digits and chip centre vertically
         val chipNoMeta = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = true)
-        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(203f to 201f)
+        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(206f to 204f)
         // the digits' left and right edges (half the budget) keep 12 px card padding and 8 px to the r 24 chip
         assertThat(chip.bgX - GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtLeast(GlassFaceLogic.HERO_X0 + 12f)
         assertThat(chip.bgX + GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtMost(GlassFaceLogic.CHIP_X - GlassFaceLogic.CHIP_R - 8f)
@@ -671,10 +671,10 @@ class GlassFaceLogicTest {
         // trend.hidden_pref: BG (225,180), meta under it, 300 px for the digits
         val noChip = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = false)
         assertThat(listOf(noChip.bgX, noChip.bgY, noChip.metaCentreX, noChip.metaY, noChip.bgMaxWidth))
-            .containsExactly(225f, 178f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
+            .containsExactly(225f, 183f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
         assertThat(GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).isAtMost(GlassFaceLogic.HERO_X1 - GlassFaceLogic.HERO_X0 - 24f)
         val noChipNoMeta = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = true)
-        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 203f)
+        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 206f)
         // the card stays inside the round screen at its corners (r 28)
         for ((x, y) in listOf(GlassFaceLogic.HERO_X0 + 8f to GlassFaceLogic.HERO_Y0 + 8f, GlassFaceLogic.HERO_X1 - 8f to GlassFaceLogic.HERO_Y1 - 8f))
             assertThat(kotlin.math.hypot(x - 225f, y - 225f)).isLessThan(215f)
@@ -723,11 +723,40 @@ class GlassFaceLogicTest {
     }
 
     @Test fun metaLineEmptyWithoutAReading() {
-        assertThat(GlassFaceLogic.metaVisible(BgAge.NONE, prefShowAgo = true, prefShowDelta = true)).isEqualTo(false to false)
-        assertThat(GlassFaceLogic.metaVisible(BgAge.FRESH, prefShowAgo = true, prefShowDelta = true)).isEqualTo(true to true)
-        assertThat(GlassFaceLogic.metaVisible(BgAge.FRESH, prefShowAgo = false, prefShowDelta = true)).isEqualTo(true to false)
-        assertThat(GlassFaceLogic.metaVisible(BgAge.AGING, prefShowAgo = false, prefShowDelta = false)).isEqualTo(false to true)
-        assertThat(GlassFaceLogic.metaVisible(BgAge.STALE, prefShowAgo = true, prefShowDelta = true)).isEqualTo(false to true)
+        assertThat(GlassFaceLogic.metaVisible(BgAge.NONE, prefShowAgo = true)).isEqualTo(false to false)
+        assertThat(GlassFaceLogic.metaVisible(BgAge.FRESH, prefShowAgo = true)).isEqualTo(true to true)
+        assertThat(GlassFaceLogic.metaVisible(BgAge.FRESH, prefShowAgo = false)).isEqualTo(true to false)
+        // Glass live round 1: an aging reading keeps its delta (only stale data drops it)
+        assertThat(GlassFaceLogic.metaVisible(BgAge.AGING, prefShowAgo = false)).isEqualTo(true to true)
+        assertThat(GlassFaceLogic.metaVisible(BgAge.STALE, prefShowAgo = true)).isEqualTo(false to true)
+    }
+
+    @Test fun zeroDeltaIsAlwaysShown() {
+        // Glass live round 1: delta 0 left only "0′" under the digits on the watch; a steady BG shows "±0,0"
+        assertThat(GlassFaceLogic.deltaText("0,0")).isEqualTo("±0,0")
+        assertThat(GlassFaceLogic.deltaText("+0,0")).isEqualTo("±0,0")
+        assertThat(GlassFaceLogic.deltaText("+0.0")).isEqualTo("±0.0")
+        assertThat(GlassFaceLogic.deltaText("0")).isEqualTo("±0")
+        assertThat(GlassFaceLogic.deltaText("+0")).isEqualTo("±0")
+        assertThat(GlassFaceLogic.deltaText("±0,0")).isEqualTo("±0,0")
+        // a rounded falling value keeps the phone's sign
+        assertThat(GlassFaceLogic.deltaText("-0,0")).isEqualTo("-0,0")
+        assertThat(GlassFaceLogic.deltaText("-0.0")).isEqualTo("-0.0")
+        // non-zero values are untouched
+        assertThat(GlassFaceLogic.deltaText("+0,1")).isEqualTo("+0,1")
+        assertThat(GlassFaceLogic.deltaText("10")).isEqualTo("+10")
+        // a picked variant the phone left empty falls back to the plain delta
+        assertThat(GlassFaceLogic.pickDelta("+0,0", "--", "", "", detailed = false, avg = true)).isEqualTo("+0,0")
+        assertThat(GlassFaceLogic.pickDelta("+0,0", "-0,1", "", "", detailed = false, avg = true)).isEqualTo("-0,1")
+        assertThat(GlassFaceLogic.deltaText(GlassFaceLogic.pickDelta("0.0", "", "", "", detailed = false, avg = true))).isEqualTo("±0.0")
+        // the meta line ("±0,0 · 0′") fits the card at the 28 px size: HERO width minus padding
+        assertThat(GlassFaceLogic.META_Y + 14f).isAtMost(GlassFaceLogic.HERO_Y1 - 4f)
+    }
+
+    @Test fun timeAndCardClearTheSystemStatusIcon() {
+        // Glass live round 1: the Samsung status icon spans y 23..49 (plus its dark disc to about 55)
+        assertThat(GlassFaceLogic.HERO_Y0).isAtLeast(124f)
+        assertThat(GlassFaceLogic.HERO_Y1 - GlassFaceLogic.HERO_Y0).isAtLeast(156f)
     }
 
     @Test fun pillLayout() {

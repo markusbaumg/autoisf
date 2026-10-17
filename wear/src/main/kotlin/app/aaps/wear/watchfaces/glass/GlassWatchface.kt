@@ -493,7 +493,7 @@ class GlassWatchface : WatchFace() {
 
         // meta line (delta · age); empty for age.none / first start
         val (deltaOn, ageOn) = GlassFaceLogic.metaVisible(
-            bgAge, prefShowAgo = sp.getBoolean(R.string.key_show_ago, true), prefShowDelta = sp.getBoolean(R.string.key_show_delta, true)
+            bgAge, prefShowAgo = sp.getBoolean(R.string.key_show_ago, true)
         )
         showDelta = deltaOn
         showAge = ageOn
@@ -885,7 +885,7 @@ class GlassWatchface : WatchFace() {
         canvas.drawText(parts.third, x, y, text)
     }
 
-    /** Time (tabular digits, own paint), 12 h suffix, and the date unless key_show_date is off (time then at y=74). */
+    /** Time (tabular digits, own paint), 12 h suffix, and the date unless key_show_date is off (time then at y=88). */
     private fun drawTime(canvas: Canvas, tf: Typeface, colour: Int, suffixColour: Int, dateColour: Int, aa: Boolean) {
         timePaint.typeface = tf
         timePaint.textSize = TIME_SIZE
@@ -1741,14 +1741,16 @@ class GlassWatchface : WatchFace() {
         // UX round 3: the time and date start below y 60 (the Watch5 Pro status icon spans y 23-49), the date is 24 px,
         // the card is y 120..274, the sparkline 50 px, the pills y 344..380 and the footer 26 px at y 406.
         // UX round 4: time and date 4-6 px further apart and 10 px or more above the card (y 116)
-        private const val TIME_Y = 66f
-        private const val TIME_Y_NO_DATE = 80f
-        private const val TIME_SIZE = 40f
+        // Glass live round 1: on the watch the Samsung status icon (charging, y 23..49 plus its dark disc) sat on the
+        // time's top edge; the time is 38 px (Halo's cap height) centred at y 77 (glyphs y 63..91), the date at 108
+        private const val TIME_Y = 77f
+        private const val TIME_Y_NO_DATE = 88f
+        private const val TIME_SIZE = 38f
         private const val AM_PM_GAP = 4f
         /** 12 h suffix: at the 18 px text floor (was 17). */
         private const val AM_PM_SIZE = 18f
         // Glass/Orbit UX round 3: 22 px in TXT2 (Halo's rhythm) and 3 px further from the time: one calm top block
-        private const val DATE_Y = 99f
+        private const val DATE_Y = 108f
         private const val DATE_SIZE = 22f
         /** Physical text floor (Halo's [app.aaps.wear.watchfaces.halo.HaloLayout.MIN_TEXT_PX]): 384 px screens keep it. */
         private const val MIN_TEXT_PX = 18f
