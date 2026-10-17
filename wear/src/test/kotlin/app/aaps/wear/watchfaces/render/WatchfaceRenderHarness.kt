@@ -105,6 +105,8 @@ class WatchfaceRenderHarness {
 
     /** Orbit discs round 4: states in which Orbit's date glyphs came closer than 6 px to the ring's inner edge. */
     private val dateRingHits = ArrayList<String>()
+    /** Glass polish round 7: the hero group (digits, chip) closer than [HERO_SIDE_MIN_PX] to the card's stroke. */
+    private val heroSideHits = ArrayList<String>()
 
     /** Locale of the phone that "sent" the data of the state being rendered (German: decimal comma). */
     private var phoneGerman = true
@@ -305,6 +307,7 @@ class WatchfaceRenderHarness {
         assertTrue("content within $EDGE_MARGIN_PX px of the bezel:\n" + edgeHits.joinToString("\n"), edgeHits.isEmpty())
         assertTrue("no date drawn in:\n" + dateMisses.joinToString("\n"), dateMisses.isEmpty())
         assertTrue("date closer than ${OrbitFaceLogic.DATE_RING_CLEAR} px to the ring:\n" + dateRingHits.joinToString("\n"), dateRingHits.isEmpty())
+        assertTrue("hero group closer than $HERO_SIDE_MIN_PX px to the card:\n" + heroSideHits.joinToString("\n"), heroSideHits.isEmpty())
     }
 
     /**
@@ -387,6 +390,10 @@ class WatchfaceRenderHarness {
             val clear = listOf(b.left to b.top, b.right to b.top, b.left to b.bottom, b.right to b.bottom)
                 .minOf { (x, y) -> OrbitFaceLogic.ringClear(x, y) }
             if (clear < OrbitFaceLogic.DATE_RING_CLEAR) dateRingHits += "orbit/${s.id}: '${wf.drawnDateText}' ${"%.1f".format(clear)} px"
+        }
+        if (wf is GlassWatchface && s.mode == Mode.INTERACTIVE && s.px == 450) {
+            val (left, right) = wf.heroSidePadding
+            if (min(left, right) < HERO_SIDE_MIN_PX) heroSideHits += "glass/${s.id}: left ${"%.1f".format(left)} px, right ${"%.1f".format(right)} px"
         }
         roundMask(bmp)
         return bmp
@@ -515,4 +522,6 @@ class WatchfaceRenderHarness {
 }
 
 private const val EDGE_MARGIN_PX = 14f
+/** Glass polish round 7: glass between the hero group (digits, chip) and the card's stroke, each side (450 grid). */
+private const val HERO_SIDE_MIN_PX = 12f
 private const val EDGE_LEVEL = 110

@@ -179,6 +179,22 @@ object GlassFaceLogic {
     const val SEPARATOR_KERN = 0.07f
 
     /**
+     * Glass polish round 7: the sentinel marks of [bgText] ("<" before, "+" after) as (prefix, number, suffix); each mark
+     * is "" when absent. The face draws the marks at [SENTINEL_MARK_SCALE] of the digit size, centred on the digits'
+     * height, [SENTINEL_MARK_GAP] px of ink gap to the number (at full size "<2,2" ran 185 px wide and the "<" was
+     * heavier than the number).
+     */
+    fun splitSentinel(s: String): Triple<String, String, String> {
+        val pre = if (s.length > 1 && s.startsWith("<")) "<" else ""
+        val rest = s.substring(pre.length)
+        val suf = if (rest.length > 1 && rest.endsWith("+")) "+" else ""
+        return Triple(pre, rest.substring(0, rest.length - suf.length), suf)
+    }
+
+    const val SENTINEL_MARK_SCALE = 0.58f
+    const val SENTINEL_MARK_GAP = 3f
+
+    /**
      * Hue of the BG digits (spec §4.1, F1): low and urgent low are red, never white; stale grey.
      * Glass/Orbit UX round 2 (sunlight): high and very high are amber digits (the glow alone washed out outdoors, so 6,4
      * and 12,4 looked alike); in range is a pale mint (the family maps hue to state the same way on all three faces,
@@ -213,7 +229,9 @@ object GlassFaceLogic {
     const val BG_SIZE_STEP = 2f
     const val BG_MIN_SIZE = 80f
     /** Glass polish round 1: the card's inner width (300) less the chip (r 25) and its 18 px gap. */
-    const val BG_MAX_WIDTH = 230f // Glass polish round 1: 230, the widest group (digits, gap, chip) centred on the card
+    // Glass polish round 1: 230, the widest group (digits, gap, chip) centred on the card. Glass polish round 7: 230 -> 224,
+    // so the widest group (224 + 18 + 50 = 292 px) keeps 16 px to the card's stroke on both sides (13 px before)
+    const val BG_MAX_WIDTH = 224f
     const val BG_MAX_WIDTH_NO_CHIP = 300f
 
     /**
@@ -662,6 +680,13 @@ object GlassFaceLogic {
     }
 
     /**
+     * Glass polish round 7: how many up-chevrons ([width] px wide, every [pitch] px) mark a clamped run [runWidth] px
+     * long: as many as fit, and always at least one (a short excursion off the top is still marked).
+     */
+    fun offChevronCount(runWidth: Float, width: Float, pitch: Float): Int =
+        if (runWidth <= width || pitch <= 0f) 1 else ((runWidth - width) / pitch).toInt() + 1
+
+    /**
      * x of slot [slot] (fractional), "now" is slot 35; with [forecast] the [SPARK_FORECAST] future slots follow up to
      * [SPARK_X1], else now is the plot's right end at [SPARK_X1_NOW].
      */
@@ -854,7 +879,7 @@ object GlassFaceLogic {
     /** Trend chip column (UX round 4: r 18 -> 24). */
     /** Glass/Orbit UX round 6: r 24 -> 28 at x 348, the arrow about 0.6 of the disc (the main signal after the BG). */
     /** Glass polish round 1: r 28 -> 25 with the smaller digits; [CHIP_X] is the widest group's chip (see [heroGroup]). */
-    const val CHIP_X = 349f
+    const val CHIP_X = 346f // Glass polish round 7: 349 -> 346 with [BG_MAX_WIDTH] 224 (the widest group 16 px from the card on both sides)
     const val CHIP_R = 25f
     const val CHIP_GAP = 18f
 

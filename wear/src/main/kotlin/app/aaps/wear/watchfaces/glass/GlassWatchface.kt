@@ -261,7 +261,6 @@ class GlassWatchface : WatchFace() {
     private var offCount = 0
     private val offTmp = FloatArray(3 * 12)
     private val chevron = Path()
-    private val offDots = DashPathEffect(floatArrayOf(0.1f, 5f), 0f)
     private var predCount = 0
     private var sparkX0 = GlassFaceLogic.SPARK_X0
     private var sparkForecast = true
@@ -685,6 +684,13 @@ class GlassWatchface : WatchFace() {
         captionX = metaX + total + capGap + capW / 2f
     }
 
+    /**
+     * Render harness (Glass polish round 7): glass between the hero group (digits and trend chip) and the card's stroke,
+     * (left, right) on the 450 grid. The sentinel "22,3+" must keep 12 px or more on the chip's side.
+     */
+    @VisibleForTesting internal val heroSidePadding: Pair<Float, Float>
+        get() = (hero.bgX - bgHalfWidth - HERO_X0) to (HERO_X1 - if (showChip) hero.chipX + CHIP_R else hero.bgX + bgHalfWidth)
+
     private var captionX = 0f
 
     private fun captionPillWidth(): Float {
@@ -944,22 +950,58 @@ class GlassWatchface : WatchFace() {
         return centreY - (fm.ascent + fm.descent) / 2f
     }
 
-    /** Width of [bgText] in [text] with the tight decimal separator (UX round 3, [GlassFaceLogic.splitDecimal]). */
-    private fun bgWidth(): Float {
-        val parts = GlassFaceLogic.splitDecimal(bgText) ?: return text.measureText(bgText)
+    /** Width of [s] in [text] with the tight decimal separator (UX round 3, [GlassFaceLogic.splitDecimal]). */
+    private fun numberWidth(s: String): Float {
+        val parts = GlassFaceLogic.splitDecimal(s) ?: return text.measureText(s)
         return text.measureText(parts.first) + text.measureText(parts.second) + text.measureText(parts.third) -
             2f * GlassFaceLogic.SEPARATOR_KERN * text.textSize
     }
 
-    /** [bgText] centred on [cx] with the tight separator; [text] is set up (any style), its alignment is changed. */
-    private fun drawBg(canvas: Canvas, cx: Float, cy: Float) {
-        text.textAlign = Paint.Align.LEFT
-        val y = baseline(cy)
-        var x = cx - bgWidth() / 2f
-        val parts = GlassFaceLogic.splitDecimal(bgText)
+    private val markBounds = android.graphics.Rect()
+    private val digitBounds = android.graphics.Rect()
+
+    /** Ink bounds of the sentinel mark [m] at [GlassFaceLogic.SENTINEL_MARK_SCALE] of the current size, into [markBounds]. */
+    private fun markInk(m: String) {
+        val size = text.textSize
+        val tf = text.typeface
+        text.textSize = size * GlassFaceLogic.SENTINEL_MARK_SCALE
+        text.typeface = if (tf == tf600) tf700 else tf // a step bolder: at the smaller size the 600 "<" read spindly
+        text.getTextBounds(m, 0, m.length, markBounds)
+        text.textSize = size
+        text.typeface = tf
+    }
+
+    /** Left side bearing of the number's first glyph and right side bearing of its last ([text] at the digit size). */
+    private fun bearings(num: String): Pair<Float, Float> {
+        if (num.isEmpty()) return 0f to 0f
+        text.getTextBounds(num, 0, 1, digitBounds)
+        val lsb = digitBounds.left.toFloat()
+        val last = num.substring(num.length - 1)
+        text.getTextBounds(last, 0, 1, digitBounds)
+        return lsb to text.measureText(last) - digitBounds.right
+    }
+
+    /**
+     * Width of [bgText] in [text]: the number with the tight separator, and the sentinel marks (Glass polish round 7:
+     * small, [GlassFaceLogic.SENTINEL_MARK_GAP] px of ink gap to the digits, see [GlassFaceLogic.splitSentinel]).
+     */
+    private fun bgWidth(): Float {
+        val (pre, num, suf) = GlassFaceLogic.splitSentinel(bgText)
+        var w = numberWidth(num)
+        if (pre.isEmpty() && suf.isEmpty()) return w
+        val (lsb, rsb) = bearings(num)
+        if (pre.isNotEmpty()) { markInk(pre); w += markBounds.width() + GlassFaceLogic.SENTINEL_MARK_GAP - lsb }
+        if (suf.isNotEmpty()) { markInk(suf); w += markBounds.width() + GlassFaceLogic.SENTINEL_MARK_GAP - rsb }
+        return w
+    }
+
+    /** The number [s] from [x] on the baseline [y] with the tight separator; returns the advance end. */
+    private fun drawNumber(canvas: Canvas, s: String, x0: Float, y: Float): Float {
+        var x = x0
+        val parts = GlassFaceLogic.splitDecimal(s)
         if (parts == null) {
-            canvas.drawText(bgText, x, y, text)
-            return
+            canvas.drawText(s, x, y, text)
+            return x + text.measureText(s)
         }
         val kern = GlassFaceLogic.SEPARATOR_KERN * text.textSize
         canvas.drawText(parts.first, x, y, text)
@@ -967,6 +1009,41 @@ class GlassWatchface : WatchFace() {
         canvas.drawText(parts.second, x, y, text)
         x += text.measureText(parts.second) - kern
         canvas.drawText(parts.third, x, y, text)
+        return x + text.measureText(parts.third)
+    }
+
+    /** A sentinel mark with its ink's left edge at [inkLeft], its ink centred on [centreY]; same paint, smaller size. */
+    private fun drawMark(canvas: Canvas, m: String, inkLeft: Float, centreY: Float) {
+        markInk(m)
+        val size = text.textSize
+        val tf = text.typeface
+        text.textSize = size * GlassFaceLogic.SENTINEL_MARK_SCALE
+        text.typeface = if (tf == tf600) tf700 else tf
+        canvas.drawText(m, inkLeft - markBounds.left, centreY - (markBounds.top + markBounds.bottom) / 2f, text)
+        text.textSize = size
+        text.typeface = tf
+    }
+
+    /** [bgText] centred on [cx] with the tight separator; [text] is set up (any style), its alignment is changed. */
+    private fun drawBg(canvas: Canvas, cx: Float, cy: Float) {
+        text.textAlign = Paint.Align.LEFT
+        val y = baseline(cy)
+        var x = cx - bgWidth() / 2f
+        val (pre, num, suf) = GlassFaceLogic.splitSentinel(bgText)
+        if (pre.isEmpty() && suf.isEmpty()) {
+            drawNumber(canvas, num, x, y)
+            return
+        }
+        // the marks centred on the digits' height (the ink of "0"), not on the font's line box
+        text.getTextBounds("0", 0, 1, digitBounds)
+        val markY = y + (digitBounds.top + digitBounds.bottom) / 2f
+        val (lsb, rsb) = bearings(num)
+        if (pre.isNotEmpty()) {
+            drawMark(canvas, pre, x, markY)
+            x += markBounds.width() + GlassFaceLogic.SENTINEL_MARK_GAP - lsb
+        }
+        val end = drawNumber(canvas, num, x, y)
+        if (suf.isNotEmpty()) drawMark(canvas, suf, end - rsb + GlassFaceLogic.SENTINEL_MARK_GAP, markY)
     }
 
     /** Time (tabular digits, own paint), 12 h suffix, and the date unless key_show_date is off (time then at y=88). */
@@ -1071,7 +1148,7 @@ class GlassWatchface : WatchFace() {
             line.shader = null
             line.clearShadowLayer()
             // Glass polish round 6: clamped older history faded in the colour of its real value, with an up-chevron
-            drawOffScale(canvas, aa = true, width = TRACE_W) { peak ->
+            drawOffScale(canvas, aa = true) { peak ->
                 withAlpha(if (stale) STALE_COL else if (peak > highMgdl) HIGH_COL else IN_COL, OFF_SCALE_ALPHA)
             }
         }
@@ -1265,39 +1342,40 @@ class GlassWatchface : WatchFace() {
 
     /**
      * Glass polish round 6 (strict panel): older history above the plot is clamped to its top edge; a solid plateau
-     * there read as data ("flat at 7 mmol/l"). It is drawn at [colourOf] (the colour of its REAL peak, faded) and
-     * marked with a small up-chevron above the plateau: "off the scale, higher than shown".
+     * there read as data ("flat at 7 mmol/l").
+     * Glass polish round 7 (strict panel): a dotted line along the top still read as a band edge (same spot, same
+     * hairline weight as the dashed edges, and in ambient the same grey as the low edge). The clamped run is no longer
+     * a line at all: the trace stops where it leaves the plot and the run is a row of up-chevrons ([OFF_CHEVRON_W] x
+     * [OFF_CHEVRON_H] px, 2 px stroke, every [OFF_CHEVRON_PITCH] px) in [colourOf] (the colour of its REAL peak): "off
+     * the scale, higher than shown". Clipped to the plot.
      */
-    private fun drawOffScale(canvas: Canvas, aa: Boolean, width: Float, trace: Boolean = true, colourOf: (Float) -> Int) {
+    private fun drawOffScale(canvas: Canvas, aa: Boolean, colourOf: (Float) -> Int) {
+        if (offCount == 0) return
         val top = GlassFaceLogic.SPARK_Y0 + GlassFaceLogic.SPARK_INSET
+        val save = canvas.save()
+        canvas.clipRect(sparkX0, GlassFaceLogic.SPARK_Y0, sparkEndX, GlassFaceLogic.SPARK_Y1)
+        line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE
+        line.strokeCap = if (aa) Paint.Cap.ROUND else Paint.Cap.SQUARE; line.strokeJoin = Paint.Join.MITER
+        line.strokeWidth = OFF_CHEVRON_STROKE
+        // apex 3 px over the clamped level, base 3 px under it: the row sits where the trace left the plot
+        val apex = top - OFF_CHEVRON_H / 2f
+        val base = top + OFF_CHEVRON_H / 2f
         for (i in 0 until offCount) {
             val x0 = offRuns[3 * i]
             val x1 = offRuns[3 * i + 1]
-            val colour = colourOf(offRuns[3 * i + 2])
-            line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE
-            line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = width
-            line.color = colour
-            if (trace) {
-                // dotted: a faint solid plateau still read as a flat stretch of data
-                line.pathEffect = offDots
-                val save = canvas.save()
-                canvas.clipRect(x0 + OFF_DOT_INSET, GlassFaceLogic.SPARK_Y0 - OFF_CLIP, x1 - OFF_DOT_INSET, GlassFaceLogic.SPARK_Y1 + OFF_CLIP)
-                canvas.drawPath(history, line)
-                canvas.restoreToCount(save)
-                line.pathEffect = null
-            }
-            if (x1 - x0 < OFF_CHEVRON_MIN_RUN) continue
-            // the chevron a step stronger than the faded line, so it reads as a mark, centred on the clamped run
-            line.color = if (Color.alpha(colour) < 255) withAlpha(colour, OFF_CHEVRON_ALPHA) else colour
-            line.strokeWidth = 1.5f
-            val cx = (x0 + x1) / 2f
-            val y = top - OFF_CHEVRON_GAP
+            line.color = colourOf(offRuns[3 * i + 2])
+            val n = GlassFaceLogic.offChevronCount(x1 - x0, OFF_CHEVRON_W, OFF_CHEVRON_PITCH)
+            val first = (x0 + x1) / 2f - (n - 1) * OFF_CHEVRON_PITCH / 2f
             chevron.rewind()
-            chevron.moveTo(cx - OFF_CHEVRON_W, y)
-            chevron.lineTo(cx, y - OFF_CHEVRON_H)
-            chevron.lineTo(cx + OFF_CHEVRON_W, y)
+            for (k in 0 until n) {
+                val cx = first + k * OFF_CHEVRON_PITCH
+                chevron.moveTo(cx - OFF_CHEVRON_W / 2f, base)
+                chevron.lineTo(cx, apex)
+                chevron.lineTo(cx + OFF_CHEVRON_W / 2f, base)
+            }
             canvas.drawPath(chevron, line)
         }
+        canvas.restoreToCount(save)
     }
 
     /**
@@ -1558,8 +1636,9 @@ class GlassWatchface : WatchFace() {
             line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE
             line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = 1.5f; line.color = c(A_HIST)
             drawTrace(canvas, line)
-            // Glass polish round 6: clamped older history as a dim line (low-bit: only the chevron, no grey exists)
-            drawOffScale(canvas, aa = aa, width = 1.5f, trace = !lowBit) { if (lowBit) Color.WHITE else A_LINE }
+            // Glass polish round 7: clamped older history as a row of up-chevrons in the trace's grey (A_LINE was the low
+            // edge's grey: the two read as one pair of rules); low-bit: white, full alpha, no AA
+            drawOffScale(canvas, aa = aa) { c(A_HIST) }
         }
         if (hasCurrent) {
             fill.reset(); fill.isAntiAlias = aa; fill.color = Color.BLACK
@@ -2025,15 +2104,16 @@ class GlassWatchface : WatchFace() {
         private const val PRED_DOT_STEP = 6.5f
         private const val PRED_START = 9f
         private const val PRED_ALPHA = 190
-        /** Glass polish round 6: clamped older history (off the plot's top) at about 28 %, its chevron at about 60 %. */
-        private const val OFF_SCALE_ALPHA = 72
-        private const val OFF_CHEVRON_ALPHA = 150
-        private const val OFF_CHEVRON_MIN_RUN = 8f
-        private const val OFF_CHEVRON_W = 3.5f
-        private const val OFF_CHEVRON_H = 3f
-        private const val OFF_CHEVRON_GAP = 3f
+        /**
+         * Glass polish round 7: clamped older history is a row of up-chevrons, 10 x 6 px with a 2 px stroke (the round-6
+         * 7 x 3 px mark was about 0.5 mm on the wrist) every 15 px, at about 60 % in the real colour (full white in low-bit).
+         */
+        private const val OFF_SCALE_ALPHA = 153
+        private const val OFF_CHEVRON_W = 10f
+        private const val OFF_CHEVRON_H = 6f
+        private const val OFF_CHEVRON_STROKE = 2f
+        private const val OFF_CHEVRON_PITCH = 15f
         private const val OFF_CLIP = 12f
-        private const val OFF_DOT_INSET = 3f
         /** In-range digits (Glass/Orbit UX round 2): a pale mint, the family's green at Glass's calmer strength. */
         private val IN_DIGIT_COL = 0xFFCFF5E4.toInt()
         private val HIGH_COL = 0xFFFFB547.toInt()

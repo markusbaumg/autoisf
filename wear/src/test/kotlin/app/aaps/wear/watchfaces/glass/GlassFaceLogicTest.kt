@@ -118,6 +118,31 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.bgText("9,4", null, null)).isEqualTo("---") // no time stamp
     }
 
+    /** Glass polish round 7: the sentinel marks are split off the number and drawn small beside it. */
+    @Test fun sentinelMarksSplit() {
+        assertThat(GlassFaceLogic.splitSentinel("<2,2")).isEqualTo(Triple("<", "2,2", ""))
+        assertThat(GlassFaceLogic.splitSentinel("22,3+")).isEqualTo(Triple("", "22,3", "+"))
+        assertThat(GlassFaceLogic.splitSentinel("<39")).isEqualTo(Triple("<", "39", ""))
+        assertThat(GlassFaceLogic.splitSentinel("400+")).isEqualTo(Triple("", "400", "+"))
+        assertThat(GlassFaceLogic.splitSentinel("6,4")).isEqualTo(Triple("", "6,4", ""))
+        assertThat(GlassFaceLogic.splitSentinel("---")).isEqualTo(Triple("", "---", ""))
+        assertThat(GlassFaceLogic.splitSentinel("+")).isEqualTo(Triple("", "+", ""))
+        // the marks at 55-60 % of the digits, a 2-4 px ink gap
+        assertThat(GlassFaceLogic.SENTINEL_MARK_SCALE).isAtLeast(0.55f)
+        assertThat(GlassFaceLogic.SENTINEL_MARK_SCALE).isAtMost(0.60f)
+        assertThat(GlassFaceLogic.SENTINEL_MARK_GAP).isAtLeast(2f)
+        assertThat(GlassFaceLogic.SENTINEL_MARK_GAP).isAtMost(4f)
+    }
+
+    /** Glass polish round 7: the widest hero group keeps 16 px of glass to the card on both sides. */
+    @Test fun widestHeroGroupPadding() {
+        val l = GlassFaceLogic.heroGroup(GlassFaceLogic.heroLayout(showChip = true, metaEmpty = false), true, 400f)
+        val left = l.bgX - GlassFaceLogic.BG_MAX_WIDTH / 2f - GlassFaceLogic.HERO_X0
+        val right = GlassFaceLogic.HERO_X1 - (l.chipX + GlassFaceLogic.CHIP_R)
+        assertThat(left).isWithin(0.01f).of(right)
+        assertThat(right).isAtLeast(16f)
+    }
+
     // ------------------------------------------------------------------ trend / delta
 
     @Test fun trendMapping() {
@@ -170,7 +195,8 @@ class GlassFaceLogicTest {
         // Glass rework: 134 px start (Halo's ~95 px cap), floor 80; Glass/Orbit UX round 4: 232 px next to the chip
         // Glass polish round 1: 112 px start (an 80 px cap, about 52 % of the card), 230 px next to the chip
         assertThat(bgFit("9,4")).isEqualTo(112f)
-        assertThat(bgFit("11,8")).isEqualTo(108f)
+        // Glass polish round 7: 224 px next to the chip (16 px of glass to the card each side), "11,8" 108 -> 106
+        assertThat(bgFit("11,8")).isEqualTo(106f)
         assertThat(bgFit("254")).isEqualTo(112f) // three mg/dL digits keep the full size next to the chip
         assertThat(bgFit("---")).isEqualTo(112f)
         assertThat(bgFit("22,2+")).isAtLeast(GlassFaceLogic.BG_MIN_SIZE)
@@ -993,6 +1019,15 @@ class GlassFaceLogicTest {
      * 22,2 now) was drawn as a flat green line at the plot top. Now the top covers the current reading, the high edge
      * is drawn and the current dot is never clamped.
      */
+    /** Glass polish round 7: a clamped run is a row of up-chevrons, at least one, as many as fit at the pitch. */
+    @Test fun offChevronCount() {
+        assertThat(GlassFaceLogic.offChevronCount(2f, 10f, 15f)).isEqualTo(1)   // a lone point off the top
+        assertThat(GlassFaceLogic.offChevronCount(10f, 10f, 15f)).isEqualTo(1)
+        assertThat(GlassFaceLogic.offChevronCount(24f, 10f, 15f)).isEqualTo(1)
+        assertThat(GlassFaceLogic.offChevronCount(25f, 10f, 15f)).isEqualTo(2)
+        assertThat(GlassFaceLogic.offChevronCount(200f, 10f, 15f)).isEqualTo(13) // 13 marks span 190 px
+    }
+
     @Test
     fun sparkReboundHighIsNeverClamped() {
         val low = GlassFaceLogic.DEFAULT_LOW_MGDL
