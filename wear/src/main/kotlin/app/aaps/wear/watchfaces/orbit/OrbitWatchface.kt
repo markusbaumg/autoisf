@@ -39,6 +39,7 @@ import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
 import app.aaps.wear.interaction.menus.MainMenuActivity
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
+import app.aaps.wear.watchfaces.common.FaceState
 import app.aaps.wear.watchfaces.common.LoopRunTime
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.State
@@ -48,9 +49,9 @@ import app.aaps.wear.watchfaces.common.BolusTapGesture
 import app.aaps.wear.watchfaces.common.PhoneReach
 import app.aaps.wear.watchfaces.common.PhoneReachability
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Ball
-import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.BgAge
+import app.aaps.wear.watchfaces.common.FaceState.BgAge
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.MoonKind
-import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Range
+import app.aaps.wear.watchfaces.common.FaceState.Range
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Ring
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Slot
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Tone
@@ -202,7 +203,10 @@ class OrbitWatchface : WatchFace() {
     private var trendX = 0f
     private var trendSize = 48f
     private var sentinelLow = false
+    private var caption = FaceState.Caption.NONE
     private var loopMuted = false
+    private val disabledDash = DashPathEffect(floatArrayOf(6f, 5f), 0f)
+    private val captionBox = RectF()
     private val trendPath = Path()
     private var deltaRow = OrbitFaceLogic.DeltaRow("", "", false)
     private var slot: Slot? = null
@@ -315,7 +319,8 @@ class OrbitWatchface : WatchFace() {
             loopOffShort = getString(R.string.orbit_loop_off_short),
             loopOpen = getString(R.string.orbit_loop_open),
             loopLgs = getString(R.string.orbit_loop_lgs),
-            sentinelLow = getString(R.string.orbit_sentinel_low),
+            sentinelLow = getString(R.string.face_low),
+            sentinelHigh = getString(R.string.face_high),
             weekFormat = getString(R.string.orbit_week).replace("%1\$d", "%d"),
             pumpOnly = getString(R.string.orbit_pump_only),
             reservoirFormat = getString(R.string.orbit_reservoir).replace("%1\$s", "%s"),
@@ -542,6 +547,7 @@ class OrbitWatchface : WatchFace() {
         }
         sentinelLow = OrbitFaceLogic.sentinelLow(bg.sgv, ageMin)
         if (sentinelLow) range = Range.URGENT_LOW
+        caption = FaceState.caption(range)
         // spec v2 §4.2: digits txt1; the range lives in the corona, glyph, glow and sparkline
         heroColour = when (range) {
             Range.STALE      -> TXT2
@@ -559,6 +565,7 @@ class OrbitWatchface : WatchFace() {
         val noProfile = OrbitFaceLogic.noProfile(st.externalStatus, st.iobSum)
         val loopOff = OrbitFaceLogic.loopOff(st.externalStatus, st.iobSum)
         val loopAge = OrbitFaceLogic.loopAgeMinutes(LoopRunTime.of(st), now)
+        val realRun = st.lastLoopRunAt > 0L
         val dataAgeMs = if (d.lastUpdateTimestamp > 0L) now - d.lastUpdateTimestamp else Long.MAX_VALUE
         // the display treats an unknown link as reachable (no "Telefon getrennt" before the first answer);
         // the bolus guard does not (DISABLED until then)
@@ -568,7 +575,7 @@ class OrbitWatchface : WatchFace() {
             OrbitFaceLogic.SlotInput(
                 firstStart = firstStart, link = link, dataAgeMinutes = dataAgeMin, bgAgeMinutes = ageMin, bgAge = bgAge,
                 range = range, noProfile = noProfile, loopOff = loopOff,
-                loopBad = OrbitFaceLogic.loopHealth(loopAge) == OrbitFaceLogic.LoopHealth.BAD,
+                loopBad = OrbitFaceLogic.loopHealth(loopAge, realRun) == OrbitFaceLogic.LoopHealth.BAD,
                 loopAgeMinutes = loopAge, reservoirLevel = st.reservoirLevel, reservoirString = st.reservoirString,
                 batteryLevel = st.batteryLevel, battery = st.battery
             ),
@@ -591,11 +598,11 @@ class OrbitWatchface : WatchFace() {
             balls[OrbitFaceLogic.IDX_COB] = OrbitFaceLogic.placeholderBall(labels.cob)
             balls[OrbitFaceLogic.IDX_TT] = null
         } else {
-            val mode = if (isHeadless) OrbitFaceLogic.LoopMode.UNKNOWN
+            val mode = if (isHeadless) FaceState.LoopMode.UNKNOWN
             else OrbitFaceLogic.loopMode(loopStateNames, loopStatesTimeStamp, d.lastUpdateTimestamp)
             balls[OrbitFaceLogic.IDX_LOOP] =
-                if (OrbitFaceLogic.loopBallShown(showLoop, OrbitFaceLogic.loopHealth(loopAge)))
-                    OrbitFaceLogic.loopBall(LoopRunTime.of(st), st.externalStatus, st.iobSum, now, labels, mode)
+                if (OrbitFaceLogic.loopBallShown(showLoop, OrbitFaceLogic.loopHealth(loopAge, realRun)))
+                    OrbitFaceLogic.loopBall(LoopRunTime.of(st), st.externalStatus, st.iobSum, now, labels, mode, realRun)
                 else null
             balls[OrbitFaceLogic.IDX_IOB] = if (showIob) OrbitFaceLogic.iobBall(st.iobSum) else null
             balls[OrbitFaceLogic.IDX_BASAL] = if (showBasal) OrbitFaceLogic.basalBall(st.currentBasal, OrbitFaceLogic.tbrRunning(starts, ends, now)) else null
@@ -939,7 +946,7 @@ class OrbitWatchface : WatchFace() {
 
         // 5. delta row, status slot
         val s = slot
-        if (slotInDeltaRow && s != null) drawPill(canvas, s, 251f, 30f, 19f, ambient = false)
+        if (slotInDeltaRow && s != null) drawPill(canvas, s, DELTA_ROW_Y, 30f, 19f, ambient = false)
         else if (!firstStart) drawDeltaRow(canvas, DELTA_C, if (deltaRow.ageAmber) AMBER else DELTA_C, true, ambient = false)
         if (s != null && !slotInDeltaRow) drawPill(canvas, s, OrbitFaceLogic.SLOT_Y, 26f, 16f, ambient = false)
 
@@ -1005,7 +1012,7 @@ class OrbitWatchface : WatchFace() {
         val s = slot
         when {
             // W1..W3 (incl. the stale "Keine Daten · 17′") own slot A as an outline pill
-            s != null && slotInDeltaRow -> drawPill(canvas, s, 251f, 30f, 18f, ambient = true)
+            s != null && slotInDeltaRow -> drawPill(canvas, s, DELTA_ROW_Y, 30f, 18f, ambient = true)
             !firstStart                 -> drawDeltaRow(canvas, amb(AMB2), amb(if (deltaRow.ageAmber) AMB1 else AMB2), aa, ambient = true)
         }
         if (s != null && !slotInDeltaRow) drawPill(canvas, s, OrbitFaceLogic.SLOT_Y, 26f, 16f, ambient = true)
@@ -1105,12 +1112,37 @@ class OrbitWatchface : WatchFace() {
             canvas.drawPath(trendPath, stroke)
             right = trendX + trendSize * 0.31f
         }
-        if (sentinelLow && !dashes) {
-            // sentinel low: "TIEF" caption top-right of the digits
-            setText(floorPx(14f), tf700, aa)
+        if (caption != FaceState.Caption.NONE && !dashes) {
+            // caption top-right of the digits, so colour is never the only carrier: "TIEF" (low), "TIEF" in a filled
+            // badge (urgent low; ambient: outlined box), "HOCH" (very high)
+            val word = if (caption == FaceState.Caption.HIGH_WORD) labels.sentinelHigh else labels.sentinelLow
+            val badge = caption == FaceState.Caption.LOW_BADGE
+            setText(floorPx(15f), tf700, aa)
             text.textAlign = Paint.Align.LEFT
-            text.color = if (ambient) amb(AMB1) else LOW_TXT
-            canvas.drawText(labels.sentinelLow, heroX + heroW / 2f + 6f, baseline(HERO_Y - 30f), text)
+            text.letterSpacing = 0.04f
+            val w = text.measureText(word)
+            val x = heroX + heroW / 2f + if (badge) 10f else 6f
+            val cy = HERO_Y - 34f
+            if (badge) {
+                captionBox.set(x - 5f, cy - 10f, x + w + 5f, cy + 10f)
+                if (ambient) {
+                    setStroke(1.5f, amb(AMB1), aa)
+                    canvas.drawRoundRect(captionBox, 5f, 5f, stroke)
+                } else {
+                    setFill(RED, true)
+                    canvas.drawRoundRect(captionBox, 5f, 5f, fill)
+                }
+            }
+            setText(floorPx(15f), tf700, aa)
+            text.textAlign = Paint.Align.LEFT
+            text.letterSpacing = 0.04f
+            text.color = when {
+                ambient                                 -> amb(AMB1)
+                badge                                   -> Color.WHITE
+                caption == FaceState.Caption.HIGH_WORD  -> AMBER
+                else                                    -> LOW_TXT
+            }
+            canvas.drawText(word, x, baseline(cy), text)
         }
         if (OrbitFaceLogic.isStruck(bgAge) && !dashes) {
             setStroke(if (!ambient) 3f else if (lowBitAmbient) 2f else 1.5f, colour, aa)
@@ -1129,12 +1161,12 @@ class OrbitWatchface : WatchFace() {
         val k = size / 21f
         text.textAlign = Paint.Align.LEFT
         val x0 = OrbitFaceLogic.CX - ((wl + wa) * k + glyphW) / 2f
-        val y = baseline(251f)
+        val y = baseline(DELTA_ROW_Y)
         text.color = colour
         canvas.drawText(deltaRow.deltaPart, x0, y, text)
         text.color = ageColour
         canvas.drawText(deltaRow.agePart, x0 + wl * k, y, text)
-        if (phoneGlyph) drawPhoneOff(canvas, x0 + (wl + wa) * k + 4f + 7f, 251f, colour, aa)
+        if (phoneGlyph) drawPhoneOff(canvas, x0 + (wl + wa) * k + 4f + 7f, DELTA_ROW_Y, colour, aa)
     }
 
     /** Phone-off glyph (conn.phone_lost_fresh): a phone outline crossed by a slash, 14 px tall. */
@@ -1284,8 +1316,23 @@ class OrbitWatchface : WatchFace() {
             drawText(canvas, "…", bolusX, bolusY + 12f, 18f, tf700, withAlpha(BOLUS_TEXT, alpha), true)
         } else {
             val disabled = state == State.DISABLED
-            setFill(if (disabled) withAlpha(TXT3, 255) else withAlpha(INDIGO, 230), true)
-            canvas.drawPath(dropPath, fill)
+            if (disabled) {
+                // disabled by SHAPE, not only by alpha: dashed outline and a diagonal slash (a tap shows the reason)
+                setStroke(2f, withAlpha(INDIGO, 150), true)
+                stroke.pathEffect = disabledDash
+                canvas.drawPath(outlinePath, stroke)
+                stroke.pathEffect = null
+                setStroke(2.2f, TXT3, true)
+                stroke.strokeCap = Paint.Cap.ROUND
+                val k = OrbitFaceLogic.BOLUS_HALF * 0.75f
+                canvas.drawLine(bolusX - k, bolusY + k, bolusX + k, bolusY - k, stroke)
+                setText(19f, tf700, true)
+                text.style = Paint.Style.STROKE; text.strokeWidth = 5f; text.color = Color.BLACK
+                canvas.drawText(bolusAmountText, bolusX, baseline(bolusY + 11f), text)
+            } else {
+                setFill(withAlpha(INDIGO, 230), true)
+                canvas.drawPath(dropPath, fill)
+            }
             drawText(canvas, bolusAmountText, bolusX, bolusY + 11f, 19f, tf700, if (disabled) TXT3 else BOLUS_TEXT, true)
         }
         if (flashUntil != 0L && System.currentTimeMillis() < flashUntil) {
@@ -1478,6 +1525,8 @@ class OrbitWatchface : WatchFace() {
 
         private const val MAX_POINTS = 96
         private const val HERO_Y = 191f
+        /** Delta row centre: low enough that the German comma's tail of the 108 px digits stays clear of it. */
+        private const val DELTA_ROW_Y = 256f
         private val HEAD_SIGNS = intArrayOf(-1, 1)
         private const val AMPM_GAP = 3f
         private const val BOLUS_CORNER = 16f

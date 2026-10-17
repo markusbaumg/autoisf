@@ -39,7 +39,6 @@
     <string name="orbit_bolus_refused_max">Menge über dem Max-Bolus. Keine Anfrage gesendet.</string>
     <string name="orbit_bolus_pending">Eine Anfrage läuft bereits</string>
     <string name="orbit_loop_lgs">LGS</string>
-    <string name="orbit_sentinel_low">TIEF</string>
     <string name="orbit_week">KW %1$d</string>
     <string name="orbit_bolus_refused_max_unknown">Max-Bolus noch nicht vom Telefon übertragen. Keine Anfrage gesendet.</string>
     <string name="glass_bolus_refused_max_unknown">Max-Bolus noch nicht vom Telefon übertragen: keine Bolus-Anfrage</string>

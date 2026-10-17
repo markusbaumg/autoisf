@@ -1,14 +1,14 @@
 package app.aaps.wear.watchfaces.orbit
 
-import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.BgAge
+import app.aaps.wear.watchfaces.common.FaceState.BgAge
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.LoopHealth
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.MoonKind
-import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.PhoneLink
-import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Range
+import app.aaps.wear.watchfaces.common.FaceState.PhoneLink
+import app.aaps.wear.watchfaces.common.FaceState.Range
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Ring
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.SlotInput
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Tone
-import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.LoopMode
+import app.aaps.wear.watchfaces.common.FaceState.LoopMode
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Trend
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
@@ -185,12 +185,12 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.statusSlot(input(loopAge = 23, resLevel = 2, res = "5U"), false, de))
             .isEqualTo(OrbitFaceLogic.Slot(6, "Loop 23′", Tone.ALERT))
         assertThat(OrbitFaceLogic.statusSlot(input(resLevel = 2, res = "5U", battLevel = 0, batt = "18"), false, de))
-            .isEqualTo(OrbitFaceLogic.Slot(7, "Reservoir 5U", Tone.ALERT))
+            .isEqualTo(OrbitFaceLogic.Slot(7, "Reservoir 5 U", Tone.ALERT))
         assertThat(OrbitFaceLogic.statusSlot(input(battLevel = 0, batt = "18", resLevel = 1, res = "18U"), false, de))
             .isEqualTo(OrbitFaceLogic.Slot(8, "Tel 18 %", Tone.WARN))
         assertThat(OrbitFaceLogic.statusSlot(input(battLevel = 0, batt = "7"), false, de)!!.tone).isEqualTo(Tone.ALERT)
         assertThat(OrbitFaceLogic.statusSlot(input(resLevel = 1, res = "18U"), false, de))
-            .isEqualTo(OrbitFaceLogic.Slot(9, "Reservoir 18U", Tone.WARN))
+            .isEqualTo(OrbitFaceLogic.Slot(9, "Reservoir 18 U", Tone.WARN))
         assertThat(OrbitFaceLogic.statusSlot(input(link = PhoneLink.LOST_FRESH), false, de)!!.tone).isEqualTo(Tone.GLYPH)
     }
 
@@ -279,7 +279,10 @@ class OrbitFaceLogicTest {
         val alert = OrbitFaceLogic.Slot(6, "Loop 23′", Tone.ALERT)
         assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, alert)).isTrue()
         assertThat(OrbitFaceLogic.muteLoopRing(Range.URGENT_LOW, alert)).isTrue()
-        assertThat(OrbitFaceLogic.muteLoopRing(Range.IN, alert)).isFalse()
+        // family red budget: the pill names the loop (W6) or says the data is old (W2 / W3): the LOOP ring is muted
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.IN, alert)).isTrue()
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.STALE, OrbitFaceLogic.Slot(3, "Keine Daten · 17′", Tone.ALERT))).isTrue()
+        assertThat(OrbitFaceLogic.muteLoopRing(Range.IN, OrbitFaceLogic.Slot(7, "Reservoir 5 U", Tone.ALERT))).isFalse()
         assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, OrbitFaceLogic.Slot(5, "Loop aus", Tone.WARN))).isFalse()
         assertThat(OrbitFaceLogic.muteLoopRing(Range.LOW, null)).isFalse()
     }
@@ -486,7 +489,7 @@ class OrbitFaceLogicTest {
             // ball labels 14 px stay >= 11 physical px at 384
             assertThat(14f * s).isAtLeast(11f)
             // status pill: the longest German texts at 19 px within the slot
-            for (t in listOf("Telefon getrennt · 14′", "Keine Daten · 17′", "Warte auf AAPS", "Reservoir 18U", "Tel 18 %")) {
+            for (t in listOf("Telefon getrennt · 14′", "Keine Daten · 17′", "Warte auf AAPS", "Reservoir 18 U", "Tel 18 %")) {
                 val size = OrbitFaceLogic.fitSize(OrbitFaceLogic.estimateWidth(t, 19f), 19f, OrbitFaceLogic.SLOT_MAX_WIDTH)
                 assertThat(OrbitFaceLogic.estimateWidth(t, size)).isAtMost(OrbitFaceLogic.SLOT_MAX_WIDTH + 0.01f)
                 assertThat(size * s).isAtLeast(11f)
