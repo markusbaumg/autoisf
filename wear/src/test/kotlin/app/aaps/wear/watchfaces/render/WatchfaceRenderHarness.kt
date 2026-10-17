@@ -151,13 +151,7 @@ class WatchfaceRenderHarness {
         mgdl: Boolean = false, st: EventData.Status = status(now)
     ): ComplicationData {
         val (b, g) = bg(now, mmol, arrow, delta, level, ageMin, mgdl)
-        // a 0,85 U/h profile basal over the last 3 h (Orbit variant rings reads the basal gauge against it; Halo and
-        // Glass do not draw treatmentData.basals)
-        val treatments = EventData.TreatmentData(
-            temps = arrayListOf(), basals = arrayListOf(EventData.TreatmentData.Basal(now - 3 * 3_600_000L, now, 0.85)),
-            boluses = arrayListOf(), predictions = arrayListOf()
-        )
-        return ComplicationData(bgData = b, graphData = g, statusData = st, treatmentData = treatments, lastUpdateTimestamp = now - phoneAgeMin * 60_000L)
+        return ComplicationData(bgData = b, graphData = g, statusData = st, lastUpdateTimestamp = now - phoneAgeMin * 60_000L)
     }
 
     private val inRange: (Long) -> ComplicationData = { now -> data(now, 6.4, "→", "+0.1", 0) }
