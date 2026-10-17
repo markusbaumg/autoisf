@@ -69,7 +69,7 @@ object OrbitAod {
         val struck: Boolean,
         val trend: Trend,
         val time: String,
-        /** "TIEF" / "HOCH" (never colour alone), [badgeBoxed] for urgent low. */
+        /** "TIEF" (urgent low) / "HOCH" (very high) as a solid pill; a plain low or high says it by colour + arrow. */
         val badge: String?,
         val badgeBoxed: Boolean,
         /** The one warning in words (W1-W6), or null. */
@@ -87,8 +87,15 @@ object OrbitAod {
         /** A line under the BG in every look: the badge and/or the warning, or the delta row with the amber age. */
         val lineShown: Boolean get() = badge != null || warning != null || ageAmber
 
-        override fun equals(other: Any?): Boolean = other is Model && toString() == other.toString() && spark.contentEquals(other.spark)
-        override fun hashCode(): Int = toString().hashCode()
+        // field by field: the generated equals would compare the FloatArray by identity
+        override fun equals(other: Any?): Boolean = other is Model && hero == other.hero && hue == other.hue &&
+            struck == other.struck && trend == other.trend && time == other.time && badge == other.badge &&
+            badgeBoxed == other.badgeBoxed && warning == other.warning && warningLevel == other.warningLevel &&
+            delta == other.delta && age == other.age && ageAmber == other.ageAmber && spark.contentEquals(other.spark)
+
+        override fun hashCode(): Int =
+            listOf(hero, hue, struck, trend, time, badge, badgeBoxed, warning, warningLevel, delta, age, ageAmber).hashCode() * 31 +
+                spark.contentHashCode()
     }
 
     fun model(
@@ -106,7 +113,9 @@ object OrbitAod {
         }
         val badge = when {
             dashes || old                       -> null
-            caption == FaceState.Caption.LOW_BADGE || caption == FaceState.Caption.LOW_WORD -> "LOW"
+            // only the two danger levels get words, as equally weighted pills; a plain low (3,4) stays wordless like a
+            // plain high: red + arrow say it, and one word for two levels would hide which one is urgent
+            caption == FaceState.Caption.LOW_BADGE -> "LOW"
             caption == FaceState.Caption.HIGH_WORD -> "HIGH"
             else                                -> null
         }
@@ -118,7 +127,7 @@ object OrbitAod {
             trend = if (old || dashes) Trend.NONE else trend,
             time = time,
             badge = badge,
-            badgeBoxed = caption == FaceState.Caption.LOW_BADGE,
+            badgeBoxed = caption == FaceState.Caption.LOW_BADGE || caption == FaceState.Caption.HIGH_WORD,
             warning = warning?.text,
             warningLevel = when (warning?.tone) {
                 Tone.ALERT -> Level.ALERT
@@ -173,7 +182,7 @@ object OrbitAod {
     )
 
     fun spec(look: Look): Spec = when (look) {
-        Look.BG_ONLY    -> Spec(0f, 0f, 0, heroY = 212f, heroSize = 172f, heroMaxW = 330f, lineY = 326f)
+        Look.BG_ONLY    -> Spec(0f, 0f, 0, heroY = 212f, heroSize = 172f, heroMaxW = 330f, lineY = 334f)
         Look.BG_TIME    -> Spec(98f, 40f, 600, heroY = 220f, heroSize = 156f, heroMaxW = 320f, lineY = 330f)
         Look.TIME_BELOW -> Spec(338f, 40f, 600, heroY = 182f, heroSize = 156f, heroMaxW = 320f, lineY = 284f)
         Look.BIG_TIME   -> Spec(160f, 104f, 500, heroY = 280f, heroSize = 84f, heroMaxW = 250f, lineY = 350f)
@@ -256,13 +265,13 @@ object OrbitAod {
             drawHero(canvas, m, s, lowBit, burnIn)
             if (s.sparkY > 0f && m.spark.size >= 4) drawSpark(canvas, m, s, lowBit)
             val line = lineFor(m, look)
-            if (line != null) drawLine(canvas, m, line, s.lineY, lowBit, burnIn)
+            if (line != null) drawLine(canvas, m, line, s.lineY, lowBit, burnIn, ageOnly = look == Look.BG_ONLY)
         }
 
         /** What the row under the BG shows in [look]: the warning words, or (BG_DELTA) the delta and age. */
         private fun lineFor(m: Model, look: Look): Line? = when {
             m.badge != null || m.warning != null -> Line.WARNING
-            // from 6′ every look shows the familiar "+0,1 · 8′" row with the amber age (a lone "8′" read as a number)
+            // from 6′ every look warns with the amber age; BG_ONLY ("Nur BZ") shows the age alone, the others "+0,1 · 8′"
             look == Look.BG_DELTA || m.ageAmber  -> Line.DELTA
             else                                 -> null
         }
@@ -276,13 +285,14 @@ object OrbitAod {
             setText(s.heroSize, weight, colour, aa)
             text.letterSpacing = -0.02f
             val arrowOn = m.trend != Trend.NONE
-            var size = s.heroSize
+            // old data: about 75 % size, so the "Keine Daten · 17′" line weighs as much as the number
+            var size = if (m.struck) STALE_K * s.heroSize else s.heroSize
             fun groupW(sz: Float): Float {
                 val k = sz / s.heroSize
                 val digits = text.measureText(m.hero) * k
                 return digits + if (arrowOn) (ARROW_GAP + ARROW_BOX) * sz else 0f
             }
-            val maxW = min(s.heroMaxW, 2f * halfChord(s.heroY, 30f))
+            val maxW = min(s.heroMaxW, 2f * halfChord(s.heroY, 30f)) - if (m.struck) 2f * STRIKE_OVER else 0f
             val w0 = groupW(size)
             if (w0 > maxW) size *= maxW / w0
             text.textSize = size
@@ -295,9 +305,14 @@ object OrbitAod {
             canvas.drawText(m.hero, x0, by, text)
             heroBox.set(x0, by - 0.72f * size, x0 + gw, by)
             if (m.struck) {
-                setStroke(max(4f, 0.04f * size), colour, aa)
+                // a heavy bar, cut out of the digits by a black gap so it never melts into the strokes (low-bit too)
+                val bar = max(STRIKE_MIN, STRIKE_K * size)
+                setStroke(bar + 2f * STRIKE_GAP, Color.BLACK, aa)
                 stroke.strokeCap = Paint.Cap.BUTT
-                canvas.drawLine(x0 - 6f, cy, x0 + digitsW + 6f, cy, stroke)
+                canvas.drawLine(x0 - STRIKE_OVER, cy, x0 + digitsW + STRIKE_OVER, cy, stroke)
+                setStroke(bar, colour, aa)
+                stroke.strokeCap = Paint.Cap.BUTT
+                canvas.drawLine(x0 - STRIKE_OVER, cy, x0 + digitsW + STRIKE_OVER, cy, stroke)
             }
             if (arrowOn) {
                 val box = ARROW_BOX * size
@@ -357,12 +372,16 @@ object OrbitAod {
             canvas.drawCircle(x0 + p[p.size - 2] * w, y1 - p[p.size - 1] * h, 5f, stroke)
         }
 
-        private fun drawLine(canvas: Canvas, m: Model, line: Line, y: Float, lowBit: Boolean, burnIn: Boolean) {
+        private fun drawLine(canvas: Canvas, m: Model, line: Line, y: Float, lowBit: Boolean, burnIn: Boolean, ageOnly: Boolean) {
             val aa = !lowBit
             val maxW = 2f * halfChord(y, 44f)
             when (line) {
                 Line.DELTA -> {
-                    val d = if (m.age.isEmpty()) m.delta else "${m.delta} · "
+                    val d = when {
+                        ageOnly && m.age.isNotEmpty() -> ""
+                        m.age.isEmpty()               -> m.delta
+                        else                          -> "${m.delta} · "
+                    }
                     var size = DELTA_SIZE
                     setText(size, if (burnIn) 500 else 600, if (lowBit) Color.WHITE else TIME_D, aa)
                     val wd = text.measureText(d)
@@ -381,7 +400,7 @@ object OrbitAod {
             }
         }
 
-        /** The TIEF / HOCH badge (boxed for urgent low) and the warning words after it, centred as one group. */
+        /** The TIEF / HOCH badge (a pill: urgent low / very high) and the warning words after it, centred as one group. */
         private fun drawWarning(canvas: Canvas, m: Model, y: Float, maxW: Float, lowBit: Boolean, burnIn: Boolean) {
             val aa = !lowBit
             val word = when (m.badge) {
@@ -406,8 +425,8 @@ object OrbitAod {
                 text.letterSpacing = 0.06f
                 val by = baseline(y)
                 if (m.badgeBoxed) {
-                    // urgent low: a small solid pill with black words (the one fill in AOD, about 2 % of the dial and
-                    // only while the BG is urgently low): it must out-shout every other state
+                    // urgent low (red) / very high (amber): a small solid pill with black words (the one fill in AOD,
+                    // about 2 % of the dial and only at a danger level): it must out-shout every other state
                     val h = BADGE_H * k
                     box.set(x, y - h / 2f, x + bw * k, y + h / 2f)
                     stroke.reset()
@@ -433,9 +452,14 @@ object OrbitAod {
     const val SPARK_W = 150f
     const val SPARK_H = 34f
     const val DELTA_SIZE = 36f
-    const val LINE_SIZE = 30f
-    const val BADGE_SIZE = 30f
-    const val BADGE_H = 44f
+    const val LINE_SIZE = 34f
+    const val BADGE_SIZE = 34f
+    const val BADGE_H = 50f
+    const val STALE_K = 0.75f
+    const val STRIKE_K = 0.08f
+    const val STRIKE_MIN = 12f
+    const val STRIKE_GAP = 4f
+    const val STRIKE_OVER = 20f
     const val BADGE_PAD = 14f
     const val LINE_GAP = 14f
     const val MIN_K = 0.72f

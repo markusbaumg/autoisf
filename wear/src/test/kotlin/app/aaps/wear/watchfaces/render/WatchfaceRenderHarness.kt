@@ -305,13 +305,16 @@ class WatchfaceRenderHarness {
         Triple("lowbit_stale", Mode.LOW_BIT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
         Triple("burnin", Mode.BURN_IN, inRange),
         Triple("burnin_urgent_low", Mode.BURN_IN) { now -> data(now, 2.6, "\u21ca", "-0.6", -1) },
-        Triple("burnin_loop_off", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 8, external = "Loop disabled\n")) }
+        Triple("burnin_loop_off", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 8, external = "Loop disabled\n")) },
+        // the Watch5 Pro most likely runs with burn-in protection: these are what the owner sees
+        Triple("burnin_stale", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("burnin_no_phone_14", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14)) }
     )
 
     /** aod_<style>_<case> for each value of the shared always-on setting. */
     private fun aodStates(): List<RenderState> = AodStyle.entries.flatMap { style ->
         aodCases().map { (id, mode, d) ->
-            RenderState("aod_${style.prefValue}_$id", mode = mode, aod = style, phoneReachable = id != "no_phone_14", data = d)
+            RenderState("aod_${style.prefValue}_$id", mode = mode, aod = style, phoneReachable = !id.endsWith("no_phone_14"), data = d)
         }
     }
 

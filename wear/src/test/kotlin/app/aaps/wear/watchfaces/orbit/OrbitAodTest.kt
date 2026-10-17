@@ -42,11 +42,13 @@ class OrbitAodTest {
         assertThat(ul.badge).isEqualTo("LOW")
         assertThat(ul.badgeBoxed).isTrue()
         assertThat(ul.hue).isEqualTo(OrbitAod.Hue.LOW)
+        // a plain low is wordless like a plain high (red + arrow), so the word always means urgent
         val low = model(hero = "3,4", range = Range.LOW)
-        assertThat(low.badge).isEqualTo("LOW")
-        assertThat(low.badgeBoxed).isFalse()
+        assertThat(low.badge).isNull()
+        assertThat(low.hue).isEqualTo(OrbitAod.Hue.LOW)
         val vh = model(hero = "22,2", range = Range.VERY_HIGH)
         assertThat(vh.badge).isEqualTo("HIGH")
+        assertThat(vh.badgeBoxed).isTrue()
         assertThat(model(hero = "12,4", range = Range.HIGH).badge).isNull()
     }
 
@@ -85,6 +87,15 @@ class OrbitAodTest {
         assertThat(m.struck).isFalse()
         assertThat(m.hue).isEqualTo(OrbitAod.Hue.STALE)
         assertThat(m.warning).isEqualTo("Warte auf AAPS")
+    }
+
+    @Test fun equalModelsCompareEqual() {
+        val spark = floatArrayOf(0f, 0.5f, 1f, 0.6f)
+        val a = model().copy(spark = spark)
+        val b = model().copy(spark = spark.copyOf())
+        assertThat(a).isEqualTo(b)
+        assertThat(a.hashCode()).isEqualTo(b.hashCode())
+        assertThat(a).isNotEqualTo(model(hero = "6,5"))
     }
 
     @Test fun mgdlDeltaPassesThrough() {
