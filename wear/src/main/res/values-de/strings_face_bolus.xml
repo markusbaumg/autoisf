@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- German strings of the shared double-tap bolus request; values-de so that de-CH and de-AT use them too. -->
+<resources>
+    <string name="pref_face_bolus_request_enabled">Bolus-Anfrage per Doppeltipp</string>
+    <string name="pref_face_bolus_request_enabled_summary">Halo, Glass und Orbit: Bolus-Knopf doppelt antippen (innerhalb von 0,8 s), um einen Bolus anzufordern. Das Telefon prüft ihn, bestätigt wird auf der Uhr. Braucht Wear-Steuerung am Telefon, ein verbundenes Telefon mit aktuellen Daten und eine Menge innerhalb des Max-Bolus. Die Einstellung gilt für alle drei Zifferblätter.</string>
+    <string name="pref_face_bolus_request_amount">Menge der Bolus-Anfrage</string>
+</resources>

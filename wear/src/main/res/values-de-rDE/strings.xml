@@ -177,7 +177,6 @@
     <string name="old_warning">!alt!</string>
     <string name="error">!err!</string>
     <string name="pref_heartRateSampling">Herzfrequenz</string>
-    <string name="pref_glass_bolus_double_tap_summary">Glass-Zifferblatt: den +U-Ball zweimal innerhalb von 0,8 s antippen, um einen Bolus anzufordern. Das Telefon prüft ihn, du bestätigst auf der Uhr. Braucht die Wear-Steuerung am Telefon; nie über dem Max-Bolus des Telefons.</string>
     <string name="glass_waiting">Warte auf AAPS</string>
     <string name="glass_phone_disconnected">Telefon getrennt · %1$s</string>
     <string name="glass_no_data">Keine Daten · %1$s</string>
@@ -196,9 +195,6 @@
     <string name="glass_bolus_refused_stale">Daten zu alt: keine Bolus-Anfrage</string>
     <string name="glass_bolus_refused_max">Über dem Max-Bolus des Telefons</string>
     <string name="glass_bolus_pending">Eine Anfrage läuft bereits</string>
-    <string name="pref_orbit_bolus_double_tap">Bolus Doppeltipp</string>
-    <string name="pref_orbit_bolus_double_tap_summary">Orbit-Zifferblatt: Knopf auf 9 Uhr doppelt tippen, um einen Bolus anzufordern. Das Telefon prüft ihn, du bestätigst auf der Uhr. Braucht Wear-Steuerung am Telefon, ein verbundenes Telefon und eine Menge innerhalb des Max-Bolus.</string>
-    <string name="pref_orbit_bolus_amount">Bolus-Menge</string>
     <string name="orbit_bolus_again">nochmal</string>
     <string name="orbit_cob">KH</string>
     <string name="orbit_minutes">%1$d′</string>

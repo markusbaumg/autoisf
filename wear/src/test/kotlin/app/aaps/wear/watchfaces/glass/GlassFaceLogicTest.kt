@@ -1,5 +1,7 @@
 package app.aaps.wear.watchfaces.glass
 
+import app.aaps.wear.watchfaces.common.BolusRequestGuard
+import app.aaps.wear.watchfaces.common.PhoneReach
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.AgeWords
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.BallState
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.BgAge
@@ -11,10 +13,8 @@ import app.aaps.wear.watchfaces.glass.GlassFaceLogic.LoopRun
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.AmbTone
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.OutlineStyle
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.PhoneLink
-import app.aaps.wear.watchfaces.glass.GlassFaceLogic.PhoneReach
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Pills
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Range
-import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Refusal
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.RunKind
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Sentinel
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.SlotInput
@@ -22,8 +22,6 @@ import app.aaps.wear.watchfaces.glass.GlassFaceLogic.SlotWords
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Tone
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Trend
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Warning
-import app.aaps.wear.watchfaces.halo.BolusTapGesture
-import app.aaps.wear.watchfaces.halo.BolusTapGesture.Decision
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
@@ -514,68 +512,20 @@ class GlassFaceLogicTest {
 
     // ------------------------------------------------------------------ bolus ball states
 
-    @Test fun bolusRefusals() {
-        val ok = PhoneReach.REACHABLE
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 0.5, 3.0, ok)).isEqualTo(Refusal.NONE)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.LOST_FRESH, BgAge.FRESH, 0.5, 3.0, PhoneReach.UNREACHABLE)).isEqualTo(Refusal.NO_PHONE)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.LOST_STALE, BgAge.STALE, 0.5, 3.0, PhoneReach.UNREACHABLE)).isEqualTo(Refusal.NO_PHONE)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.SILENT, BgAge.FRESH, 0.5, 3.0, ok)).isEqualTo(Refusal.STALE_DATA)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.STALE, 0.5, 3.0, ok)).isEqualTo(Refusal.STALE_DATA)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 1.0, 0.5, ok)).isEqualTo(Refusal.MAX_BOLUS)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 0.5, 0.5, ok)).isEqualTo(Refusal.NONE)
-        assertThat(GlassFaceLogic.refusal(PhoneLink.OK, BgAge.FRESH, 0.5, 0.0, ok)).isEqualTo(Refusal.MAX_BOLUS) // unknown max
-        // reachability not yet known (first lookup pending or never answered): no bolus, although the face does not warn
-        val unknownLink = GlassFaceLogic.phoneLink(PhoneReach.UNKNOWN, now - min, now)
-        assertThat(unknownLink).isEqualTo(PhoneLink.OK)
-        assertThat(GlassFaceLogic.refusal(unknownLink, BgAge.FRESH, 0.5, 3.0, PhoneReach.UNKNOWN)).isEqualTo(Refusal.NO_PHONE)
+    @Test fun phoneLinkDoesNotWarnBeforeTheFirstAnswer() {
+        // reachability not yet known (first lookup pending): no warning; the shared guard still refuses a bolus
+        assertThat(GlassFaceLogic.phoneLink(PhoneReach.UNKNOWN, now - min, now)).isEqualTo(PhoneLink.OK)
         assertThat(GlassFaceLogic.phoneLink(PhoneReach.UNREACHABLE, now - min, now)).isEqualTo(PhoneLink.LOST_FRESH)
     }
 
-    @Test fun sendNeedsARecentReachableAnswer() {
-        val fresh = GlassFaceLogic.REACH_ANSWER_FRESH_MS
-        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.REACHABLE, now - 2_000, now)).isTrue()
-        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.REACHABLE, now - fresh, now)).isTrue()
-        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.REACHABLE, now - fresh - 1, now)).isFalse() // minute-tick answer
-        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.REACHABLE, 0L, now)).isFalse()
-        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.UNKNOWN, now, now)).isFalse()
-        assertThat(GlassFaceLogic.reachConfirmed(PhoneReach.UNREACHABLE, now, now)).isFalse()
-    }
-
-    @Test fun ballStateMachine() {
-        fun s(
-            pref: Boolean = true, ambient: Boolean = false, wear: Boolean = true, amountOk: Boolean = true, first: Boolean = false,
-            refusal: Refusal = Refusal.NONE, armed: Boolean = false, sentAt: Long = 0L
-        ) = GlassFaceLogic.ballState(pref, ambient, false, wear, amountOk, first, refusal, armed, sentAt, now)
-        assertThat(s()).isEqualTo(BallState.IDLE)
-        assertThat(s(pref = false)).isEqualTo(BallState.HIDDEN)            // default OFF
-        assertThat(s(ambient = true, armed = true)).isEqualTo(BallState.HIDDEN) // never in ambient
-        assertThat(s(wear = false)).isEqualTo(BallState.HIDDEN)            // Wear control off on the phone
-        assertThat(s(amountOk = false)).isEqualTo(BallState.HIDDEN)
-        assertThat(s(first = true)).isEqualTo(BallState.HIDDEN)
-        assertThat(s(refusal = Refusal.NO_PHONE)).isEqualTo(BallState.DISABLED)
-        assertThat(s(refusal = Refusal.MAX_BOLUS, armed = true)).isEqualTo(BallState.DISABLED)
-        assertThat(s(armed = true)).isEqualTo(BallState.ARMED)
-        assertThat(s(sentAt = now - 10_000)).isEqualTo(BallState.SENT)
-        assertThat(s(sentAt = now - 10_000, refusal = Refusal.NO_PHONE)).isEqualTo(BallState.SENT)
-        assertThat(s(sentAt = now - GlassFaceLogic.BOLUS_PENDING_MS)).isEqualTo(BallState.IDLE)
-    }
-
-    @Test fun bolusGestureWithHardenedTiming() {
-        var t = 1_000_000L
-        val g = BolusTapGesture(clock = { t }, windowMs = GlassFaceLogic.BOLUS_WINDOW_MS, cooldownMs = GlassFaceLogic.BOLUS_COOLDOWN_MS)
-        assertThat(g.onTap(true, true)).isEqualTo(Decision.ARM)
-        t += 801
-        assertThat(g.onTap(true, true)).isEqualTo(Decision.ARM)  // 800 ms window passed: re-arm, no send
-        t += 500
-        assertThat(g.onTap(true, true)).isEqualTo(Decision.SEND)
-        t += 4_000
-        assertThat(g.onTap(true, true)).isEqualTo(Decision.IGNORE) // 5 s cooldown
-        t += 1_001
-        assertThat(g.onTap(true, true)).isEqualTo(Decision.ARM)
-        assertThat(g.onTap(false, true)).isEqualTo(Decision.DISARM) // tap elsewhere
-        assertThat(g.onTap(true, true)).isEqualTo(Decision.ARM)
-        assertThat(g.reset()).isTrue()                              // entering ambient disarms
-        assertThat(g.onTap(true, false)).isEqualTo(Decision.IGNORE) // disabled
+    @Test fun ballStateFollowsTheSharedGuard() {
+        fun s(state: BolusRequestGuard.State, armed: Boolean = false) =
+            GlassFaceLogic.ballState(BolusRequestGuard.Check(state, BolusRequestGuard.Reason.NONE), armed)
+        assertThat(s(BolusRequestGuard.State.IDLE)).isEqualTo(BallState.IDLE)
+        assertThat(s(BolusRequestGuard.State.IDLE, armed = true)).isEqualTo(BallState.ARMED)
+        assertThat(s(BolusRequestGuard.State.HIDDEN, armed = true)).isEqualTo(BallState.HIDDEN)
+        assertThat(s(BolusRequestGuard.State.DISABLED, armed = true)).isEqualTo(BallState.DISABLED)
+        assertThat(s(BolusRequestGuard.State.SENT, armed = true)).isEqualTo(BallState.SENT)
     }
 
     @Test fun ballHitRingAndAmount() {

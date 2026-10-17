@@ -37,9 +37,14 @@ import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
 import app.aaps.wear.interaction.menus.MainMenuActivity
-import app.aaps.wear.watchfaces.halo.BolusTapGesture
-import app.aaps.wear.watchfaces.orbit.OrbitBolusGuard.Reason
-import app.aaps.wear.watchfaces.orbit.OrbitBolusGuard.State
+import app.aaps.wear.watchfaces.common.BolusRequestGuard
+import app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason
+import app.aaps.wear.watchfaces.common.BolusRequestGuard.State
+import app.aaps.wear.watchfaces.common.BolusRequestGuard.TapResult
+import app.aaps.wear.watchfaces.common.BolusRequestPrefs
+import app.aaps.wear.watchfaces.common.BolusTapGesture
+import app.aaps.wear.watchfaces.common.PhoneReach
+import app.aaps.wear.watchfaces.common.PhoneReachability
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Ball
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.BgAge
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.MoonKind
@@ -82,7 +87,8 @@ import kotlin.math.sqrt
  * a software canvas (BlurMaskFilter does not work on the hardware canvas).
  *
  * Optional bolus button at 9 o'clock (watch preference, default OFF): double tap within 800 ms sends only a bolus
- * REQUEST (ActionBolusPreCheck); the phone checks it and the watch shows the standard confirmation.
+ * REQUEST (ActionBolusPreCheck); the phone checks it and the watch shows the standard confirmation. Every rule and
+ * the setting are shared with Halo and Glass ([BolusRequestGuard], [BolusRequestPrefs]); Orbit only draws the button.
  *
  * Not yet covered (deferred, see the commit message): multi-patient balls (datasets 1/2, key_include_external,
  * multi.*), key_show_seconds, the optional LOOP-ball tap (ActionLoopStatusDetailed), ball.delivering/delivered
@@ -105,19 +111,15 @@ class OrbitWatchface : WatchFace() {
 
     @Volatile private var data: ComplicationData = ComplicationData()
 
+    // ---------------------------------------------------------------- bolus (shared rule set)
+
     /**
-     * CapabilityClient FILTER_REACHABLE, refreshed once per minute and on every bolus-button tap. Null (unknown)
-     * until the first answer: the button stays DISABLED until then.
+     * Also holds the phone reachability (CapabilityClient FILTER_REACHABLE, refreshed once per minute and on every
+     * bolus-button tap): UNKNOWN until the first answer, the button stays DISABLED until then.
      */
-    @Volatile private var phoneReachable: Boolean? = null
-
-    // ---------------------------------------------------------------- bolus
-
-    private val clock: () -> Long = { System.currentTimeMillis() }
-    private val gesture = BolusTapGesture(clock, windowMs = OrbitBolusGuard.WINDOW_MS, cooldownMs = OrbitBolusGuard.COOLDOWN_MS)
-    private val guard = OrbitBolusGuard(clock)
-    private var armedAt = 0L
-    private var bolusCheck = OrbitBolusGuard.Check(State.HIDDEN, Reason.PREF_OFF)
+    private val guard = BolusRequestGuard(clock = { System.currentTimeMillis() }, store = BolusRequestPrefs.lastSentStore { sp })
+    private val gesture get() = guard.gesture
+    private var bolusCheck = BolusRequestGuard.Check(State.HIDDEN, Reason.PREF_OFF)
     private var bolusAmount = BolusTapGesture.DEFAULT_AMOUNT
     private var bolusAmountText = ""
     private val countdownTick = object : Runnable {
@@ -174,7 +176,7 @@ class OrbitWatchface : WatchFace() {
     private var builtMinuteKey = -1L
     private var builtAmbient = false
     private var built24h = false
-    private var builtReachable: Boolean? = null
+    private var builtReachable = PhoneReach.UNKNOWN
     private var dirty = true
 
     private var scale = 1f
@@ -324,6 +326,7 @@ class OrbitWatchface : WatchFace() {
     override fun onWatchStateKnown() {
         dirty = true
         if (isHeadless) return
+        BolusRequestPrefs.migrate(sp) // per-face settings of earlier iterations -> the shared pair
         sp.putInt(R.string.key_last_selected_watchface, SelectedWatchFace.ORBIT.ordinal)
         rxBus.send(EventUpdateSelectedWatchface())
         refreshPhoneReachable()
@@ -371,22 +374,10 @@ class OrbitWatchface : WatchFace() {
         handler.removeCallbacks(countdownTick)
     }
 
-    /** Asynchronous; the answer marks the state dirty only when it changed. */
+    /** Asynchronous; the answer redraws only when it changed. */
     private fun refreshPhoneReachable() {
         if (isHeadless) return
-        try {
-            Wearable.getCapabilityClient(this)
-                .getCapability(DataLayerListenerServiceWear.PHONE_CAPABILITY, CapabilityClient.FILTER_REACHABLE)
-                .addOnSuccessListener { info ->
-                    val reachable = info.nodes.isNotEmpty()
-                    if (reachable != phoneReachable) {
-                        phoneReachable = reachable
-                        invalidate()
-                    }
-                }
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.WEAR, "OrbitWatchface capability query failed", e)
-        }
+        PhoneReachability.refresh(this, guard, aapsLogger, "OrbitWatchface") { invalidate() }
     }
 
     // ---------------------------------------------------------------- preferences
@@ -426,28 +417,29 @@ class OrbitWatchface : WatchFace() {
 
     private fun refreshBolusCheck() {
         if (isHeadless) {
-            bolusCheck = OrbitBolusGuard.Check(State.HIDDEN, Reason.PREF_OFF)
+            bolusCheck = BolusRequestGuard.Check(State.HIDDEN, Reason.HEADLESS)
             return
         }
-        val amount = BolusTapGesture.parseAmount(sp.getString(R.string.key_orbit_bolus_amount, "0.5"))
-        if (amount != bolusAmount || bolusAmountText.isEmpty()) {
+        val amount = BolusRequestPrefs.amount(sp)
+        if (!amount.isNaN() && (amount != bolusAmount || bolusAmountText.isEmpty())) {
             bolusAmount = amount
             bolusAmountText = OrbitFaceLogic.bolusAmountText(amount, Locale.getDefault())
         }
+        bolusCheck = guard.check(bolusInput())
+    }
+
+    private fun bolusInput(): BolusRequestGuard.Input {
         val d = data
-        bolusCheck = guard.check(
-            OrbitBolusGuard.Input(
-                prefOn = sp.getBoolean(R.string.key_orbit_bolus_double_tap, false),
-                ambient = isAmbient,
-                wearControl = preferences.get(BooleanKey.WearControl),
-                amount = bolusAmount,
-                maxBolus = if (sp.contains(R.string.key_treatments_safety_max_bolus)) sp.getDouble(R.string.key_treatments_safety_max_bolus, Double.NaN)
-                else Double.NaN,
-                phoneReachable = phoneReachable,
-                lastPhoneMessage = d.lastUpdateTimestamp,
-                bgTimeStamp = d.bgData.timeStamp,
-                firstStart = OrbitFaceLogic.firstStart(d.bgData.timeStamp, d.statusData.openApsStatus, d.statusData.iobSum)
-            )
+        return BolusRequestGuard.Input(
+            prefOn = BolusRequestPrefs.enabled(sp),
+            ambient = isAmbient,
+            wearControl = preferences.get(BooleanKey.WearControl),
+            amount = BolusRequestPrefs.amount(sp),
+            maxBolus = BolusRequestPrefs.maxBolus(sp, getString(R.string.key_treatments_safety_max_bolus)),
+            lastPhoneMessage = d.lastUpdateTimestamp,
+            bgTimeStamp = d.bgData.timeStamp,
+            headless = isHeadless || !isLiveRender,
+            firstStart = OrbitFaceLogic.firstStart(d.bgData.timeStamp, d.statusData.openApsStatus, d.statusData.iobSum)
         )
     }
 
@@ -469,7 +461,7 @@ class OrbitWatchface : WatchFace() {
         val d = if (isHeadless) sampleData else data
         val key = minuteKey()
         if (!dirty && d === builtFor && key == builtMinuteKey && isAmbient == builtAmbient && is24HourFormat == built24h &&
-            phoneReachable == builtReachable
+            guard.phoneReach == builtReachable
         ) return
         if (key != builtMinuteKey) refreshPhoneReachable()
         refreshLoopStates()
@@ -478,7 +470,7 @@ class OrbitWatchface : WatchFace() {
         builtMinuteKey = key
         builtAmbient = isAmbient
         built24h = is24HourFormat
-        builtReachable = phoneReachable
+        builtReachable = guard.phoneReach
         rebuild(d, renderNow(), key)
     }
 
@@ -550,7 +542,7 @@ class OrbitWatchface : WatchFace() {
         val dataAgeMs = if (d.lastUpdateTimestamp > 0L) now - d.lastUpdateTimestamp else Long.MAX_VALUE
         // the display treats an unknown link as reachable (no "Telefon getrennt" before the first answer);
         // the bolus guard does not (DISABLED until then)
-        val link = OrbitFaceLogic.phoneLink(isHeadless || phoneReachable != false, dataAgeMs)
+        val link = OrbitFaceLogic.phoneLink(isHeadless || guard.phoneReach != PhoneReach.UNREACHABLE, dataAgeMs)
         val dataAgeMin = if (d.lastUpdateTimestamp > 0L) maxOf(0L, dataAgeMs / 60_000L) else null
         slot = OrbitFaceLogic.statusSlot(
             OrbitFaceLogic.SlotInput(
@@ -1259,7 +1251,7 @@ class OrbitWatchface : WatchFace() {
         if (armed) {
             setStroke(3.5f, withAlpha(Color.WHITE, 60), true)
             canvas.drawPath(outlinePath, stroke)
-            val remaining = (1f - (System.currentTimeMillis() - armedAt).toFloat() / OrbitBolusGuard.WINDOW_MS).coerceIn(0f, 1f)
+            val remaining = (1f - (System.currentTimeMillis() - guard.armedAt).toFloat() / BolusTapGesture.WINDOW_MS).coerceIn(0f, 1f)
             outlineSegment.rewind()
             if (outlineMeasure.getSegment(0f, outlineLength * remaining, outlineSegment, true)) {
                 stroke.color = Color.WHITE
@@ -1344,35 +1336,37 @@ class OrbitWatchface : WatchFace() {
     override fun onTapCommand(tapType: Int, x: Int, y: Int, eventTime: Long) {
         // tap.ambient: no hit testing at all
         if (tapType != TapType.UP || isAmbient || isHeadless) return
-        if (!guard.acceptTap(eventTime)) return
         val left = (faceRect.width() - 450f * scale) / 2f
         val top = (faceRect.height() - 450f * scale) / 2f
         val dx = (x - left) / scale
         val dy = (y - top) / scale
 
         refreshBolusCheck()
-        val state = bolusCheck.state
-        val inside = state != State.HIDDEN && BolusTapGesture.isInside(dx, dy, bolusX, bolusY, OrbitBolusGuard.HIT_R)
+        val inside = bolusCheck.state != State.HIDDEN && BolusTapGesture.isInside(dx, dy, bolusX, bolusY, OrbitFaceLogic.BOLUS_HIT_R)
+        // The guard re-checks every rule and drops a duplicate delivery of the same tap event.
+        val outcome = guard.onTap(eventTime, inside, bolusInput())
+        if (outcome.result == TapResult.DUPLICATE) return
         // a tap on the button re-checks the phone link, so a lost phone shows up without waiting for the minute
+        // (on ARM this is also the fresh answer that SEND needs)
         if (inside) refreshPhoneReachable()
-        if (inside && (state == State.DISABLED || state == State.SENT)) {
-            if (gesture.reset()) handler.removeCallbacks(countdownTick)
-            toast(
-                when (bolusCheck.reason) {
-                    Reason.PENDING        -> R.string.orbit_bolus_pending
-                    Reason.STALE_DATA     -> R.string.orbit_bolus_refused_stale
-                    Reason.OVER_MAX_BOLUS -> R.string.orbit_bolus_refused_max
-                    Reason.NO_MAX_BOLUS   -> R.string.orbit_bolus_refused_max_unknown
-                    else                  -> R.string.orbit_bolus_refused_phone
-                }
-            )
-            invalidate()
-            return
-        }
-        val enabled = state == State.IDLE
-        when (gesture.onTap(inside, enabled)) {
-            BolusTapGesture.Decision.ARM    -> {
-                armedAt = System.currentTimeMillis()
+        when (outcome.result) {
+            TapResult.REFUSED   -> {
+                handler.removeCallbacks(countdownTick)
+                toast(
+                    when (outcome.reason) {
+                        Reason.PENDING        -> R.string.orbit_bolus_pending
+                        Reason.STALE_DATA     -> R.string.orbit_bolus_refused_stale
+                        Reason.OVER_MAX_BOLUS -> R.string.orbit_bolus_refused_max
+                        Reason.NO_MAX_BOLUS   -> R.string.orbit_bolus_refused_max_unknown
+                        else                  -> R.string.orbit_bolus_refused_phone
+                    }
+                )
+                dirty = true
+                invalidate()
+                return
+            }
+
+            TapResult.ARM       -> {
                 vibrate()
                 handler.removeCallbacks(countdownTick)
                 handler.postDelayed(countdownTick, 100L)
@@ -1380,30 +1374,27 @@ class OrbitWatchface : WatchFace() {
                 return
             }
 
-            BolusTapGesture.Decision.SEND   -> {
+            TapResult.SEND      -> {
                 handler.removeCallbacks(countdownTick)
-                if (guard.mayRequest()) {
-                    guard.recordRequest()
-                    aapsLogger.info(LTag.WEAR, "OrbitWatchface: double-tap bolus request $bolusAmount U")
-                    // Exactly as BolusActivity: the phone checks and the watch shows the confirmation screen.
-                    rxBus.send(EventWearToMobile(EventData.ActionBolusPreCheck(bolusAmount, 0)))
-                    dirty = true
-                    flashUntil = System.currentTimeMillis() + OrbitBolusGuard.SEND_FLASH_MS
-                    handler.removeCallbacks(redraw)
-                    handler.postDelayed(redraw, OrbitBolusGuard.SEND_FLASH_MS + 10L)
-                }
+                aapsLogger.info(LTag.WEAR, "OrbitWatchface: double-tap bolus request $bolusAmount U")
+                // Exactly as BolusActivity: the phone checks and the watch shows the confirmation screen.
+                rxBus.send(EventWearToMobile(EventData.ActionBolusPreCheck(bolusAmount, 0)))
+                dirty = true
+                flashUntil = System.currentTimeMillis() + OrbitFaceLogic.BOLUS_SEND_FLASH_MS
+                handler.removeCallbacks(redraw)
+                handler.postDelayed(redraw, OrbitFaceLogic.BOLUS_SEND_FLASH_MS + 10L)
                 invalidate()
                 return
             }
 
-            BolusTapGesture.Decision.DISARM -> {
+            TapResult.DISARM    -> {
                 handler.removeCallbacks(countdownTick)
                 invalidate()
             }
 
-            BolusTapGesture.Decision.IGNORE -> Unit
+            TapResult.IGNORE, TapResult.DUPLICATE -> Unit
         }
-        if (inside) return
+        if (outcome.onButton) return
 
         // tap.menu: a single tap on the time opens the main menu
         if (dx in 155f..295f && dy in 30f..85f) {
@@ -1413,14 +1404,14 @@ class OrbitWatchface : WatchFace() {
         // tap.graph: single tap opens the menu once the double-tap window passed; a double tap within the window
         // cycles the chart time frame (1..5 h) and shows a caption for 1,5 s
         if (dx in GRAPH_X0..GRAPH_X1 && dy in GRAPH_Y0..GRAPH_Y1) {
-            if (graphTapTime != 0L && eventTime - graphTapTime < OrbitBolusGuard.WINDOW_MS) {
+            if (graphTapTime != 0L && eventTime - graphTapTime < OrbitFaceLogic.GRAPH_DOUBLE_TAP_MS) {
                 handler.removeCallbacks(graphSingleTap)
                 graphTapTime = 0L
                 cycleTimeFrame()
             } else {
                 graphTapTime = eventTime
                 handler.removeCallbacks(graphSingleTap)
-                handler.postDelayed(graphSingleTap, OrbitBolusGuard.WINDOW_MS)
+                handler.postDelayed(graphSingleTap, OrbitFaceLogic.GRAPH_DOUBLE_TAP_MS)
             }
         }
     }

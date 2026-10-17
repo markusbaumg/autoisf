@@ -2,23 +2,24 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <!-- Shared with the Halo, Glass and Orbit faces (one setting, see strings_face_bolus.xml). Default OFF.
+         Watch-only key, not part of the CustomWatchface preference list, so a CWF zip cannot enable it.
+         No summaryOn/summaryOff: they would hide the safety summary. -->
     <CheckBoxPreference
         android:defaultValue="false"
-        android:key="@string/key_halo_bolus_double_tap"
-        android:summary="@string/pref_halo_bolus_double_tap_summary"
-        android:summaryOn="@string/on"
-        android:summaryOff="@string/off"
-        android:title="@string/pref_halo_bolus_double_tap"
+        android:key="@string/key_face_bolus_request_enabled"
+        android:summary="@string/pref_face_bolus_request_enabled_summary"
+        android:title="@string/pref_face_bolus_request_enabled"
         app:wear_iconOff="@drawable/settings_off"
         app:wear_iconOn="@drawable/settings_on" />
 
     <ListPreference
         android:defaultValue="0.5"
-        android:dependency="@string/key_halo_bolus_double_tap"
-        android:entries="@array/halo_bolus_amount_names"
-        android:entryValues="@array/halo_bolus_amount_values"
-        android:key="@string/key_halo_bolus_amount"
+        android:dependency="@string/key_face_bolus_request_enabled"
+        android:entries="@array/face_bolus_request_amount_names"
+        android:entryValues="@array/face_bolus_request_amount_values"
+        android:key="@string/key_face_bolus_request_amount"
         android:summary="%s"
-        android:title="@string/pref_halo_bolus_amount" />
+        android:title="@string/pref_face_bolus_request_amount" />
 
 </PreferenceScreen>

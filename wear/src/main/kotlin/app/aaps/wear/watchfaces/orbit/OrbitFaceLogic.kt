@@ -25,6 +25,15 @@ object OrbitFaceLogic {
     const val BALL_R = 34f
     const val BOLUS_HALF = 33f
 
+    /** Hit circle radius around the bolus button centre (spec §4.12); the rules live in the shared BolusRequestGuard. */
+    const val BOLUS_HIT_R = 44f
+
+    /** Rim flash after a bolus request is sent (spec §4.12). */
+    const val BOLUS_SEND_FLASH_MS = 150L
+
+    /** Double-tap window of the graph (time-frame change), same as the bolus button. */
+    const val GRAPH_DOUBLE_TAP_MS = 800L
+
     /** Ball positions on the orbit (degrees clockwise from 12). Never change between modes. */
     const val DEG_LOOP = 45f
     const val DEG_IOB = 90f

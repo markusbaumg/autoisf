@@ -33,7 +33,6 @@ import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.wear.BuildConfig
 import app.aaps.wear.R
-import app.aaps.wear.comm.DataLayerListenerServiceWear
 import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
@@ -46,21 +45,22 @@ import app.aaps.wear.watchfaces.glass.GlassFaceLogic.LoopMode
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.AmbTone
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.OutlineStyle
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.PhoneLink
-import app.aaps.wear.watchfaces.glass.GlassFaceLogic.PhoneReach
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Pills
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Range
-import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Refusal
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Sentinel
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Tone
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Trend
-import app.aaps.wear.watchfaces.halo.BolusTapGesture
+import app.aaps.wear.watchfaces.common.BolusRequestGuard
+import app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason
+import app.aaps.wear.watchfaces.common.BolusRequestGuard.TapResult
+import app.aaps.wear.watchfaces.common.BolusRequestPrefs
+import app.aaps.wear.watchfaces.common.BolusTapGesture
+import app.aaps.wear.watchfaces.common.PhoneReachability
 import app.aaps.wear.watchfaces.utils.SimpleUi
 import app.aaps.wear.watchfaces.utils.WatchFace
 import app.aaps.wear.watchfaces.utils.WatchFaceTime
 import app.aaps.wear.watchfaces.utils.WatchMode
 import app.aaps.wear.watchfaces.utils.WatchfaceViewAdapter.Companion.SelectedWatchFace
-import com.google.android.gms.wearable.CapabilityClient
-import com.google.android.gms.wearable.Wearable
 import dagger.android.AndroidInjection
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
@@ -94,15 +94,10 @@ import kotlin.math.sin
  * draw cached state.
  *
  * Optional bolus ball (left): a double-tap sends only a bolus REQUEST (ActionBolusPreCheck); the phone runs
- * its checks and the watch shows the standard confirmation. Hardened rules: default off, never in ambient,
- * Wear control on, phone reachable with fresh data, amount <= the phone's max bolus, 800 ms window, 5 s
- * cooldown, 30 s pending, duplicate tap events ignored ([GlassFaceLogic.refusal], [GlassFaceLogic.ballState]).
- * The phone must have answered "reachable": refused while the first lookup is pending or failed, looked up
- * again when the ball arms, and SEND needs a "reachable" answer at most 10 s old.
- *
- * Integrator note: Glass now uses the shared halo BolusTapGesture and the halo_bolus_* keys (also in
- * watch_face_configuration_glass.xml). Its rule set (BOLUS_WINDOW_MS/COOLDOWN_MS/PENDING_MS, refusal,
- * ballState) is still Glass's own copy; switching it to halo BolusRequestGuard is a follow-up.
+ * its checks and the watch shows the standard confirmation. Every rule (default off, never in ambient, Wear
+ * control on, phone reachable with fresh data, max bolus, 800 ms window, 5 s cooldown, 30 s pending, dedupe,
+ * fresh reachability answer before SEND) lives in the shared [BolusRequestGuard] with the shared setting
+ * ([BolusRequestPrefs], also used by Halo and Orbit); Glass only draws the ball ([GlassFaceLogic.ballState]).
  *
  * Not yet covered (catalogue states / prefs, spec glass_spec.md): multi-patient datasets 1/2 (§10, multi.*,
  * patient name), key_show_seconds, key_show_week_number, key_chart_time_frame (fixed 3 h, no 1,5 s
@@ -126,16 +121,13 @@ class GlassWatchface : WatchFace() {
     private val handler = Handler(Looper.getMainLooper())
 
     private var data: ComplicationData = ComplicationData()
-    private var phoneReach = PhoneReach.UNKNOWN // no warning until the first answer, but no bolus either
-    private var reachAnsweredAt = 0L
 
-    // ---------------------------------------------------------------- gesture (hardened rule set)
+    // ---------------------------------------------------------------- bolus request (shared rule set)
 
-    private val gesture = BolusTapGesture(clock = { System.currentTimeMillis() }, windowMs = GlassFaceLogic.BOLUS_WINDOW_MS, cooldownMs = GlassFaceLogic.BOLUS_COOLDOWN_MS)
-    private var armedAt = 0L
-    private var sentAt = 0L
+    // Holds the phone reachability (UNKNOWN until the first answer: no warning, but no bolus either).
+    private val guard = BolusRequestGuard(clock = { System.currentTimeMillis() }, store = BolusRequestPrefs.lastSentStore { sp })
+    private val gesture get() = guard.gesture
     private var flashUntil = 0L
-    private var lastTapEventTime = Long.MIN_VALUE
     private var bgTapTime = 0L
     private var lastMenuOpenTime = 0L
     private val armedTick = object : Runnable {
@@ -208,7 +200,7 @@ class GlassWatchface : WatchFace() {
     private var footerAmbientSize = 18f
 
     private var ball = BallState.HIDDEN
-    private var refusal = Refusal.NONE
+    private var bolusCheck = BolusRequestGuard.Check(BolusRequestGuard.State.HIDDEN, Reason.PREF_OFF)
     private var amountText = "+0,5"
     private var timeText = ""
     private var amPmText: String? = null
@@ -268,6 +260,7 @@ class GlassWatchface : WatchFace() {
     override fun onCreate() {
         AndroidInjection.inject(this)
         super.onCreate()
+        BolusRequestPrefs.migrate(sp) // per-face settings of earlier iterations -> the shared pair
         sp.putInt(R.string.key_last_selected_watchface, SelectedWatchFace.GLASS.ordinal)
         rxBus.send(EventUpdateSelectedWatchface())
         simpleUi.onCreate { dirty = true; invalidate() }
@@ -327,30 +320,10 @@ class GlassWatchface : WatchFace() {
         }
     }
 
-    /**
-     * CapabilityClient FILTER_REACHABLE (contract gap G7: no "phone connected" flag); answers asynchronously.
-     * A failed lookup counts as UNREACHABLE. Every answer is time-stamped so SEND can demand a recent one.
-     */
+    /** CapabilityClient FILTER_REACHABLE (contract gap G7: no "phone connected" flag); answers asynchronously. */
     private fun refreshPhoneReachable() {
-        try {
-            Wearable.getCapabilityClient(this)
-                .getCapability(DataLayerListenerServiceWear.PHONE_CAPABILITY, CapabilityClient.FILTER_REACHABLE)
-                .addOnSuccessListener { info -> onReachAnswer(if (info.nodes.isNotEmpty()) PhoneReach.REACHABLE else PhoneReach.UNREACHABLE) }
-                .addOnFailureListener { e ->
-                    aapsLogger.error(LTag.WEAR, "GlassWatchface capability lookup failed", e)
-                    onReachAnswer(PhoneReach.UNREACHABLE)
-                }
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.WEAR, "GlassWatchface capability check failed", e)
-            onReachAnswer(PhoneReach.UNREACHABLE)
-        }
-    }
-
-    private fun onReachAnswer(reach: PhoneReach) {
-        reachAnsweredAt = System.currentTimeMillis()
-        if (reach != phoneReach) {
-            phoneReach = reach
-            if (reach != PhoneReach.REACHABLE && gesture.isArmed) disarm()
+        PhoneReachability.refresh(this, guard, aapsLogger, "GlassWatchface") {
+            if (guard.phoneReach != app.aaps.wear.watchfaces.common.PhoneReach.REACHABLE) disarm()
             dirty = true
             invalidate()
         }
@@ -358,10 +331,19 @@ class GlassWatchface : WatchFace() {
 
     // ---------------------------------------------------------------- preferences
 
-    private fun bolusPref(): Boolean = sp.getBoolean(R.string.key_halo_bolus_double_tap, false)
-    private fun bolusAmountRaw(): String = sp.getString(R.string.key_halo_bolus_amount, "0.5")
-    private fun bolusAmount(): Double = BolusTapGesture.parseAmount(bolusAmountRaw())
-    private fun maxBolus(): Double = sp.getDouble(R.string.key_treatments_safety_max_bolus, 0.0)
+    private fun bolusAmount(): Double = BolusRequestPrefs.amount(sp)
+
+    private fun bolusInput() = BolusRequestGuard.Input(
+        prefOn = BolusRequestPrefs.enabled(sp),
+        ambient = isAmbient,
+        wearControl = preferences.get(BooleanKey.WearControl),
+        amount = bolusAmount(),
+        maxBolus = BolusRequestPrefs.maxBolus(sp, getString(R.string.key_treatments_safety_max_bolus)),
+        lastPhoneMessage = data.lastUpdateTimestamp,
+        bgTimeStamp = data.bgData.timeStamp,
+        headless = isHeadless || !isLiveRender,
+        firstStart = firstStart
+    )
 
     private fun disarm() {
         gesture.reset()
@@ -454,7 +436,7 @@ class GlassWatchface : WatchFace() {
 
         // signals
         firstStart = GlassFaceLogic.firstStart(bg.timeStamp, st.openApsStatus, st.iobSum)
-        link = GlassFaceLogic.phoneLink(phoneReach, data.lastUpdateTimestamp, now)
+        link = GlassFaceLogic.phoneLink(guard.phoneReach, data.lastUpdateTimestamp, now)
         val age = GlassFaceLogic.ageMinutes(bg.timeStamp, now)
         bgAge = GlassFaceLogic.bgAge(age)
         stale = GlassFaceLogic.isStale(bgAge)
@@ -576,22 +558,13 @@ class GlassWatchface : WatchFace() {
 
         // ball
         val amount = bolusAmount()
-        refusal = GlassFaceLogic.refusal(link, bgAge, amount, maxBolus(), phoneReach)
-        updateBall(now)
-        amountText = GlassFaceLogic.bolusAmountText(amount, locale)
+        updateBall()
+        if (!amount.isNaN()) amountText = GlassFaceLogic.bolusAmountText(amount, locale)
     }
 
-    private fun amountAllowed(): Boolean {
-        val raw = bolusAmountRaw().trim().replace(',', '.').toDoubleOrNull() ?: return true // unset: default 0.5
-        return kotlin.math.abs(BolusTapGesture.parseAmount(raw.toString()) - raw) < 1e-6
-    }
-
-    private fun updateBall(now: Long) {
-        ball = GlassFaceLogic.ballState(
-            prefOn = bolusPref(), ambient = isAmbient, headless = false,
-            wearControl = preferences.get(BooleanKey.WearControl), amountAllowed = amountAllowed(), firstStart = firstStart,
-            refusal = refusal, armed = gesture.isArmed, sentAt = sentAt, now = now
-        )
+    private fun updateBall() {
+        bolusCheck = guard.check(bolusInput())
+        ball = GlassFaceLogic.ballState(bolusCheck, gesture.isArmed)
         if (ball != BallState.ARMED && gesture.isArmed) disarm()
     }
 
@@ -699,7 +672,7 @@ class GlassWatchface : WatchFace() {
         }
         val now = System.currentTimeMillis()
         if (dirty || now / GlassFaceLogic.MINUTE_MS != stateMinute) updateState(now)
-        else if (ball == BallState.SENT && now - sentAt >= GlassFaceLogic.BOLUS_PENDING_MS) updateBall(now)
+        else if (ball == BallState.SENT && !guard.isPending) updateBall()
         ensureBackgrounds()
 
         canvas.drawColor(Color.BLACK)
@@ -1005,7 +978,7 @@ class GlassWatchface : WatchFace() {
             canvas.drawCircle(GlassFaceLogic.BALL_X, GlassFaceLogic.BALL_Y, RING_R, stroke)
             stroke.strokeWidth = 3f; stroke.color = Color.WHITE; stroke.strokeCap = Paint.Cap.ROUND
             rect.set(GlassFaceLogic.BALL_X - RING_R, GlassFaceLogic.BALL_Y - RING_R, GlassFaceLogic.BALL_X + RING_R, GlassFaceLogic.BALL_Y + RING_R)
-            canvas.drawArc(rect, -90f, 360f * GlassFaceLogic.armProgress(armedAt, now, gesture.windowMs), false, stroke)
+            canvas.drawArc(rect, -90f, 360f * GlassFaceLogic.armProgress(guard.armedAt, now, BolusTapGesture.WINDOW_MS), false, stroke)
         }
         if (now < flashUntil) {
             stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 3f; stroke.color = Color.WHITE
@@ -1264,8 +1237,6 @@ class GlassWatchface : WatchFace() {
 
     override fun onTapCommand(tapType: Int, x: Int, y: Int, eventTime: Long) {
         if (tapType != TAP_UP || isAmbient) return // tap.ambient: no hit testing at all
-        if (eventTime == lastTapEventTime) return // duplicate delivery of the same tap
-        lastTapEventTime = eventTime
         val size = min(faceRect.width(), faceRect.height())
         val s = size / 450f
         if (s <= 0f) return
@@ -1273,29 +1244,14 @@ class GlassWatchface : WatchFace() {
         val dy = (y - (faceRect.height() - size) / 2f) / s
 
         val now = System.currentTimeMillis()
-        updateState(now) // fresh verdict (phone link, data age, max bolus) at the moment of the tap
+        updateState(now) // fresh state (phone link, data age) at the moment of the tap
+        // The guard re-checks every rule itself and drops a duplicate delivery of the same tap.
         val inside = ball != BallState.HIDDEN && GlassFaceLogic.ballHit(dx, dy)
-        if (inside && ball == BallState.SENT) {
-            toast(R.string.glass_bolus_pending)
-            return
-        }
-        if (inside && ball == BallState.DISABLED) {
-            disarm()
-            toast(
-                when (refusal) {
-                    Refusal.NO_PHONE   -> R.string.glass_bolus_refused_no_phone
-                    Refusal.STALE_DATA -> R.string.glass_bolus_refused_stale
-                    else               -> R.string.glass_bolus_refused_max
-                }
-            )
-            invalidate()
-            return
-        }
-        val enabled = ball == BallState.IDLE || ball == BallState.ARMED
-        when (gesture.onTap(inside, enabled)) {
-            BolusTapGesture.Decision.ARM    -> {
+        val outcome = guard.onTap(eventTime, inside, bolusInput())
+        when (outcome.result) {
+            TapResult.DUPLICATE -> return
+            TapResult.ARM       -> {
                 refreshPhoneReachable() // fresh answer for the SEND gate, well inside the window
-                armedAt = now
                 ball = BallState.ARMED
                 vibrate()
                 handler.removeCallbacks(armedTick)
@@ -1303,40 +1259,46 @@ class GlassWatchface : WatchFace() {
                 return
             }
 
-            BolusTapGesture.Decision.SEND   -> {
+            TapResult.SEND      -> {
                 handler.removeCallbacks(armedTick)
-                if (!GlassFaceLogic.reachConfirmed(phoneReach, reachAnsweredAt, now)) {
-                    // no "reachable" answer in the last 10 s: never send on the minute-tick verdict
-                    disarm()
-                    refreshPhoneReachable()
-                    toast(R.string.glass_bolus_refused_no_phone)
-                    dirty = true
-                    invalidate()
-                    return
-                }
                 val amount = bolusAmount()
                 aapsLogger.info(LTag.WEAR, "GlassWatchface: double-tap bolus request $amount U")
                 // Request only, exactly as BolusActivity: the phone checks it and the watch shows the confirmation.
                 rxBus.send(EventWearToMobile(EventData.ActionBolusPreCheck(amount, 0)))
                 vibrate()
-                sentAt = now
                 flashUntil = now + FLASH_MS
                 ball = BallState.SENT
                 handler.postDelayed(redraw, FLASH_MS + 10)
-                handler.postDelayed(redraw, GlassFaceLogic.BOLUS_PENDING_MS + 10)
+                handler.postDelayed(redraw, BolusRequestGuard.PENDING_MS + 10)
                 invalidate()
                 return
             }
 
-            BolusTapGesture.Decision.DISARM -> {
+            TapResult.REFUSED   -> {
+                disarm()
+                if (outcome.reason == Reason.NO_PHONE) refreshPhoneReachable()
+                toast(
+                    when (outcome.reason) {
+                        Reason.PENDING    -> R.string.glass_bolus_pending
+                        Reason.NO_PHONE   -> R.string.glass_bolus_refused_no_phone
+                        Reason.STALE_DATA -> R.string.glass_bolus_refused_stale
+                        else              -> R.string.glass_bolus_refused_max
+                    }
+                )
+                dirty = true
+                invalidate()
+                return
+            }
+
+            TapResult.DISARM    -> {
                 handler.removeCallbacks(armedTick)
                 dirty = true
                 invalidate()
             }
 
-            BolusTapGesture.Decision.IGNORE -> Unit
+            TapResult.IGNORE    -> Unit
         }
-        if (inside && enabled) return
+        if (outcome.onButton) return
 
         // Double-tap on the hero card opens the main menu, like the other AAPS faces.
         if (dx in HERO_X0..HERO_X1 && dy in HERO_Y0..HERO_Y1) {

@@ -6,14 +6,6 @@ import kotlin.math.min
 /** Pure helpers for the "AAPS Halo" watch face (value mapping, states, formatting), unit tested. */
 object HaloFaceLogic {
 
-    /**
-     * SharedPreferences keys of the bolus ball. Must equal key_halo_bolus_double_tap / key_halo_bolus_amount in
-     * strings_halo.xml (checked by a unit test). They are watch-only settings and deliberately NOT part of
-     * CwfMetadataKey, so an imported custom watch face can never switch the bolus request on.
-     */
-    const val PREF_BOLUS_DOUBLE_TAP = "halo_bolus_double_tap"
-    const val PREF_BOLUS_AMOUNT = "halo_bolus_amount"
-
     /** Ring start (Canvas degrees, 0 = 3 o'clock, clockwise) and sweep; the gap is at the bottom. */
     const val RING_START = 135f
     const val RING_SWEEP = 270f

@@ -2,12 +2,7 @@
 <!-- "AAPS Halo" watch face (HaloWatchface). Kept in its own file so Crowdin updates of strings.xml do not touch it. -->
 <resources>
     <string name="label_watchface_halo" translatable="false">AAPS Halo</string>
-    <!-- Key values are mirrored in HaloFaceLogic (PREF_BOLUS_DOUBLE_TAP, PREF_BOLUS_AMOUNT) and checked by a unit test. -->
-    <string name="key_halo_bolus_double_tap" translatable="false">halo_bolus_double_tap</string>
-    <string name="key_halo_bolus_amount" translatable="false">halo_bolus_amount</string>
-    <string name="pref_halo_bolus_double_tap">Double-tap bolus request</string>
-    <string name="pref_halo_bolus_double_tap_summary">Halo face: double-tap the +U ball to request a bolus. The phone checks it and you confirm on the watch. Needs Wear control enabled on the phone.</string>
-    <string name="pref_halo_bolus_amount">Bolus request amount</string>
+    <!-- The bolus request setting is shared by the Halo, Glass and Orbit faces: see strings_face_bolus.xml. -->
     <string name="halo_bolus_sub">U 2×</string>
     <string name="halo_bolus_again">again</string>
     <string name="halo_bolus_sent">Bolus request sent. Confirm on the watch.</string>

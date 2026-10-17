@@ -37,8 +37,13 @@ import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
 import app.aaps.wear.interaction.menus.MainMenuActivity
-import app.aaps.wear.watchfaces.halo.BolusRequestGuard
-import app.aaps.wear.watchfaces.halo.BolusTapGesture
+import app.aaps.wear.watchfaces.common.BolusRequestGuard
+import app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason
+import app.aaps.wear.watchfaces.common.BolusRequestGuard.State
+import app.aaps.wear.watchfaces.common.BolusRequestGuard.TapResult
+import app.aaps.wear.watchfaces.common.BolusRequestPrefs
+import app.aaps.wear.watchfaces.common.BolusTapGesture
+import app.aaps.wear.watchfaces.common.PhoneReachability
 import app.aaps.wear.watchfaces.halo.HaloFaceLogic
 import app.aaps.wear.watchfaces.halo.HaloFaceLogic.AgeLevel
 import app.aaps.wear.watchfaces.halo.HaloFaceLogic.AmbientHero
@@ -99,24 +104,13 @@ class HaloWatchface : WatchFace() {
     /** Headless instance (picker / editor preview): no side effects, never a bolus ball. */
     @Volatile private var headless = true
 
-    private val gesture = BolusTapGesture(clock = { System.currentTimeMillis() })
-    private val guard = BolusRequestGuard(
-        clock = { System.currentTimeMillis() },
-        // Persisted, so a recreated service still knows about a request whose confirmation may be open.
-        store = object : BolusRequestGuard.LastSentStore {
-            override var lastSentAt: Long
-                get() = sp.getLong(KEY_LAST_SENT_AT, 0L)
-                set(value) = sp.putLong(KEY_LAST_SENT_AT, value)
-        }
-    )
-    private val disarmRunnable = Runnable { if (gesture.expireIfDue()) invalidate() }
+    // Shared bolus request rules (watchfaces/common); persisted pending time, so a recreated service or another
+    // face still knows about a request whose confirmation may be open.
+    private val guard = BolusRequestGuard(clock = { System.currentTimeMillis() }, store = BolusRequestPrefs.lastSentStore { sp })
+    private val disarmRunnable = Runnable { if (guard.gesture.expireIfDue()) invalidate() }
 
-    // Phone reachability (the data layer drops messages silently without a reachable node).
+    // Phone reachability (the data layer drops messages silently without a reachable node); kept in the guard.
     private val capabilityClient by lazy { Wearable.getCapabilityClient(this) }
-    @Volatile private var phoneReachable = false
-    /** Time the last FILTER_REACHABLE query answered; a SEND needs an answer newer than its first tap. */
-    @Volatile private var phoneCheckedAt = 0L
-    private var armedAt = 0L
     // info.nodes is not filtered by reachability: re-query with FILTER_REACHABLE instead of trusting it.
     private val capabilityListener = CapabilityClient.OnCapabilityChangedListener { refreshPhoneReachable() }
     private var capabilityListening = false
@@ -202,7 +196,7 @@ class HaloWatchface : WatchFace() {
             .observeOn(aapsSchedulers.main)
             .subscribe {
                 drawnAmount = Double.NaN
-                if (!bolusButtonEnabled() && gesture.reset()) handler.removeCallbacks(disarmRunnable)
+                if (bolusCheck().state != State.IDLE && guard.reset()) handler.removeCallbacks(disarmRunnable)
                 invalidate()
             }
         disposable += rxBus
@@ -222,9 +216,8 @@ class HaloWatchface : WatchFace() {
             // Only the real, active instance becomes the "last selected" face and asks the phone for data,
             // once per service even if the system opens a second (non-headless) engine.
             activeSetupDone = true
-            // Settings of the iteration-1 "Kusi" face; the Halo face uses halo_* keys (ball starts off again).
-            sp.remove(OLD_KEY_DOUBLE_TAP)
-            sp.remove(OLD_KEY_AMOUNT)
+            // Per-face settings of earlier iterations (kusi_ / halo_ / orbit_) move to the shared pair.
+            BolusRequestPrefs.migrate(sp)
             sp.putInt(R.string.key_last_selected_watchface, SelectedWatchFace.HALO.ordinal)
             rxBus.send(EventUpdateSelectedWatchface())
             rxBus.send(EventWearToMobile(ActionResendData("HaloWatchface::createWatchFace")))
@@ -249,7 +242,7 @@ class HaloWatchface : WatchFace() {
 
     override fun onWatchModeChanged(watchMode: WatchMode) {
         if (watchMode != WatchMode.INTERACTIVE) {
-            gesture.reset()
+            guard.reset()
             handler.removeCallbacks(disarmRunnable)
         }
     }
@@ -267,31 +260,28 @@ class HaloWatchface : WatchFace() {
     }
 
     private fun refreshPhoneReachable() {
-        try {
-            capabilityClient.getCapability(DataLayerListenerServiceWear.PHONE_CAPABILITY, CapabilityClient.FILTER_REACHABLE)
-                .addOnSuccessListener {
-                    phoneReachable = it.nodes.isNotEmpty()
-                    phoneCheckedAt = System.currentTimeMillis()
-                }
-                .addOnFailureListener {
-                    phoneReachable = false
-                    phoneCheckedAt = System.currentTimeMillis()
-                }
-        } catch (e: Exception) {
-            phoneReachable = false
-            aapsLogger.error(LTag.WEAR, "HaloWatchface getCapability failed", e)
-        }
+        if (headless) return
+        PhoneReachability.refresh(this, guard, aapsLogger, "HaloWatchface") { invalidate() }
     }
 
     // ---------------------------------------------------------------- preferences
 
-    private fun bolusButtonPref(): Boolean = sp.getBoolean(R.string.key_halo_bolus_double_tap, false)
-    private fun wearControl(): Boolean = preferences.get(BooleanKey.WearControl)
-    private fun bolusAmount(): Double = BolusTapGesture.parseAmount(sp.getString(R.string.key_halo_bolus_amount, "0.5"))
-    private fun maxBolus(): Double = sp.getDouble(R.string.key_treatments_safety_max_bolus, 3.0)
+    private fun bolusAmount(): Double = BolusRequestPrefs.amount(sp)
+    private fun maxBolus(): Double = BolusRequestPrefs.maxBolus(sp, getString(R.string.key_treatments_safety_max_bolus))
 
-    /** The ball exists only with the setting on, Wear control allowed, interactive, and not in a preview. */
-    private fun bolusButtonEnabled(): Boolean = !headless && isLiveRender && !isAmbient && bolusButtonPref() && wearControl()
+    private fun bolusInput() = BolusRequestGuard.Input(
+        prefOn = BolusRequestPrefs.enabled(sp),
+        ambient = isAmbient,
+        wearControl = preferences.get(BooleanKey.WearControl),
+        amount = bolusAmount(),
+        maxBolus = maxBolus(),
+        lastPhoneMessage = data.lastUpdateTimestamp,
+        bgTimeStamp = data.bgData.timeStamp,
+        headless = headless || !isLiveRender
+    )
+
+    /** The ball exists only with the setting on, Wear control allowed, a valid amount, interactive, not in a preview. */
+    private fun bolusCheck(): BolusRequestGuard.Check = guard.check(bolusInput())
 
     // ---------------------------------------------------------------- drawing
 
@@ -414,15 +404,15 @@ class HaloWatchface : WatchFace() {
         drawIobCob(canvas, ambient = false)
 
         // 8. loop pill (the bolus ball takes its place when enabled)
-        buttonShown = bolusButtonEnabled()
+        buttonShown = bolusCheck().state != State.HIDDEN
         if (!buttonShown) drawLoopPill(canvas, now, ambient = false)
 
         // 9. secondary line: temp target (when active) and basal
         drawFitText(canvas, secondaryLine(), cx, L.secondaryY, L.secondarySize, tf500, SECONDARY, maxWidth = L.secondaryMaxW)
 
         // 10. bolus ball (only when enabled; otherwise not drawn and not tappable)
-        if (buttonShown) drawBolusButton(canvas, gesture.isArmed)
-        else if (gesture.reset()) handler.removeCallbacks(disarmRunnable)
+        if (buttonShown) drawBolusButton(canvas, guard.isArmed)
+        else if (guard.reset()) handler.removeCallbacks(disarmRunnable)
     }
 
     /**
@@ -864,53 +854,39 @@ class HaloWatchface : WatchFace() {
         val dx = x - offX
         val dy = y - offY
 
-        val enabled = buttonShown && bolusButtonEnabled()
-        val inside = BolusTapGesture.isInside(dx, dy, L.ballX, L.ballY, L.ballHitR)
-        when (gesture.onTap(inside, enabled)) {
-            BolusTapGesture.Decision.ARM    -> {
+        val inside = buttonShown && BolusTapGesture.isInside(dx, dy, L.ballX, L.ballY, L.ballHitR)
+        val outcome = guard.onTap(eventTime, inside, bolusInput())
+        when (outcome.result) {
+            TapResult.DUPLICATE -> return
+            TapResult.ARM       -> {
                 handler.removeCallbacks(disarmRunnable)
-                // Fresh FILTER_REACHABLE query; its answer must arrive before the second tap (see SEND).
-                // The quick check below still uses the cached value, so an obviously lost phone refuses at once.
-                armedAt = System.currentTimeMillis()
+                // Fresh FILTER_REACHABLE query; SEND needs its "reachable" answer (arrived after this tap).
                 refreshPhoneReachable()
-                val verdict = evaluateRequest()
-                if (verdict != BolusRequestGuard.Verdict.SEND) {
-                    // Refuse right away instead of arming a request that cannot be sent.
-                    gesture.reset()
-                    refused(verdict)
-                } else {
-                    vibrate(vibArmed)
-                    handler.postDelayed(disarmRunnable, gesture.windowMs + 50)
-                }
-                invalidate()
-                return
+                vibrate(vibArmed)
+                handler.postDelayed(disarmRunnable, BolusTapGesture.WINDOW_MS + 50)
             }
 
-            BolusTapGesture.Decision.SEND   -> {
+            TapResult.SEND      -> {
                 handler.removeCallbacks(disarmRunnable)
                 val amount = bolusAmount()
-                // Only a reachability answer that arrived after the first tap counts (the query is asynchronous).
-                val phoneOk = phoneReachable && phoneCheckedAt >= armedAt
-                val verdict = guard.checkAndRecord(amount, maxBolus(), wearControl(), phoneOk, data.lastUpdateTimestamp)
-                if (verdict == BolusRequestGuard.Verdict.SEND) {
-                    aapsLogger.info(LTag.WEAR, "HaloWatchface: double-tap bolus request $amount U")
-                    // Exactly as BolusActivity: the phone checks and the watch shows the confirmation screen.
-                    rxBus.send(EventWearToMobile(EventData.ActionBolusPreCheck(amount, 0)))
-                    vibrate(vibSent)
-                    toast(getString(R.string.halo_bolus_sent))
-                } else refused(verdict)
-                invalidate()
-                return
+                aapsLogger.info(LTag.WEAR, "HaloWatchface: double-tap bolus request $amount U")
+                // Exactly as BolusActivity: the phone checks and the watch shows the confirmation screen.
+                rxBus.send(EventWearToMobile(EventData.ActionBolusPreCheck(amount, 0)))
+                vibrate(vibSent)
+                toast(getString(R.string.halo_bolus_sent))
             }
 
-            BolusTapGesture.Decision.DISARM -> {
+            TapResult.REFUSED   -> {
                 handler.removeCallbacks(disarmRunnable)
-                invalidate()
+                if (outcome.reason == Reason.NO_PHONE) refreshPhoneReachable()
+                refused(outcome.reason)
             }
 
-            BolusTapGesture.Decision.IGNORE -> Unit
+            TapResult.DISARM    -> handler.removeCallbacks(disarmRunnable)
+            TapResult.IGNORE    -> Unit
         }
-        if (inside && enabled) return
+        if (outcome.result != TapResult.IGNORE) invalidate()
+        if (outcome.onButton) return
 
         // Double-tap on the hero BG opens the main menu, like the other AAPS faces.
         if (dx in L.heroTapLeft..L.heroTapRight && dy in L.heroTapTop..L.heroTapBottom) {
@@ -926,22 +902,19 @@ class HaloWatchface : WatchFace() {
         }
     }
 
-    private fun evaluateRequest(): BolusRequestGuard.Verdict =
-        guard.evaluate(bolusAmount(), maxBolus(), wearControl(), phoneReachable, data.lastUpdateTimestamp)
-
-    private fun refused(verdict: BolusRequestGuard.Verdict) {
-        aapsLogger.info(LTag.WEAR, "HaloWatchface: bolus request refused on the watch: $verdict")
+    private fun refused(reason: Reason) {
+        aapsLogger.info(LTag.WEAR, "HaloWatchface: bolus request refused on the watch: $reason")
         vibrate(vibRefused)
-        val message = when (verdict) {
-            BolusRequestGuard.Verdict.REFUSED_MAX_BOLUS,
-            BolusRequestGuard.Verdict.REFUSED_AMOUNT       ->
-                getString(R.string.halo_bolus_refused_max, String.format(Locale.US, "%.1f", bolusAmount()), String.format(Locale.US, "%.1f", maxBolus()))
+        val message = when (reason) {
+            Reason.OVER_MAX_BOLUS,
+            Reason.NO_MAX_BOLUS    ->
+                getString(R.string.halo_bolus_refused_max, String.format(Locale.US, "%.1f", bolusAmount()), maxBolus().let { if (it.isNaN()) "?" else String.format(Locale.US, "%.1f", it) })
 
-            BolusRequestGuard.Verdict.REFUSED_PENDING      -> getString(R.string.halo_bolus_refused_pending)
-            BolusRequestGuard.Verdict.REFUSED_NO_PHONE     -> getString(R.string.halo_bolus_refused_phone)
-            BolusRequestGuard.Verdict.REFUSED_STALE_DATA   -> getString(R.string.halo_bolus_refused_stale)
-            BolusRequestGuard.Verdict.REFUSED_WEAR_CONTROL -> getString(R.string.halo_bolus_refused_wear_control)
-            BolusRequestGuard.Verdict.SEND                 -> return
+            Reason.PENDING         -> getString(R.string.halo_bolus_refused_pending)
+            Reason.NO_PHONE        -> getString(R.string.halo_bolus_refused_phone)
+            Reason.STALE_DATA      -> getString(R.string.halo_bolus_refused_stale)
+            Reason.NO_WEAR_CONTROL -> getString(R.string.halo_bolus_refused_wear_control)
+            else                   -> return
         }
         toast(message)
     }
@@ -966,9 +939,6 @@ class HaloWatchface : WatchFace() {
 
         private const val TAP_UP = 2
         private const val TAIL_WINDOW_MS = 30 * 60 * 1000L
-        private const val KEY_LAST_SENT_AT = "halo_bolus_last_sent_at"
-        private const val OLD_KEY_DOUBLE_TAP = "kusi_bolus_double_tap"
-        private const val OLD_KEY_AMOUNT = "kusi_bolus_amount"
         private const val KEY_LAST_LOOP_TIME = "halo_last_loop_enact"
         private const val SEP = " · "
 

@@ -1,12 +1,10 @@
 package app.aaps.wear.watchfaces.halo
 
-import app.aaps.core.interfaces.rx.weardata.CwfMetadataKey
 import app.aaps.wear.watchfaces.halo.HaloFaceLogic.AgeLevel
 import app.aaps.wear.watchfaces.halo.HaloFaceLogic.AmbientHero
 import app.aaps.wear.watchfaces.halo.HaloFaceLogic.LoopState
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
-import java.io.File
 import java.time.LocalDate
 
 class HaloFaceLogicTest {
@@ -154,23 +152,5 @@ class HaloFaceLogicTest {
         assertThat(ys.all { kotlin.math.abs(it) <= 5f }).isTrue()
         assertThat(xs.zip(ys).toSet().size).isGreaterThan(3)
         assertThat(HaloFaceLogic.burnInOffsetX(-1)).isEqualTo(HaloFaceLogic.burnInOffsetX(5))
-    }
-
-    @Test fun bolusPrefIsNotInCwfAllowlist() {
-        val keys = CwfMetadataKey.entries.map { it.key }
-        assertThat(keys).containsNoneOf(HaloFaceLogic.PREF_BOLUS_DOUBLE_TAP, HaloFaceLogic.PREF_BOLUS_AMOUNT)
-        assertThat(keys.none { it.contains("bolus", ignoreCase = true) }).isTrue()
-    }
-
-    @Test fun prefKeyConstantsMatchResources() {
-        val xml = File("src/main/res/values/strings_halo.xml").readText()
-        assertThat(xml).contains("name=\"key_halo_bolus_double_tap\" translatable=\"false\">${HaloFaceLogic.PREF_BOLUS_DOUBLE_TAP}<")
-        assertThat(xml).contains("name=\"key_halo_bolus_amount\" translatable=\"false\">${HaloFaceLogic.PREF_BOLUS_AMOUNT}<")
-    }
-
-    @Test fun bolusBallIsOffByDefault() {
-        val xml = File("src/main/res/xml/watch_face_configuration_halo.xml").readText()
-        val block = xml.substringBefore("android:key=\"@string/key_halo_bolus_double_tap\"").substringAfterLast("<CheckBoxPreference")
-        assertThat(block).contains("android:defaultValue=\"false\"")
     }
 }

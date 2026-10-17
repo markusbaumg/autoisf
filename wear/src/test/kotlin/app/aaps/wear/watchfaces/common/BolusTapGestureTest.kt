@@ -1,6 +1,6 @@
-package app.aaps.wear.watchfaces.halo
+package app.aaps.wear.watchfaces.common
 
-import app.aaps.wear.watchfaces.halo.BolusTapGesture.Decision
+import app.aaps.wear.watchfaces.common.BolusTapGesture.Decision
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test

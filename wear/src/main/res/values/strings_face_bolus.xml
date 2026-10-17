@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Double-tap bolus request of the Halo, Glass and Orbit faces: ONE shared, watch-only setting (default off).
+     Not part of CwfMetadataKey, so a custom watch face zip can never switch it on.
+     Key values are mirrored in BolusRequestPrefs (KEY_ENABLED, KEY_AMOUNT) and checked by a unit test. -->
+<resources>
+    <string name="key_face_bolus_request_enabled" translatable="false">face_bolus_request_enabled</string>
+    <string name="key_face_bolus_request_amount" translatable="false">face_bolus_request_amount</string>
+    <string name="pref_face_bolus_request_enabled">Double-tap bolus request</string>
+    <string name="pref_face_bolus_request_enabled_summary">Halo, Glass and Orbit: double-tap the bolus button (within 0.8 s) to request a bolus. The phone checks it and you confirm on the watch. Needs Wear control on the phone, a connected phone with current data and an amount within the phone\'s max bolus. This setting applies to all three faces.</string>
+    <string name="pref_face_bolus_request_amount">Bolus request amount</string>
+    <!-- Only these two amounts; BolusRequestPrefs hides the button for any other stored value. -->
+    <string-array name="face_bolus_request_amount_names" translatable="false">
+        <item>0.5 U</item>
+        <item>1.0 U</item>
+    </string-array>
+    <string-array name="face_bolus_request_amount_values" translatable="false">
+        <item>0.5</item>
+        <item>1.0</item>
+    </string-array>
+</resources>

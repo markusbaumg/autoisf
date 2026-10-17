@@ -1,5 +1,7 @@
 package app.aaps.wear.watchfaces.glass
 
+import app.aaps.wear.watchfaces.common.BolusRequestGuard
+import app.aaps.wear.watchfaces.common.PhoneReach
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -285,19 +287,9 @@ object GlassFaceLogic {
 
     enum class PhoneLink { OK, LOST_FRESH, LOST_STALE, SILENT }
 
-    /** Answer of the last CapabilityClient lookup. UNKNOWN until the first answer (no warning, but no bolus either). */
-    enum class PhoneReach { UNKNOWN, REACHABLE, UNREACHABLE }
-
-    /** A bolus request is sent only on a "reachable" answer at most this old (asked again when the ball arms). */
-    const val REACH_ANSWER_FRESH_MS = 10_000L
-
     /** Display link: an UNKNOWN answer does not warn (the first lookup is still running). */
     fun phoneLink(reach: PhoneReach, lastDataTimeStamp: Long, now: Long): PhoneLink =
         phoneLink(reach != PhoneReach.UNREACHABLE, lastDataTimeStamp, now)
-
-    /** SEND gate: the phone answered "reachable" within [REACH_ANSWER_FRESH_MS]. */
-    fun reachConfirmed(reach: PhoneReach, answeredAt: Long, now: Long): Boolean =
-        reach == PhoneReach.REACHABLE && answeredAt > 0L && now - answeredAt in 0..REACH_ANSWER_FRESH_MS
 
     fun dataFresh(lastDataTimeStamp: Long, now: Long): Boolean = lastDataTimeStamp > 0L && now - lastDataTimeStamp < DATA_FRESH_MS
 
@@ -591,46 +583,17 @@ object GlassFaceLogic {
 
     // ------------------------------------------------------------------------------------------- bolus ball
 
-    /**
-     * Hardened gesture timing (family rule set; the shared BolusTapGesture defaults are 1500/3000 at this
-     * base and are overridden here): second tap within 800 ms, then 5 s cooldown; a sent request stays
-     * pending for 30 s, during which further taps only show a toast.
-     */
-    const val BOLUS_WINDOW_MS = 800L
-    const val BOLUS_COOLDOWN_MS = 5000L
-    const val BOLUS_PENDING_MS = 30_000L
-
     enum class BallState { HIDDEN, DISABLED, IDLE, ARMED, SENT }
 
-    enum class Refusal { NONE, NO_PHONE, STALE_DATA, MAX_BOLUS }
-
     /**
-     * Why a bolus request must not be sent now: phone not reachable, data not fresh (no Status/SingleBg for
-     * 12', or the BG itself stale), the reachability not yet known ([PhoneReach.UNKNOWN]), or the amount above the phone's max bolus (key_treatments_safety_max_bolus;
-     * unknown max = refused).
+     * Drawn ball state (states.md §4.6) from the shared [BolusRequestGuard] verdict: every rule (default off, ambient,
+     * Wear control, phone link, data age, max bolus, pending) lives there; Glass only adds ARMED for the drawing.
      */
-    fun refusal(link: PhoneLink, bgAge: BgAge, amount: Double, maxBolus: Double, reach: PhoneReach): Refusal = when {
-        reach != PhoneReach.REACHABLE                  -> Refusal.NO_PHONE
-        link != PhoneLink.OK                           -> if (link == PhoneLink.SILENT) Refusal.STALE_DATA else Refusal.NO_PHONE
-        isStale(bgAge)                                 -> Refusal.STALE_DATA
-        maxBolus <= 0.0 || amount > maxBolus + 1e-9    -> Refusal.MAX_BOLUS
-        else                                           -> Refusal.NONE
-    }
-
-    /**
-     * Ball state (states.md §4.6). HIDDEN: preference off (default), ambient (any), headless preview,
-     * Wear control off on the phone, amount not allowed or first start. DISABLED: a [Refusal]. SENT while a
-     * request is pending. ARMED during the window. IDLE otherwise.
-     */
-    fun ballState(
-        prefOn: Boolean, ambient: Boolean, headless: Boolean, wearControl: Boolean, amountAllowed: Boolean, firstStart: Boolean,
-        refusal: Refusal, armed: Boolean, sentAt: Long, now: Long
-    ): BallState = when {
-        !prefOn || ambient || headless || !wearControl || !amountAllowed || firstStart -> BallState.HIDDEN
-        sentAt > 0L && now - sentAt in 0 until BOLUS_PENDING_MS                       -> BallState.SENT
-        refusal != Refusal.NONE                                                       -> BallState.DISABLED
-        armed                                                                         -> BallState.ARMED
-        else                                                                          -> BallState.IDLE
+    fun ballState(check: BolusRequestGuard.Check, armed: Boolean): BallState = when (check.state) {
+        BolusRequestGuard.State.HIDDEN   -> BallState.HIDDEN
+        BolusRequestGuard.State.SENT     -> BallState.SENT
+        BolusRequestGuard.State.DISABLED -> BallState.DISABLED
+        BolusRequestGuard.State.IDLE     -> if (armed) BallState.ARMED else BallState.IDLE
     }
 
     /** "+0,5" / "+1,0" with the watch locale's decimal separator. */

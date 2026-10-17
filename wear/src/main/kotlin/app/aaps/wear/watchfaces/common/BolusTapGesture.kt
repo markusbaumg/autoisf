@@ -1,7 +1,8 @@
-package app.aaps.wear.watchfaces.halo
+package app.aaps.wear.watchfaces.common
 
 /**
- * Double-tap gesture of the "+X U" bolus request ball on the Halo watch face.
+ * Double-tap gesture of the bolus request button shared by the Halo, Glass and Orbit watch faces.
+ * Owned by [BolusRequestGuard] (which adds the safety rules); faces do not create their own.
  *
  * Pure logic (no Android types) so it can be unit tested with an injected clock.
  *
@@ -96,6 +97,7 @@ class BolusTapGesture(
 
     companion object {
 
+        /** Hardened timing for every face: 800 ms double-tap window, 5 s cooldown after a request. */
         const val WINDOW_MS = 800L
         const val COOLDOWN_MS = 5000L
         const val DEFAULT_AMOUNT = 0.5
