@@ -225,12 +225,28 @@ object GlassFaceLogic {
 
     fun fastFall(trend: Trend, deltaMgdl: Double?): Boolean = FaceState.fastFall(FaceState.Trend.valueOf(trend.name), deltaMgdl)
 
-    /** Delta as sent by the phone (already signed, phone locale); a missing sign is added; placeholders "--". */
-    fun deltaText(delta: String): String = FaceState.deltaText(delta)
+    /**
+     * Delta as sent by the phone (already signed, phone locale); a missing sign is added; placeholders "--".
+     * Glass live round 1: a zero delta is a reading too ("BG steady"), never blank: an unsigned or "+" zero becomes
+     * "±0,0" (separator as sent); "-0,0" stays as the phone sends it (the rounded value was falling).
+     */
+    fun deltaText(delta: String): String {
+        val d = FaceState.deltaText(delta)
+        if (d == FaceState.NO_DATA || !isZero(d)) return d
+        return if (d[0] == '+') "±" + d.substring(1) else d
+    }
 
-    /** Which delta string to show (key_show_detailed_delta / key_show_avg_delta), as the stock faces do. */
-    fun pickDelta(delta: String, avgDelta: String, deltaDetailed: String, avgDeltaDetailed: String, detailed: Boolean, avg: Boolean): String =
-        FaceState.pickDelta(delta, avgDelta, deltaDetailed, avgDeltaDetailed, detailed, avg)
+    private fun isZero(d: String): Boolean = d.any { it.isDigit() } && d.none { it in '1'..'9' }
+
+    /**
+     * Which delta string to show (key_show_detailed_delta / key_show_avg_delta), as the stock faces do. Glass live
+     * round 1: a picked variant the phone did not fill (placeholder) falls back to the plain delta, so the line keeps
+     * a number.
+     */
+    fun pickDelta(delta: String, avgDelta: String, deltaDetailed: String, avgDeltaDetailed: String, detailed: Boolean, avg: Boolean): String {
+        val picked = FaceState.pickDelta(delta, avgDelta, deltaDetailed, avgDeltaDetailed, detailed, avg)
+        return if (FaceState.display(picked) == FaceState.NO_DATA) delta else picked
+    }
 
     /** The age label is optional (key_show_ago) only while fresh; the aging/stale warning always shows. */
     fun showAge(prefShowAgo: Boolean, age: BgAge): Boolean = prefShowAgo || age != BgAge.FRESH
@@ -684,9 +700,11 @@ object GlassFaceLogic {
      */
     const val HERO_X0 = 63f
     const val HERO_X1 = 387f
-    const val HERO_Y0 = 120f
+    // Glass live round 1: the card's top 120 -> 126 (the time and date moved below the Samsung status icon); the
+    // digits 5 px and the meta row 3 px down, the bottom (and everything under it) unchanged
+    const val HERO_Y0 = 126f
     const val HERO_Y1 = 286f // Glass/Orbit UX round 4: 282 -> 286 and the content 2 px up: the meta row (pill) had 4 px to the card's edge, the top 15
-    const val META_Y = 262f
+    const val META_Y = 265f
 
     /** Digits' centre next to the chip (Glass/Orbit UX round 4: 198 -> 200, equal optical padding left and right). */
     const val BG_X_CHIP = 196f // Glass/Orbit UX round 6: 200 -> 196 for the larger chip
@@ -697,9 +715,9 @@ object GlassFaceLogic {
     const val CHIP_R = 28f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
-        showChip  -> if (metaEmpty) HeroLayout(BG_X_CHIP, 203f, BG_MAX_WIDTH, 201f, 225f, META_Y) else HeroLayout(BG_X_CHIP, 178f, BG_MAX_WIDTH, 176f, 225f, META_Y)
-        metaEmpty -> HeroLayout(225f, 203f, BG_MAX_WIDTH_NO_CHIP, 201f, 225f, META_Y)
-        else      -> HeroLayout(225f, 178f, BG_MAX_WIDTH_NO_CHIP, 176f, 225f, META_Y)
+        showChip  -> if (metaEmpty) HeroLayout(BG_X_CHIP, 206f, BG_MAX_WIDTH, 204f, 225f, META_Y) else HeroLayout(BG_X_CHIP, 183f, BG_MAX_WIDTH, 181f, 225f, META_Y)
+        metaEmpty -> HeroLayout(225f, 206f, BG_MAX_WIDTH_NO_CHIP, 204f, 225f, META_Y)
+        else      -> HeroLayout(225f, 183f, BG_MAX_WIDTH_NO_CHIP, 181f, 225f, META_Y)
     }
 
     /**
@@ -721,10 +739,13 @@ object GlassFaceLogic {
     fun showPredictions(pref: Boolean, stale: Boolean, mode: LoopMode, client: Boolean, pumpControl: Boolean): Boolean =
         pref && !stale && mode != LoopMode.OPEN && !client && !pumpControl
 
-    /** age.none / first start: no delta, no age, the meta line is empty (spec §4.4). */
-    fun metaVisible(age: BgAge, prefShowAgo: Boolean, prefShowDelta: Boolean): Pair<Boolean, Boolean> =
+    /**
+     * age.none / first start: no delta, no age, the meta line is empty (spec §4.4). Glass live round 1: a fresh
+     * reading always shows its delta, as Halo does (key_show_delta off left a lone "0′" under the digits on the watch).
+     */
+    fun metaVisible(age: BgAge, prefShowAgo: Boolean): Pair<Boolean, Boolean> =
         if (age == BgAge.NONE) false to false
-        else (!isStale(age) && prefShowDelta) to showAge(prefShowAgo, age)
+        else !isStale(age) to showAge(prefShowAgo, age)
 
     /**
      * Glass/Orbit UX round 2 (one owner per fact, as Halo): when W2/W3 own the slot ("Keine Daten · 17′", "Telefon
