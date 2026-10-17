@@ -49,6 +49,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
 import java.io.File
+import kotlin.math.roundToLong
 import java.io.FileOutputStream
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -156,6 +157,28 @@ class WatchfaceRenderHarness {
 
     private val inRange: (Long) -> ComplicationData = { now -> data(now, 6.4, "→", "+0.1", 0) }
 
+    /**
+     * Glass polish round 1: a realistic trace with a forecast (the phone's main prediction series), as on the watch:
+     * [history] in mmol/l (oldest first, 5' apart, ending at the current value), [forecast] for the next hour.
+     */
+    private fun traced(now: Long, history: List<Double>, forecast: List<Double>, arrow: String, delta: String, level: Long, st: EventData.Status = status(now)): ComplicationData {
+        val (b, g) = bg(now, history.last(), arrow, delta, level, ageMin = 0, history = history)
+        val preds = ArrayList(forecast.mapIndexed { k, v -> b.copy(timeStamp = b.timeStamp + (k + 1) * 5 * 60_000L, sgv = v * 18.0, color = 0xFFAA82FF.toInt()) })
+        return ComplicationData(
+            bgData = b, graphData = g, statusData = st, lastUpdateTimestamp = now,
+            treatmentData = EventData.TreatmentData(ArrayList(), ArrayList(), ArrayList(), preds)
+        )
+    }
+
+    /** 3 h of a calm BG around 5,8 with sensor noise (deterministic), as in the owner's live screenshot. */
+    private val flatHistory = List(36) { k -> 5.8 + 0.15 * kotlin.math.sin(k * 0.9) + 0.08 * kotlin.math.sin(k * 2.3 + 1.0) - 0.004 * (35 - k) }
+
+    /** A meal: 5,6 rising to 10,2 and back down to 6,4. */
+    private val mealHistory = List(36) { k ->
+        val t = k / 35.0
+        5.6 + 4.6 * kotlin.math.exp(-((t - 0.45) * (t - 0.45)) / 0.03) + 1.0 * t
+    }
+
     private fun states(): List<RenderState> = listOf(
         RenderState("reference_final4", clock = ZonedDateTime.of(2026, 10, 17, 2, 28, 0, 0, ZONE)) { now ->
             val (b, g) = bg(now, 5.5, "→", "-0.1", 0, ageMin = 1)
@@ -165,6 +188,12 @@ class WatchfaceRenderHarness {
             )
         },
         RenderState("in_range", data = inRange),
+        RenderState("live_flat_pred", ball = Ball.IDLE, clock = ZonedDateTime.of(2026, 10, 17, 9, 40, 0, 0, ZONE)) { now ->
+            traced(now, flatHistory.map { (it * 10).roundToLong() / 10.0 }.dropLast(1) + 5.8, List(12) { 5.8 - 0.03 * it }, "→", "-0.0", 0,
+                st = status(now, loopAgeMin = 0, iob = "0.40", cob = "0g", basal = "0.00 U/h"))
+        },
+        RenderState("meal_pred") { now -> traced(now, mealHistory, List(12) { 6.4 - 0.06 * it }, "↘", "-0.2", 0) },
+        RenderState("high_pred", ball = Ball.IDLE) { now -> traced(now, List(36) { k -> 8.0 + 4.4 * k / 35.0 }, List(12) { 12.4 + 0.1 * it - 0.02 * it * it }, "↗", "+0.4", 1) },
         RenderState("high") { now -> data(now, 12.4, "↗", "+0.4", 1) },
         RenderState("very_high") { now -> data(now, 22.2, "\u21c8", "+1.2", 1) },
         RenderState("low") { now -> data(now, 3.4, "↓", "-0.3", -1) },

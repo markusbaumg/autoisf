@@ -231,6 +231,9 @@ class GlassWatchface : WatchFace() {
     private var burnY = 0f
     private var lowY = 0f
     private var highY = 0f
+    /** Glass polish round 1: a band edge is drawn only where it lies inside the plot. */
+    private var lowEdge = false
+    private var highEdge = false
     private var lowMgdl = GlassFaceLogic.DEFAULT_LOW_MGDL
     private var highMgdl = GlassFaceLogic.DEFAULT_HIGH_MGDL
     private var metaIsWarning = false
@@ -241,6 +244,9 @@ class GlassWatchface : WatchFace() {
     private var curY = 0f
     private var hasCurrent = false
     private val predXY = FloatArray(2 * 12)
+    private val prediction = Path()
+    private val segX = FloatArray(GlassFaceLogic.SPARK_HISTORY + 2)
+    private val segY = FloatArray(GlassFaceLogic.SPARK_HISTORY + 2)
     private var predCount = 0
     private var sparkX0 = GlassFaceLogic.SPARK_X0
     private var sparkForecast = true
@@ -266,7 +272,8 @@ class GlassWatchface : WatchFace() {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val dash24 = DashPathEffect(floatArrayOf(2f, 4f), 0f)
+    /** Forecast dots: round caps on near-zero dashes, one dot every [PRED_DOT_STEP] px along the forecast. */
+    private val predDots = DashPathEffect(floatArrayOf(0.01f, PRED_DOT_STEP), 0f)
     private val dash65 = DashPathEffect(floatArrayOf(6f, 5f), 0f)
     private val rect = RectF()
     private val historyShaders = arrayOfNulls<Shader>(Range.entries.size)
@@ -612,6 +619,7 @@ class GlassWatchface : WatchFace() {
                 hero = GlassFaceLogic.heroLayout(showChip, metaEmpty = false)
             }
         }
+        hero = GlassFaceLogic.heroGroup(hero, showChip, 2f * bgHalfWidth)
         layoutMeta()
 
         // sparkline (the band lines are placed in buildSparkline, on the adaptive scale)
@@ -756,10 +764,33 @@ class GlassWatchface : WatchFace() {
         if (sparkForecast) for (p in preds) if (GlassFaceLogic.slotOf(p.timeStamp, anchor) != null) see(p.sgv)
         val (lo, hi) = GlassFaceLogic.sparkRange(vMin, vMax)
         fun sy(v: Double) = GlassFaceLogic.sparkY(v, lo, hi)
-        lowY = sy(lowMgdl)
-        highY = sy(highMgdl)
+        // band edges on the same scale, clamped to the plot (the band may run past it); an edge outside is not drawn
+        val lowRaw = GlassFaceLogic.sparkYRaw(lowMgdl, lo, hi)
+        val highRaw = GlassFaceLogic.sparkYRaw(highMgdl, lo, hi)
+        lowEdge = GlassFaceLogic.bandEdgeVisible(lowRaw)
+        highEdge = GlassFaceLogic.bandEdgeVisible(highRaw)
+        lowY = lowRaw.coerceIn(GlassFaceLogic.SPARK_Y0, GlassFaceLogic.SPARK_Y1)
+        highY = highRaw.coerceIn(GlassFaceLogic.SPARK_Y0, GlassFaceLogic.SPARK_Y1)
         history.reset()
         hasCurrent = false
+        // graph.gaps: a gap longer than GAP_MS breaks the line, never interpolated; each run is drawn as a smooth curve
+        var n = 0
+        fun flush() {
+            if (n == 0) return
+            history.moveTo(segX[0], segY[0])
+            if (n == 1) history.lineTo(segX[0] + 0.01f, segY[0])
+            else {
+                // Glass polish round 1: a quadratic curve through the midpoints (the 5' steps read as a calm curve, not
+                // a jagged polyline); it passes through the first and the last (current) point exactly
+                for (i in 1 until n - 1) history.quadTo(segX[i], segY[i], (segX[i] + segX[i + 1]) / 2f, (segY[i] + segY[i + 1]) / 2f)
+                history.lineTo(segX[n - 1], segY[n - 1])
+            }
+            n = 0
+        }
+        fun add(x: Float, y: Float) {
+            if (n == segX.size) flush()
+            segX[n] = x; segY[n] = y; n++
+        }
         var lastTs = Long.MIN_VALUE
         var started = false
         var prevTs = Long.MIN_VALUE
@@ -768,8 +799,8 @@ class GlassWatchface : WatchFace() {
             val slot = GlassFaceLogic.slotOf(e.timeStamp, anchor) ?: continue
             val x = sx(slot)
             val y = sy(e.sgv)
-            // graph.gaps: break the line, never interpolate
-            if (!started || e.timeStamp - prevTs > GlassFaceLogic.GAP_MS) history.moveTo(x, y) else history.lineTo(x, y)
+            if (started && e.timeStamp - prevTs > GlassFaceLogic.GAP_MS) flush()
+            add(x, y)
             started = true
             prevTs = e.timeStamp
             curX = x; curY = y; lastTs = e.timeStamp
@@ -778,16 +809,19 @@ class GlassWatchface : WatchFace() {
             GlassFaceLogic.slotOf(bgTs, anchor)?.let { slot ->
                 val x = sx(slot)
                 val y = sy(bgMgdl)
-                if (!started || bgTs - prevTs > GlassFaceLogic.GAP_MS) history.moveTo(x, y) else history.lineTo(x, y)
+                if (started && bgTs - prevTs > GlassFaceLogic.GAP_MS) flush()
+                add(x, y)
                 started = true
                 curX = x; curY = y
             }
         }
+        flush()
         hasHistory = started
         hasCurrent = started
 
         // prediction: the main (longest) series, sampled at the 12 future slots
         predCount = 0
+        prediction.reset()
         if (!sparkForecast) return
         val main = preds.groupBy { it.color }.maxByOrNull { it.value.size }?.value ?: return
         for (k in 1..12) {
@@ -797,6 +831,11 @@ class GlassWatchface : WatchFace() {
             predXY[2 * predCount] = sx((GlassFaceLogic.SPARK_HISTORY - 1 + k).toFloat())
             predXY[2 * predCount + 1] = sy(p.sgv)
             predCount++
+        }
+        // Glass polish round 1: one faint dotted curve on from the now dot (12 loose purple dots read as noise)
+        if (predCount > 0) {
+            if (hasCurrent) prediction.moveTo(curX, curY) else prediction.moveTo(predXY[0], predXY[1])
+            for (i in 0 until predCount) prediction.lineTo(predXY[2 * i], predXY[2 * i + 1])
         }
     }
 
@@ -926,12 +965,12 @@ class GlassWatchface : WatchFace() {
             // Glass/Orbit UX round 6: a dark disc (black under a 16 % tint) with a 1.5 px rim at 45 %, so the arrow stands
             // out (the tinted 12 % disc made a dim orange-on-orange chip); the arrow is lifted 25 % toward white
             fill.reset(); fill.isAntiAlias = true; fill.color = CHIP_BASE
-            canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, fill)
+            canvas.drawCircle(hero.chipX, hero.chipY, CHIP_R, fill)
             fill.color = withAlpha(rangeColour, 40)
-            canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, fill)
+            canvas.drawCircle(hero.chipX, hero.chipY, CHIP_R, fill)
             stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1.5f
             stroke.color = withAlpha(rangeColour, 115)
-            canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R - 0.75f, stroke)
+            canvas.drawCircle(hero.chipX, hero.chipY, CHIP_R - 0.75f, stroke)
             drawArrow(canvas, lift(rangeColour, 0.25f), aa = true, maxWidth = 4.6f)
         }
 
@@ -944,53 +983,52 @@ class GlassWatchface : WatchFace() {
         }, aa = true)
         if (link == PhoneLink.LOST_FRESH) drawPhoneOff(canvas, min(metaX + metaWidth + 20f, HERO_X1 - 20f), hero.metaY, TXT2)
 
-        // sparkline (Glass/Orbit UX round 3): no plate and no band hairlines (plate + tint + edges read as an empty
-        // progress bar); the target range is a 10 % tint only, green while in range, neutral otherwise. Out of range
-        // the band keeps 1 px neutral edges, so the reader still sees where the trace left it.
-        // Glass/Orbit UX round 4: the band read as a hard grey slab and the trace looked unclipped where it left it. The
-        // band now has 4 px rounded ends and fades out over its first and last 20 px; out of range its edges are 1 px
-        // hairlines with the same fade, so a trace outside them reads as "outside the range", not as overflow.
+        // sparkline (Glass polish round 1): the target band as a soft tint with faint edges (the reference), a smooth
+        // trace coloured by value zone that fades in toward now, a clear now dot and a faint dotted forecast. No now line:
+        // the dot marks now. Out of range the band is neutral, so the trace outside it reads as "outside the range".
         val inBand = range == Range.IN
-        fill.reset(); fill.isAntiAlias = true
-        fill.color = Color.WHITE
-        fill.shader = bandFade(if (inBand) withAlpha(IN_COL, 26) else withAlpha(Color.WHITE, 12))
-        rect.set(sparkX0, highY, sparkEndX, lowY)
-        canvas.drawRoundRect(rect, BAND_CORNER, BAND_CORNER, fill)
-        fill.shader = null
-        if (!inBand) {
-            line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE; line.strokeWidth = 1f
-            line.color = Color.WHITE
-            line.shader = bandFade(BAND_OUT_EDGE)
-            canvas.drawLine(sparkX0 + BAND_CORNER, lowY, sparkEndX - BAND_CORNER, lowY, line)
-            canvas.drawLine(sparkX0 + BAND_CORNER, highY, sparkEndX - BAND_CORNER, highY, line)
-            line.shader = null
+        // no trace (no data yet): no reference band either, an empty band read as a progress bar
+        if (hasHistory && lowY - highY > 0.5f) {
+            fill.reset(); fill.isAntiAlias = true
+            fill.color = Color.WHITE
+            fill.shader = bandShader(if (inBand) withAlpha(IN_COL, BAND_IN_ALPHA) else withAlpha(Color.WHITE, BAND_OUT_ALPHA))
+            rect.set(sparkX0, highY, sparkEndX, lowY)
+            canvas.drawRoundRect(rect, BAND_CORNER, BAND_CORNER, fill)
+            fill.shader = null
         }
-        drawSparkGuides(canvas, Color.TRANSPARENT, withAlpha(Color.WHITE, 60), aa = true)
+        if (hasHistory) drawSparkGuides(canvas, if (inBand) withAlpha(IN_COL, BAND_IN_EDGE_ALPHA) else BAND_OUT_EDGE, aa = true, fade = true)
+        if (predCount > 0) {
+            line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE
+            line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = PRED_DOT
+            line.pathEffect = predDots
+            line.color = withAlpha(PRED_COL, PRED_ALPHA)
+            canvas.drawPath(prediction, line)
+            line.pathEffect = null
+        }
         if (hasHistory) {
             line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE
-            line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = 3f
+            line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = TRACE_W
             line.shader = historyShader(range)
-            if (!stale) line.setShadowLayer(4f, 0f, 0f, withAlpha(rangeColour, 120))
+            if (!stale) line.setShadowLayer(4f, 0f, 0f, withAlpha(rangeColour, 110))
             canvas.drawPath(history, line)
             line.shader = null
             line.clearShadowLayer()
-        }
-        if (predCount > 0) {
-            fill.reset(); fill.isAntiAlias = true; fill.color = withAlpha(PRED_COL, 210)
-            for (i in 0 until predCount) canvas.drawCircle(predXY[2 * i], predXY[2 * i + 1], 1.6f, fill)
         }
         if (hasCurrent) {
             fill.reset(); fill.isAntiAlias = true
             if (stale) {
                 fill.color = TXT3
-                canvas.drawCircle(curX, curY, 4f, fill)
+                canvas.drawCircle(curX, curY, 4.5f, fill)
             } else {
+                // a dark ring parts the dot from the trace, then the range colour with a soft glow and a white core
+                fill.color = Color.BLACK
+                canvas.drawCircle(curX, curY, NOW_R + 2f, fill)
                 fill.color = rangeColour
-                fill.setShadowLayer(7f, 0f, 0f, withAlpha(rangeColour, 220))
-                canvas.drawCircle(curX, curY, 5f, fill)
+                fill.setShadowLayer(7f, 0f, 0f, withAlpha(rangeColour, 200))
+                canvas.drawCircle(curX, curY, NOW_R, fill)
                 fill.clearShadowLayer()
                 fill.color = Color.WHITE
-                canvas.drawCircle(curX, curY, 3f, fill)
+                canvas.drawCircle(curX, curY, NOW_R - 2.5f, fill)
             }
         }
 
@@ -1060,19 +1098,20 @@ class GlassWatchface : WatchFace() {
         line.strokeWidth = min(if (triple) 4.6f else 4.2f, maxWidth)
         line.color = colour
         val cy = hero.chipY
+        val cx = hero.chipX
         canvas.save()
-        canvas.rotate(-trend.angle, CHIP_X, cy)
+        canvas.rotate(-trend.angle, cx, cy)
         if (trend.double) {
             // Glass/Orbit UX round 6 (safety): two parallel arrows side by side, as Orbit and Halo; stacked chevrons 9 px
             // apart merged into one arrow with a stray bar
             line.strokeWidth = min(line.strokeWidth, 3.6f)
             for (off in DOUBLE_OFFSETS) {
-                canvas.drawLine(CHIP_X - ARROW_L + 2f, cy + off, CHIP_X + ARROW_L, cy + off, line)
-                drawChevron(canvas, CHIP_X + ARROW_L, cy + off, DOUBLE_HEAD_DX, DOUBLE_HEAD_DY)
+                canvas.drawLine(cx - ARROW_L + 2f, cy + off, cx + ARROW_L, cy + off, line)
+                drawChevron(canvas, cx + ARROW_L, cy + off, DOUBLE_HEAD_DX, DOUBLE_HEAD_DY)
             }
         } else {
-            canvas.drawLine(CHIP_X - ARROW_L, cy, CHIP_X + ARROW_L, cy, line)
-            drawChevron(canvas, CHIP_X + ARROW_L, cy, HEAD_DX, HEAD_DY)
+            canvas.drawLine(cx - ARROW_L, cy, cx + ARROW_L, cy, line)
+            drawChevron(canvas, cx + ARROW_L, cy, HEAD_DX, HEAD_DY)
         }
         canvas.restore()
     }
@@ -1130,19 +1169,32 @@ class GlassWatchface : WatchFace() {
         )
     }
 
-    private fun drawSparkGuides(canvas: Canvas, bandColour: Int, nowColour: Int, aa: Boolean) {
+    /** Target band edges (1 px, only those inside the plot); [fade] fades them in and out at the plot's ends. No now line. */
+    /**
+     * Band tint (Glass polish round 1): faded in and out horizontally ([bandFade]) and, where the band runs past the
+     * plot, also vertically over [BAND_FADE_V] px, so a band wider than the plot is a soft glow, not a slab.
+     */
+    private fun bandShader(colour: Int): Shader = bandFades.getOrPut("v/$sparkX0/$sparkEndX/$highY/$lowY/$highEdge/$lowEdge/$colour") {
+        if (bandFades.size > 8) bandFades.clear()
+        val clear = colour and 0x00FFFFFF
+        val h = (lowY - highY).coerceAtLeast(1f)
+        val ft = if (highEdge) 0f else (BAND_FADE_V / h).coerceAtMost(0.45f)
+        val fb = if (lowEdge) 0f else (BAND_FADE_V / h).coerceAtMost(0.45f)
+        val vertical = LinearGradient(
+            0f, highY, 0f, lowY, intArrayOf(if (highEdge) colour else clear, colour, colour, if (lowEdge) colour else clear),
+            floatArrayOf(0f, ft, 1f - fb, 1f), Shader.TileMode.CLAMP
+        )
+        ComposeShader(vertical, bandFade(Color.WHITE), PorterDuff.Mode.DST_IN)
+    }
+
+    private fun drawSparkGuides(canvas: Canvas, colour: Int, aa: Boolean, fade: Boolean) {
+        if (!lowEdge && !highEdge) return
         line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE; line.strokeWidth = 1f
-        if (Color.alpha(bandColour) > 0) {
-            line.color = bandColour
-            canvas.drawLine(sparkX0, lowY, sparkEndX, lowY, line)
-            canvas.drawLine(sparkX0, highY, sparkEndX, highY, line)
-        }
-        if (sparkForecast) {
-            line.color = nowColour
-            line.pathEffect = dash24
-            canvas.drawLine(nowX, GlassFaceLogic.SPARK_Y0, nowX, GlassFaceLogic.SPARK_Y1, line)
-        }
-        line.pathEffect = null
+        line.color = if (fade) Color.WHITE else colour
+        if (fade) line.shader = bandFade(colour)
+        if (lowEdge) canvas.drawLine(sparkX0, lowY, sparkEndX, lowY, line)
+        if (highEdge) canvas.drawLine(sparkX0, highY, sparkEndX, highY, line)
+        line.shader = null
     }
 
     /**
@@ -1363,13 +1415,13 @@ class GlassWatchface : WatchFace() {
         drawCaption(canvas, ambient = true, lowBit = lowBit)
         if (showChip) {
             stroke.reset(); stroke.isAntiAlias = aa; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1f; stroke.color = c(A_TXT3)
-            canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, stroke)
+            canvas.drawCircle(hero.chipX, hero.chipY, CHIP_R, stroke)
             drawArrow(canvas, c(A_TXT1), aa, maxWidth = 2.5f)
         }
         drawMeta(canvas, c(A_TXT2), c(A_TXT3), c(if (ageLevel != Level.NORMAL) A_TXT1 else A_TXT2), aa)
 
-        // sparkline: no band, no prediction; dashes and now line omitted in low-bit
-        if (!lowBit) drawSparkGuides(canvas, A_LINE, A_LINE, aa)
+        // sparkline: no band fill, no prediction; the band edges as 1 px lines (omitted in low-bit)
+        if (!lowBit && hasHistory) drawSparkGuides(canvas, A_LINE, aa, fade = false)
         if (hasHistory) {
             line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE
             line.strokeCap = Paint.Cap.ROUND; line.strokeJoin = Paint.Join.ROUND; line.strokeWidth = 1.5f; line.color = c(A_HIST)
@@ -1743,14 +1795,16 @@ class GlassWatchface : WatchFace() {
         // UX round 4: time and date 4-6 px further apart and 10 px or more above the card (y 116)
         // Glass live round 1: on the watch the Samsung status icon (charging, y 23..49 plus its dark disc) sat on the
         // time's top edge; the time is 38 px (Halo's cap height) centred at y 77 (glyphs y 63..91), the date at 108
-        private const val TIME_Y = 77f
-        private const val TIME_Y_NO_DATE = 88f
+        // Glass polish round 1: 5 px lower (glyphs y 68..96, 13 px under the icon's dark disc), the date 4 px; the card's
+        // top follows (y 132)
+        private const val TIME_Y = 82f
+        private const val TIME_Y_NO_DATE = 95f
         private const val TIME_SIZE = 38f
         private const val AM_PM_GAP = 4f
         /** 12 h suffix: at the 18 px text floor (was 17). */
         private const val AM_PM_SIZE = 18f
         // Glass/Orbit UX round 3: 22 px in TXT2 (Halo's rhythm) and 3 px further from the time: one calm top block
-        private const val DATE_Y = 108f
+        private const val DATE_Y = 112f
         private const val DATE_SIZE = 22f
         /** Physical text floor (Halo's [app.aaps.wear.watchfaces.halo.HaloLayout.MIN_TEXT_PX]): 384 px screens keep it. */
         private const val MIN_TEXT_PX = 18f
@@ -1760,23 +1814,24 @@ class GlassWatchface : WatchFace() {
         private const val HERO_Y1 = GlassFaceLogic.HERO_Y1
         private const val HERO_R = 28f
         private const val HERO_PAD = 12f
-        private const val CAPTION_SIZE = 24f
-        private const val CAPTION_H = 30f
+        // Glass polish round 1: the delta row and the TIEF/HOCH pill a step smaller with the 112 px digits
+        private const val CAPTION_SIZE = 22f
+        private const val CAPTION_H = 28f
         private const val CAPTION_PAD = 10f
         private const val CAPTION_GAP = 12f
         // UX round 4: chip r 18 -> 24 and a 30 px arrow with a 3.4 px stroke (the double arrow reads at arm's length)
         private const val CHIP_X = GlassFaceLogic.CHIP_X
         private const val CHIP_R = GlassFaceLogic.CHIP_R
-        private const val ARROW_L = 17f // Glass/Orbit UX round 6: 15 -> 17, a 34 px arrow in the r 28 chip
-        private val DOUBLE_OFFSETS = floatArrayOf(-8f, 8f)
+        private const val ARROW_L = 15f // Glass polish round 1: 17 -> 15, a 30 px arrow in the r 25 chip
+        private val DOUBLE_OFFSETS = floatArrayOf(-7f, 7f)
         private val DOUBLE_HEAD_DX = (6.5 * cos(Math.toRadians(42.0))).toFloat()
         private val DOUBLE_HEAD_DY = (6.5 * sin(Math.toRadians(42.0))).toFloat()
         private val CHIP_BASE = 0xD9000000.toInt()
         private val BALL_TEXT_SHADOW = 0x99000000.toInt()
-        private val HEAD_DX = (10.0 * cos(Math.toRadians(42.0))).toFloat()
-        private val HEAD_DY = (10.0 * sin(Math.toRadians(42.0))).toFloat()
-        private const val META_SIZE = 28f
-        private const val META_MIN_SIZE = 24f
+        private val HEAD_DX = (9.0 * cos(Math.toRadians(42.0))).toFloat()
+        private val HEAD_DY = (9.0 * sin(Math.toRadians(42.0))).toFloat()
+        private const val META_SIZE = 26f
+        private const val META_MIN_SIZE = 22f
         private const val META_SEP = " · "
         // UX round 4: borderless pills (text 26 px, units 20 px), a dot in the 22 px gap
         private const val PILL_Y = GlassFaceLogic.PILL_Y // Glass/Orbit UX round 3: 12 px lower, the chart gets air
@@ -1811,6 +1866,16 @@ class GlassWatchface : WatchFace() {
         private const val BAND_OUT_EDGE = 0xFF4A525F.toInt() // Glass/Orbit UX round 4: a faded 1 px hairline, a step lighter
         private const val BAND_CORNER = 4f
         private const val BAND_FADE = 20f
+        private const val BAND_FADE_V = 16f
+        // Glass polish round 1: sparkline strengths
+        private const val BAND_IN_ALPHA = 30
+        private const val BAND_OUT_ALPHA = 14
+        private const val BAND_IN_EDGE_ALPHA = 70
+        private const val TRACE_W = 3f
+        private const val NOW_R = 5.5f
+        private const val PRED_DOT = 2.4f
+        private const val PRED_DOT_STEP = 5f
+        private const val PRED_ALPHA = 150
         /** In-range digits (Glass/Orbit UX round 2): a pale mint, the family's green at Glass's calmer strength. */
         private val IN_DIGIT_COL = 0xFFCFF5E4.toInt()
         private val HIGH_COL = 0xFFFFB547.toInt()
