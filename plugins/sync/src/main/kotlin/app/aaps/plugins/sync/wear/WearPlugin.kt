@@ -74,6 +74,13 @@ class WearPlugin @Inject constructor(
     private val disposable = CompositeDisposable()
 
     private val resendCoalescer = WearResendCoalescer(aapsSchedulers.io) { reason ->
+        if (!watchReachable) {
+            // Nothing can be delivered: DataLayerListenerServiceMobile drops every message while it
+            // has no node. Building the graph and treatments for that is the phone's own battery.
+            // When a node appears again the service requests a resend itself.
+            aapsLogger.debug(LTag.WEAR, "Resend ($reason) skipped: no watch reachable")
+            return@WearResendCoalescer
+        }
         try {
             dataHandlerMobile.resendData(reason)
         } catch (e: Exception) {
@@ -81,7 +88,17 @@ class WearPlugin @Inject constructor(
         }
     }
 
+    /** Asks for one full resend after the quiet time; bursts collapse into one. */
+    fun requestResend(reason: String) = resendCoalescer.request(reason)
+
     var connectedDevice = "---"
+
+    /**
+     * False while the data layer service has found no reachable node with the wear capability.
+     * Set by DataLayerListenerServiceMobile; true until it has looked, so nothing is held back
+     * before the first capability query.
+     */
+    @Volatile var watchReachable = true
     var savedCustomWatchface: CwfData? = null
 
     override fun onStart() {
@@ -118,7 +135,7 @@ class WearPlugin @Inject constructor(
                            resendCoalescer.request("EventPreferenceChange ${it.changedKey}")
                            checkCustomWatchfacePreferences()
                        }, fabricPrivacy::logException)
-        // The resends after a BG go through one 2 s debounce: the calculation and the loop each send
+        // The resends after a BG go through one debounce: the calculation and the loop each send
         // their event within seconds, often twice, and each one used to start a full resend.
         // A watch asking for data (connect, its own refresh) is answered at once by DataHandlerMobile.
         disposable += rxBus
