@@ -144,4 +144,15 @@
         android:layout_gravity="bottom"
         android:background="@drawable/confirm_bottom_shade" />
 
+    <!-- more below: shown by ConfirmScreen while the page can scroll further down -->
+    <ImageView
+        android:id="@+id/confirm_scroll_cue"
+        android:layout_width="22dp"
+        android:layout_height="10dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="22dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/confirm_scroll_cue"
+        android:visibility="invisible" />
+
 </FrameLayout>

@@ -51,8 +51,8 @@
     <string name="confirm_w_no_bg">NO BG</string>
     <string name="confirm_w_no_bg_detail">No current reading</string>
     <string name="confirm_w_recent_bolus">RECENT BOLUS</string>
-    <string name="confirm_w_near_max">NEAR MAX BOLUS</string>
-    <string name="confirm_w_near_max_detail">Max&#160;%1$s&#160;U</string>
+    <string name="confirm_w_near_max">NEAR MAX</string>
+    <string name="confirm_w_near_max_detail">Max bolus&#160;%1$s&#160;U</string>
     <string name="confirm_w_constraint">LIMITED</string>
     <string name="confirm_w_constraint_detail">Requested %1$s</string>
     <string name="confirm_w_other">NOTE</string>
@@ -70,4 +70,6 @@
     <string name="confirm_ecarbs_when">over %1$d&#160;h, from in&#160;%2$d&#160;min</string>
     <string name="confirm_ecarbs_when_now">over %1$d&#160;h, from now</string>
     <string name="confirm_ecarbs_short">+ %1$d&#160;g extended</string>
+    <!-- the source line on two lines (large fonts): "Profil ISF 2,5" / "IC 13" -->
+    <string name="confirm_source_short">Profile %1$s</string>
 </resources>

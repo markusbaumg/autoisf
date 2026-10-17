@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Page 1 of the confirm screen: a down chevron above the page dots while more content lies below. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp"
+    android:height="10dp"
+    android:viewportWidth="22"
+    android:viewportHeight="10">
+    <path
+        android:pathData="M2,2 L11,8 L20,2"
+        android:strokeWidth="2.2"
+        android:strokeColor="@color/confirm_text_dim"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>
