@@ -29,6 +29,7 @@ import app.aaps.wear.watchfaces.common.BolusRequestPrefs
 import app.aaps.wear.watchfaces.common.PhoneReachability
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic
 import app.aaps.wear.watchfaces.glass.GlassWatchface
+import app.aaps.wear.watchfaces.halo.HaloAod
 import app.aaps.wear.watchfaces.halo.HaloLayout
 import app.aaps.wear.watchfaces.orbit.OrbitAod
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic
@@ -103,6 +104,8 @@ class WatchfaceRenderHarness {
         val aod: AodStyle = AodStyle.DEFAULT,
         /** Orbit only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
         val orbitLook: OrbitAod.Look? = null,
+        /** Halo only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
+        val haloLook: HaloAod.Look? = null,
         val data: (now: Long) -> ComplicationData
     )
 
@@ -282,7 +285,15 @@ class WatchfaceRenderHarness {
         // Orbit discs round 3: worst cases of the squeezed hero, between the bolus button at 9 and the TT disc at 3
         RenderState("ball_tt_very_high", ball = Ball.IDLE) { now -> data(now, 22.2, "\u21c8", "+1.2", 1, st = status(now, tt = "8.0", ttLevel = 2)) },
         RenderState("ball_tt_10_5", ball = Ball.IDLE) { now -> data(now, 10.5, "↗", "+0.3", 1, st = status(now, tt = "8.0", ttLevel = 2)) },
-        RenderState("ball_tt_mgdl_224", ball = Ball.IDLE) { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true, st = status(now, tt = "144", ttLevel = 2)) }
+        RenderState("ball_tt_mgdl_224", ball = Ball.IDLE) { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true, st = status(now, tt = "144", ttLevel = 2)) },
+        // Halo declutter round: the owner's live screenshot (9,8, zero temp, 0 g, IOB 3,65, ball on), and carbs on board
+        RenderState("live_halo_9_8", ball = Ball.IDLE, clock = ZonedDateTime.of(2026, 10, 17, 14, 26, 0, 0, ZONE)) { now ->
+            data(now, 9.8, "→", "-0.0", 0, ageMin = 0, st = status(now, loopAgeMin = 0, iob = "3.65", cob = "0g", basal = "0.00 U/h"))
+        },
+        RenderState("cob_tt_low_zero_temp") { now ->
+            data(now, 3.6, "↘", "-0.2", -1, st = status(now, iob = "0.20", cob = "24g", basal = "0.00 U/h", tt = "7.0", ttLevel = 2))
+        },
+        RenderState("tbr_percent") { now -> data(now, 11.2, "↗", "+0.3", 1, st = status(now, iob = "2.10", cob = "0g", basal = "150%")) }
     ) + aodStates() + exploreStates()
 
     /** AOD round 2: the cases every always-on style must handle, as (id, mode, ball-free data). */
@@ -324,11 +335,13 @@ class WatchfaceRenderHarness {
         }
     }
 
-    /** AOD round 2 exploration (Orbit only): every look in in_range, urgent_low and stale. */
+    /** AOD exploration: Orbit's and Halo's looks in in_range, urgent_low and stale (each face renders only its own). */
     private fun exploreStates(): List<RenderState> {
         val cases = aodCases().filter { it.first in setOf("in_range", "urgent_low", "stale") }
         return OrbitAod.Look.entries.flatMap { look ->
             cases.map { (id, mode, d) -> RenderState("explore_${look.name.lowercase()}_$id", mode = mode, orbitLook = look, data = d) }
+        } + HaloAod.Look.entries.flatMap { look ->
+            cases.map { (id, mode, d) -> RenderState("explore_${look.name.lowercase()}_$id", mode = mode, haloLook = look, data = d) }
         }
     }
 
@@ -352,6 +365,7 @@ class WatchfaceRenderHarness {
             val lit = StringBuilder("state\tlit_pct\n")
             for (s in states) {
                 if (s.orbitLook != null && face != Face.ORBIT) continue
+                if (s.haloLook != null && face != Face.HALO) continue
                 if (only?.containsMatchIn("${face.id}/${s.id}") == false) continue
                 val bmp = render(face, s)
                 FileOutputStream(File(dir, "${s.id}.png")).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -423,7 +437,7 @@ class WatchfaceRenderHarness {
         phoneGerman = s.lang == "de"
         val d = s.data(now)
         val guard: BolusRequestGuard = when (wf) {
-            is HaloWatchface  -> wf.prepareOffline(d)
+            is HaloWatchface  -> { wf.aodLookOverride = s.haloLook; wf.prepareOffline(d) }
             is GlassWatchface -> wf.prepareOffline(d)
             is OrbitWatchface -> { wf.aodLookOverride = s.orbitLook; wf.prepareOffline(d) }
             else              -> error("unknown face")

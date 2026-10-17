@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Halo's labels of the shared always-on setting (HaloAod.look): the stored values stay "outline" / "minimal" /
+     "glance", Halo draws them as BG + time (default), BG only, overview (BG + time + delta and age). -->
+<resources>
+    <string name="face_aod_style_halo_time">BG + time</string>
+    <string name="face_aod_style_halo_bg">BG only</string>
+    <string name="face_aod_style_halo_glance">Overview</string>
+    <!-- always-on "BG only": the amber data age on its own, so it cannot pass for a number -->
+    <string name="halo_aod_age_ago">%1$s ago</string>
+    <string-array name="face_aod_style_names_halo" translatable="false">
+        <item>@string/face_aod_style_halo_time</item>
+        <item>@string/face_aod_style_halo_bg</item>
+        <item>@string/face_aod_style_halo_glance</item>
+    </string-array>
+</resources>

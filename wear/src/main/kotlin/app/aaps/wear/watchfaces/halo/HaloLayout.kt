@@ -16,10 +16,12 @@ import kotlin.math.min
  * - text never goes below [MIN_TEXT_PX] (a 384 px screen would otherwise shrink a 17 px label to 14.5 px);
  * - the bolus tap target is a fixed 48 dp ([TAP_TARGET_DP]), not scaled.
  *
- * Current variant: "M", refined (rounds 1 to 3; round 3 enlarged only the loop pill text and the secondary line; round 4 sizes the pill to its content): ring R 158 (top at y 60, clear of the system status icon), hero 140 px
- * (7.7 mm cap height), delta / secondary / bottom row on an even ~41 px step, and one bottom row COB - pill - IOB
- * with the values anchored at an equal gap to the pill (COB right-aligned, IOB left-aligned), so the row stays
- * balanced whatever the values are. The bolus ball (when enabled) takes the pill's slot but carries a loop badge.
+ * Current variant: "M", decluttered (owner: "messy, too much information, too little space"): ring R 150, so even
+ * the knob at 12 o'clock stays below the system status icon (knob top at y 61, the icon ends at ~57); the time alone
+ * on top (no date line); hero 140 px (7.7 mm cap height) with ~24 px of clear space above and below; the delta line;
+ * one status line that is drawn only when it has something to say; and one bottom row COB - pill - IOB (COB only
+ * with carbs on board, no outer IOB arc) with the values anchored at an equal gap to the pill. The bolus ball (when
+ * enabled) takes the pill's slot but carries a loop badge.
  */
 class HaloLayout(val d: Float, density: Float = 2f) {
 
@@ -31,51 +33,37 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     private fun font(v: Float) = max(v * u, MIN_TEXT_PX)
 
     // Ring (BG scale, 270 deg with the gap at the bottom).
-    val ringR = g(158f)
-    val ringW = g(14f)
+    val ringR = g(150f)
+    val ringW = g(13f)
     val ringGlow = g(8f)
-    val cutIn = g(149f)                 // threshold cuts R +- 9
-    val cutOut = g(167f)
-    val ambCutIn = g(151f)
-    val ambCutOut = g(165f)
-    val backdropR = g(170f)
-    val tailR = g(143f)
+    val cutIn = g(141f)                 // threshold cuts R +- 9
+    val cutOut = g(159f)
+    val backdropR = g(162f)
+    val tailR = g(137f)
     val tailW = g(3f)
     val tailMaxAlpha = 90               // ~35 %: an echo of the trend, not a stroke
     val tailMinLen = g(30f)             // shorter tails (a flat BG) are not drawn: a 1-2 mm faint tick looks like an artifact
     val tailTextClear = g(20f)          // the tail ends this far before the time / date boxes
-    val knobR = g(13f)
-    val knobSeparation = g(3.5f)        // dark ring around the knob, so it does not merge into the ring gradient
+    val knobR = g(11f)
+    val knobSeparation = g(3f)          // dark ring around the knob, so it does not merge into the ring gradient
     val knobGlow = g(6f)
-    val dotR = g(6.5f)
-    val ambKnobR = g(7.5f)
+    val dotR = g(5.5f)
     val ambStroke = g(2f)
     val cutStroke = g(3f)
 
-    // IOB arc at the right bezel, filling from its bottom end. R 202 keeps ~4.3 % of the diameter to the bezel; the
-    // +-38 deg sweep keeps its lower end >= 16 px from the IOB value (tested).
-    val iobR = g(202f)
-    val iobW = g(7f)
-    val iobGlow = g(5f)
-    val iobHalfSweep = 38f
-    val ambIobW = g(1f)
-    val ambIobFillW = g(2f)
+    /** Top edge of the knob (with its dark separation) at 12 o'clock: below the system status icon (~y 57). */
+    val knobTop = c - ringR - knobR - knobSeparation
 
-    // Time and German date.
-    val timeY = g(102f)
-    val timeSize = font(38f)
-    val dateY = g(137f)                 // ~3 px more air under the time than round 1
-    val dateSize = font(24f)                // ~1.3 mm cap height (round 3: was 22, at the 1.2 mm floor)
+    // Time (the date line is gone: declutter round).
+    val timeY = g(108f)
+    val timeSize = font(36f)
 
-    // Hero BG.
-    val heroY = g(214f)
+    // Hero BG: cap height centred on heroY, ~29 px clear above (to the time) and ~24 px below (to the delta line).
+    val heroY = g(200f)
     val heroSize = g(140f)
-    val heroMaxW = g(250f)              // "224" fits at full size, "12.4" shrinks ~5 %; inside the trend tail
+    val heroMaxW = g(224f)              // "6,4" / "224" fit at full size, "10,4" shrinks; inside the trend tail
     val heroGlow = g(10f)
     val heroStrike = g(2f)
-    val heroAmbStroke = g(2.5f)
-    val heroAmbStrokeBurnIn = g(2f)
-    val heroAmbLift = g(8f)
 
     // TIEF / HOCH caption right of the digits (top-aligned to their cap height); digits + caption are centred as one
     // group and fitted to [heroGroupMaxW] (still inside the trend tail at the caption's height).
@@ -85,28 +73,28 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val captionBadgeH = g(30f)
     val captionRadius = g(7f)
     val captionStroke = g(2f)          // ambient badge outline (no fill: burn-in safe)
-    val heroGroupMaxW = g(262f)
+    val heroGroupMaxW = g(224f)
 
     // Emphasis step (urgent low / very high): ring track and fill wider, backdrop stronger.
-    val ringWEmphasis = g(20f)
-    val ambDoubleGap = g(9f)           // ambient low: doubled track, the two arcs this far apart
+    val ringWEmphasis = g(18f)
 
     // Status text in the meta line (W2 / W3: "Keine Daten · 17′"), fitted inside the ring at the delta line.
-    val metaMaxW = g(262f)
+    val metaMaxW = g(236f)             // ~11 px clear of the ring track at the delta line
     // Phone-off glyph (W10) after the age.
     val phoneGlyphH = g(20f)
     val phoneGlyphW = g(12f)
 
     // Arrow, delta and BG age (the age only when it is getting old, see HaloFaceLogic.showBgAge).
-    val deltaY = g(290f)
-    val arrowSize = font(40f)
-    val deltaSize = font(32f)           // ~1.7 mm cap height: the second most important value
+    val deltaY = g(288f)
+    val arrowSize = font(38f)
+    val deltaSize = font(30f)           // ~1.6 mm cap height: the second most important value
     val arrowGap = g(6f)
 
-    // Secondary line (temp target + basal), between the delta line and the pill.
-    val secondaryY = g(328f)
-    val secondarySize = font(26f)       // ~1.4 mm cap height: grey TT / basal line must read in sunlight
-    val secondaryMaxW = g(180f)          // "TT 5.6 · 0.00U/h" shrinks to fit, clear of the ring ends
+    // Status line (a warning, an active temp target, a temp basal that matters), between the delta line and the pill;
+    // empty most of the time.
+    val secondaryY = g(330f)
+    val secondarySize = font(24f)       // ~1.3 mm cap height
+    val secondaryMaxW = g(170f)          // "TT 5.6 · 0 U/h" shrinks to fit, clear of the ring ends
 
     // Loop pill: loop glyph (a circular arrow in the state colour) and the loop age. The pill is sized to its content
     // (round 4): equal inner padding on both sides and a fixed glyph-to-text gap, the glyph + text group centred, so
@@ -182,15 +170,16 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     // Double-tap zone of the hero BG (opens the main menu).
     val heroTapLeft = g(95f)
     val heroTapRight = g(355f)
-    val heroTapTop = g(160f)
-    val heroTapBottom = g(275f)
+    val heroTapTop = g(145f)
+    val heroTapBottom = g(270f)
 
     /**
      * Half-width (degrees) of the tail gap around 12 o'clock (270 deg): the trend tail is not drawn within
-     * 270 +- this, so it never points at the time or the date.
+     * 270 +- this, so it never points at the time.
      */
     val tailGapHalf: Float = run {
-        val half = max(timeBox().right - c, dateBox().right - c) + tailTextClear
+        // + 6: the tail passes the time's lower corner closer than its side (tested on 384..480 px)
+        val half = timeBox().right - c + tailTextClear + g(6f)
         Math.toDegrees(asin(min(1f, half / tailR).toDouble())).toFloat()
     }
 
@@ -210,11 +199,9 @@ class HaloLayout(val d: Float, density: Float = 2f) {
 
     /** Approximate ink boxes at their widest (fit limits, or typical widest strings), for the layout test. */
     fun timeBox() = textBox("time", c, timeY, timeSize * 0.56f * 5f, timeSize)              // "00:00"
-    fun dateBox() = textBox("date", c, dateY, dateSize * 0.52f * 10f, dateSize)              // "Mi 17. Okt"
 
     fun boxes(): List<Box> = listOf(
         timeBox(),
-        dateBox(),
         textBox("hero", c, heroY, heroMaxW, heroSize),
         deltaBox(11),                                                                           // "-0.25 · 12'"
         textBox("secondary", c, secondaryY, secondaryMaxW, secondarySize),
@@ -255,18 +242,8 @@ class HaloLayout(val d: Float, density: Float = 2f) {
         hypot(nx - ex, ny - ey) < ringW / 2f + gap
     }
 
-    /** True when [b] comes closer than [gap] to a round end cap of the IOB arc. */
-    fun nearIobArcEnds(b: Box, gap: Float = 0f): Boolean = listOf(-iobHalfSweep, iobHalfSweep).any { a ->
-        val ex = c + iobR * kotlin.math.cos(Math.toRadians(a.toDouble())).toFloat()
-        val ey = c + iobR * kotlin.math.sin(Math.toRadians(a.toDouble())).toFloat()
-        hypot(ex.coerceIn(b.left, b.right) - ex, ey.coerceIn(b.top, b.bottom) - ey) < iobW / 2f + gap
-    }
-
     /** True when any point of [b] lies on the ring stroke (within its 270 deg sweep). */
     fun touchesRing(b: Box): Boolean = touchesArc(b, ringR - ringW / 2f, ringR + ringW / 2f, HaloFaceLogic.RING_START, HaloFaceLogic.RING_SWEEP)
-
-    /** True when any point of [b] lies on the IOB arc stroke. */
-    fun touchesIobArc(b: Box): Boolean = touchesArc(b, iobR - iobW / 2f, iobR + iobW / 2f, -iobHalfSweep, 2f * iobHalfSweep)
 
     /** Trend tail: the hero must stay inside it. */
     fun insideTail(b: Box): Boolean = corners(b).all { (x, y) -> hypot(x - c, y - c) <= tailR - tailW / 2f }

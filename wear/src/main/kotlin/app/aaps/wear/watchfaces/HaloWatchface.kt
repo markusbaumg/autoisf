@@ -41,6 +41,7 @@ import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
 import app.aaps.wear.interaction.menus.MainMenuActivity
+import app.aaps.wear.watchfaces.common.AodStyle
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.State
@@ -50,6 +51,7 @@ import app.aaps.wear.watchfaces.common.BolusRequestPrefs
 import app.aaps.wear.watchfaces.common.BolusTapGesture
 import app.aaps.wear.watchfaces.common.FaceState
 import app.aaps.wear.watchfaces.common.PhoneReachability
+import app.aaps.wear.watchfaces.halo.HaloAod
 import app.aaps.wear.watchfaces.halo.HaloFaceLogic
 import app.aaps.wear.watchfaces.halo.HaloLayout
 import app.aaps.wear.watchfaces.utils.WatchFace
@@ -65,7 +67,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.time.LocalDate
 import java.util.Locale
 import javax.inject.Inject
 import kotlin.math.abs
@@ -77,8 +78,13 @@ import kotlin.math.sin
 /**
  * "AAPS Halo": a calm, Canvas-drawn watch face. Hero BG in its range colour (with a "TIEF" / "HOCH" caption, so colour
  * is never the only carrier), one gradient ring (BG on a 2.2..16.7 mmol/L scale with the target band, a knob and a
- * 30 min trend tail), time with a German date, arrow + delta + BG age (always shown), an IOB arc with IOB and COB, the
- * loop pill and one status line (the highest family warning W1..W9, otherwise temp target + basal).
+ * 30 min trend tail), the time, arrow + delta + BG age (always shown), the loop pill with IOB (and COB while carbs are on
+ * board) and one status line that is drawn only when it has something to say (the highest family warning W1..W9,
+ * otherwise an active temp target and a temp basal that matters). Declutter round: no date, no outer IOB arc, no
+ * "0 g", no routine basal.
+ *
+ * Always-on: the family's bold, sparse look ([HaloAod]) in the style of the shared watch setting [AodStyle]; never
+ * the bolus ball.
  *
  * Every state (BG age, range, loop health, phone link, warning order) comes from the family helper [FaceState]
  * (designsystem/states.md), shared with Glass and Orbit.
@@ -174,8 +180,6 @@ class HaloWatchface : WatchFace() {
     // Per-value caches (rebuilt only when the input changes).
     private var timeKey = -1
     private var timeStr = ""
-    private var dateKey = -1
-    private var dateStr = ""
     private var arrowSrc: String? = null
     private var arrowStr = ""
     private var ageKey = Long.MIN_VALUE
@@ -183,8 +187,6 @@ class HaloWatchface : WatchFace() {
     private var amountKey = Double.NaN
     private var amountStr = ""
     private var drawnAmount = Double.NaN
-    private var iobSrc: EventData.Status? = null
-    private var iobFrac = 0f
     /** Last valid loop time (LoopRunTime.of(status) > 0), persisted; an older phone sends -1 on runs without a new temp basal. */
     private var loopMemory = HaloFaceLogic.LoopTimeMemory({ 0L }, {})
     private val loopTime get() = loopMemory.time
@@ -527,27 +529,27 @@ class HaloWatchface : WatchFace() {
             }
         }
 
-        // 4. time and German date
+        // 4. time (no date line: declutter round)
         drawText(canvas, timeString(), cx, L.timeY, L.timeSize, tf500, TIME)
-        drawText(canvas, dateString(), cx, L.dateY, L.dateSize, tf500, DATE)
 
         // 5. hero BG in range colour, with the TIEF / HOCH caption
-        drawHeroBg(canvas, s, colour, ambient = false)
+        drawHeroBg(canvas, s, colour)
 
         // 6. meta line: arrow + delta + BG age (always), or the W2 / W3 warning with the age
-        drawMetaLine(canvas, s, colour, ambient = false)
+        drawMetaLine(canvas, s, colour)
 
-        // 7. IOB arc, IOB and COB (anchored at the drawn pill, so both gaps to it stay equal)
+        // 7. IOB, and COB while carbs are on board (anchored at the drawn pill, so both gaps to it stay equal)
         val check = bolusCheck()
         buttonShown = check.state != State.HIDDEN
         val pill = if (buttonShown) null else measurePill(loopLabel(s))
-        drawIobCob(canvas, ambient = false, pill)
+        drawIobCob(canvas, pill)
 
         // 8. loop pill (the bolus ball takes its slot when enabled and then carries the loop state as a badge)
-        if (pill != null) drawLoopPill(canvas, s, ambient = false, pill)
+        if (pill != null) drawLoopPill(canvas, s, pill)
 
-        // 9. status line: the slot owner (W1, W4-W9), otherwise temp target (when active) and basal
-        drawSecondaryLine(canvas, s, ambient = false)
+        // 9. status line, only when needed: the slot owner (W1, W4-W9), otherwise an active temp target and a temp
+        //    basal that matters
+        drawSecondaryLine(canvas, s)
 
         // 10. bolus ball (only when enabled; otherwise not drawn and not tappable)
         if (buttonShown) drawBolusButton(canvas, check.state, guard.isArmed, s, now)
@@ -555,79 +557,44 @@ class HaloWatchface : WatchFace() {
     }
 
     /**
-     * Ambient: outlines and greys only, no fills, glow or tap targets; the range is a shape of the ring track.
-     * Low-bit: white only, no anti-aliasing. Burn-in protection: everything shifts by up to 4 px every minute.
+     * Always-on in the family look ([HaloAod], the style of the shared setting [AodStyle]): bold, dimmed solid digits
+     * with the trend arrow, the time small on top, at most one line of words, and Halo's target band as one dim arc.
+     * No ring, tail, pill, IOB or bolus ball (never in ambient). Low-bit: white, no anti-aliasing. Burn-in protection:
+     * everything shifts by up to 4 px every minute. Ages are computed at draw time (once a minute).
      */
     private fun drawAmbient(canvas: Canvas) {
         val now = System.currentTimeMillis()
-        val lowBit = lowBitAmbient
-        val aa = !lowBit
         buttonShown = false
         val s = state(now, ambient = true)
+        val look = aodLookOverride ?: HaloAod.look(if (::sp.isInitialized) AodStyle.read(sp) else AodStyle.DEFAULT)
+        val model = HaloAod.model(
+            hero = s.bgText, range = s.range, bgAge = s.bgAge, trend = s.trend, time = timeString(), caption = s.caption,
+            warning = s.ownerText, delta = bg.delta, age = ageString(s.ageMin), lowMgdl = lowMgdl(), highMgdl = highMgdl(),
+            sgv = if (s.showValue) bg.sgv else 0.0
+        )
+        aodPainter.lowWord = words().low
+        aodPainter.highWord = words().high
+        aodPainter.agoFormat = getString(R.string.halo_aod_age_ago).replace("%1\$s", "%s")
         canvas.save()
         try {
             if (burnInProtection) {
                 val key = (if (latestEpochMillis > 0L) latestEpochMillis else now) / FaceState.MINUTE_MS
                 canvas.translate(L.burnIn(HaloFaceLogic.burnInOffsetX(key)), L.burnIn(HaloFaceLogic.burnInOffsetY(key)))
             }
-            drawAmbientContent(canvas, s, lowBit, aa)
+            canvas.scale(L.u, L.u)
+            aodPainter.draw(canvas, model, look, lowBitAmbient, burnInProtection)
         } finally {
             canvas.restore()
         }
     }
 
-    private fun drawAmbientContent(canvas: Canvas, s: S, lowBit: Boolean, aa: Boolean) {
-        val ring = arcRect(L.ringR)
-        val track = HaloFaceLogic.ambientTrack(s.range)
-        resetPaint(aa).apply { style = Paint.Style.STROKE; strokeWidth = L.ambStroke }
-        when (track) {
-            HaloFaceLogic.Track.SOLID       -> {
-                p.color = amb(AMB3, lowBit)
-                canvas.drawArc(ring, HaloFaceLogic.RING_START, HaloFaceLogic.RING_SWEEP, false, p)
-            }
+    private val aodPainter = HaloAod.Painter()
 
-            HaloFaceLogic.Track.DASHED,
-            HaloFaceLogic.Track.DASHED_BOLD -> {
-                // 4 deg on / 3 deg off along the ring
-                val unit = (Math.PI * L.ringR / 180.0).toFloat()
-                p.pathEffect = DashPathEffect(floatArrayOf(4f * unit, 3f * unit), 0f)
-                p.color = amb(if (track == HaloFaceLogic.Track.DASHED_BOLD) AMB1 else AMB2, lowBit)
-                if (track == HaloFaceLogic.Track.DASHED_BOLD) p.strokeWidth = L.ambStroke * 1.5f
-                canvas.drawArc(ring, HaloFaceLogic.RING_START, HaloFaceLogic.RING_SWEEP, false, p)
-                p.pathEffect = null
-            }
-
-            HaloFaceLogic.Track.DOUBLE      -> {
-                p.color = amb(if (s.range == FaceState.Range.URGENT_LOW) AMB1 else AMB2, lowBit)
-                canvas.drawArc(arcRect(L.ringR - L.ambDoubleGap / 2f), HaloFaceLogic.RING_START, HaloFaceLogic.RING_SWEEP, false, p)
-                canvas.drawArc(arcRect(L.ringR + L.ambDoubleGap / 2f), HaloFaceLogic.RING_START, HaloFaceLogic.RING_SWEEP, false, p)
-            }
-        }
-        resetPaint(aa).apply { style = Paint.Style.STROKE; strokeWidth = L.ambStroke; color = amb(AMB3, lowBit) }
-        val lowA = HaloFaceLogic.angle(lowMgdl())
-        val highA = HaloFaceLogic.angle(highMgdl())
-        drawCut(canvas, lowA, L.ambCutIn, L.ambCutOut)
-        drawCut(canvas, highA, L.ambCutIn, L.ambCutOut)
-        if (s.showValue) {
-            val a = HaloFaceLogic.angle(bg.sgv)
-            p.color = amb(if (FaceState.isStruck(s.bgAge)) AMB2 else AMB1, lowBit)
-            canvas.drawCircle(pointX(a, L.ringR), pointY(a, L.ringR), L.ambKnobR, p)
-        }
-        drawText(canvas, timeString(), cx, L.timeY, L.timeSize, tf400, amb(AMB1, lowBit), aa)
-        drawText(canvas, dateString(), cx, L.dateY, L.dateSize, tf400, amb(AMB2, lowBit), aa)
-        drawHeroBg(canvas, s, Color.WHITE, ambient = true)
-        drawMetaLine(canvas, s, Color.WHITE, ambient = true)
-        val pill = measurePill(loopLabel(s))
-        drawIobCob(canvas, ambient = true, pill)
-        drawLoopPill(canvas, s, ambient = true, pill)
-        drawSecondaryLine(canvas, s, ambient = true)
-    }
+    /** Offline render harness only: draws this look in ambient instead of the one the setting picks (AOD exploration). */
+    @VisibleForTesting internal var aodLookOverride: HaloAod.Look? = null
 
     private fun drawCut(canvas: Canvas, angle: Float, rIn: Float, rOut: Float) =
         canvas.drawLine(pointX(angle, rIn), pointY(angle, rIn), pointX(angle, rOut), pointY(angle, rOut), p)
-
-    /** Ambient grey; low-bit: white (no greys at all). */
-    private fun amb(colour: Int, lowBit: Boolean): Int = if (lowBit) Color.WHITE else colour
 
     /**
      * Short trend tail: one arc from the oldest reading of the last [TAIL_WINDOW_MS] (30 min) to the current BG,
@@ -669,11 +636,10 @@ class HaloWatchface : WatchFace() {
     }
 
     /**
-     * Hero BG (phone string, "---" without a value) and its caption: "TIEF" word (low), "TIEF" badge (urgent low; ambient:
-     * an outlined box), "HOCH" word (very high). Digits and caption are centred as one group. Stale: grey + strike.
+     * Hero BG (phone string, "---" without a value) and its caption: "TIEF" word (low), "TIEF" badge (urgent low),
+     * "HOCH" word (very high). Digits and caption are centred as one group. Stale: grey + strike.
      */
-    private fun drawHeroBg(canvas: Canvas, s: S, colour: Int, ambient: Boolean) {
-        val lowBit = ambient && lowBitAmbient
+    private fun drawHeroBg(canvas: Canvas, s: S, colour: Int) {
         val stale = FaceState.isStruck(s.bgAge) && s.showValue
         val value = s.bgText
         val captionWord = when (s.caption) {
@@ -690,74 +656,58 @@ class HaloWatchface : WatchFace() {
         val capBlock = if (capW > 0f) capW + L.captionGap else 0f
 
         text.reset()
-        text.isAntiAlias = !lowBit
+        text.isAntiAlias = true
         text.textAlign = Paint.Align.CENTER
         text.letterSpacing = -0.02f
         text.fontFeatureSettings = "tnum"   // tabular figures: the width does not jump between values
-        text.typeface = if (ambient) tf300 else tf600
+        text.typeface = tf600
         text.textSize = L.heroSize
         val digitsW = text.measureText(value)
         // 4-char values like "10,4" stay inside the ring; with a caption the whole group is fitted.
         val scale = if (capBlock > 0f) HaloFaceLogic.fitScale(digitsW + capBlock, L.heroGroupMaxW) else HaloFaceLogic.fitScale(digitsW, L.heroMaxW)
         text.textSize = L.heroSize * scale
         val digitsX = cx - capBlock * scale / 2f
-        // ambient: the light outline digits sit a little higher, so the German comma's tail clears the meta line
-        val baseline = L.heroY + text.textSize * 0.36f - if (ambient) L.heroAmbLift else 0f
-        val urgent = s.range == FaceState.Range.URGENT_LOW
-        if (ambient) {
-            text.style = Paint.Style.STROKE
-            text.strokeWidth = (if (burnInProtection) L.heroAmbStrokeBurnIn else L.heroAmbStroke) + if (urgent) L.ambStroke / 2f else 0f
-            text.color = when {
-                lowBit -> Color.WHITE
-                stale  -> AMB2
-                else   -> AMB1
+        val baseline = L.heroY + text.textSize * 0.36f
+        when {
+            stale         -> text.color = STALE
+            !s.showValue  -> text.color = TXT3
+            else          -> {
+                text.color = colour
+                text.setShadowLayer(L.heroGlow, 0f, 0f, withAlpha(colour, 0x55))
             }
-        } else if (stale) {
-            text.color = STALE
-        } else if (!s.showValue) {
-            text.color = TXT3
-        } else {
-            text.color = colour
-            text.setShadowLayer(L.heroGlow, 0f, 0f, withAlpha(colour, 0x55))
         }
         canvas.drawText(value, digitsX, baseline, text)
         val shownW = text.measureText(value)
         val heroColour = text.color
         if (stale) {
-            // Struck through (interactive and ambient): an old value must never look current.
+            // Struck through: an old value must never look current.
             val half = shownW / 2f + L.heroStrike * 2f
-            resetPaint(!lowBit).apply { color = heroColour; strokeWidth = if (ambient) L.ambStroke else L.heroStrike * 1.5f }
-            val strikeY = L.heroY - if (ambient) L.heroAmbLift else 0f
-            canvas.drawLine(digitsX - half, strikeY, digitsX + half, strikeY, p)
+            resetPaint().apply { color = heroColour; strokeWidth = L.heroStrike * 1.5f }
+            canvas.drawLine(digitsX - half, L.heroY, digitsX + half, L.heroY, p)
         }
         if (captionWord.isEmpty()) return
         // Caption: left edge after the digits, top-aligned to the digits' cap height.
         val capLeft = digitsX + shownW / 2f + L.captionGap * scale
         val capTop = baseline - text.textSize * HaloLayout.CAP_HEIGHT
         val boxH = L.captionBadgeH
-        val boxW = capW
         val capCentreY = capTop + boxH / 2f
         val wordColour = when {
-            lowBit                                     -> Color.WHITE
-            ambient                                    -> AMB1
             badge                                      -> Color.WHITE
             s.caption == FaceState.Caption.HIGH_WORD   -> AMBER
             else                                       -> RED
         }
         if (badge) {
-            rect.set(capLeft, capTop, capLeft + boxW, capTop + boxH)
-            if (ambient) {
-                resetPaint(!lowBit).apply { style = Paint.Style.STROKE; strokeWidth = L.captionStroke; color = wordColour }
-            } else resetPaint().apply { color = RED }
+            rect.set(capLeft, capTop, capLeft + capW, capTop + boxH)
+            resetPaint().apply { color = RED }
             canvas.drawRoundRect(rect, L.captionRadius, L.captionRadius, p)
         }
         text.reset()
-        text.isAntiAlias = !lowBit
+        text.isAntiAlias = true
         text.textAlign = Paint.Align.CENTER
         text.typeface = tf700
         text.textSize = L.captionSize
         text.color = wordColour
-        canvas.drawText(captionWord, capLeft + boxW / 2f, baselineFor(capCentreY), text)
+        canvas.drawText(captionWord, capLeft + capW / 2f, baselineFor(capCentreY), text)
     }
 
     /**
@@ -765,22 +715,19 @@ class HaloWatchface : WatchFace() {
      * reading; "Keine Daten · 17′" / "Telefon getrennt · 14′" in alert when W2 / W3 own the slot. The bold arrow is
      * centred on the delta's cap height (its own ink box, not the font box), so it does not sit low.
      */
-    private fun drawMetaLine(canvas: Canvas, s: S, rangeCol: Int, ambient: Boolean) {
-        val lowBit = ambient && lowBitAmbient
-        val aa = !lowBit
+    private fun drawMetaLine(canvas: Canvas, s: S, rangeCol: Int) {
         val y = L.deltaY + L.deltaSize * HaloLayout.CAP_HEIGHT / 2f
         when (HaloFaceLogic.meta(s.bgAge, s.owner)) {
             HaloFaceLogic.Meta.WARNING         -> {
                 val t = s.ownerText ?: return
-                val colour = if (ambient) amb(AMB1, lowBit) else levelColour(t.level, TXT2)
-                drawFitText(canvas, t.text, cx, L.deltaY, L.deltaSize, tf600, colour, aa, L.metaMaxW)
+                drawFitText(canvas, t.text, cx, L.deltaY, L.deltaSize, tf600, levelColour(t.level, TXT2), maxWidth = L.metaMaxW)
                 return
             }
 
             HaloFaceLogic.Meta.AGE_ONLY        -> {
                 if (s.firstStart) return
                 // no reading at all: "--" in grey (a missing value is never red)
-                drawText(canvas, ageString(s.ageMin), cx, L.deltaY, L.deltaSize, tf500, if (ambient) amb(AMB2, lowBit) else TXT3, aa)
+                drawText(canvas, ageString(s.ageMin), cx, L.deltaY, L.deltaSize, tf500, TXT3)
                 return
             }
 
@@ -789,12 +736,9 @@ class HaloWatchface : WatchFace() {
         val arrow = arrowString()
         val delta = FaceState.deltaText(bg.delta)
         val age = ageString(s.ageMin)
-        val ageColour = when {
-            ambient -> amb(if (s.bgAge == FaceState.BgAge.FRESH) AMB2 else AMB1, lowBit)
-            else    -> levelColour(FaceState.ageLevel(s.bgAge), DELTA)
-        }
+        val ageColour = levelColour(FaceState.ageLevel(s.bgAge), DELTA)
         text.reset()
-        text.isAntiAlias = aa
+        text.isAntiAlias = true
         text.textAlign = Paint.Align.LEFT
         text.typeface = tf700
         text.textSize = L.arrowSize
@@ -816,20 +760,16 @@ class HaloWatchface : WatchFace() {
         if (arrow.isNotEmpty()) {
             text.typeface = tf700
             text.textSize = L.arrowSize
-            text.color = if (ambient) amb(AMB1, lowBit) else rangeCol
+            text.color = rangeCol
             canvas.drawText(arrow, x, arrowBaseline, text)
             x += arrowW + gap
             text.typeface = tf500
             text.textSize = L.deltaSize
         }
-        text.color = when {
-            ambient                   -> amb(AMB2, lowBit)
-            delta == FaceState.NO_DATA -> TXT3
-            else                      -> DELTA
-        }
+        text.color = if (delta == FaceState.NO_DATA) TXT3 else DELTA
         canvas.drawText(delta, x, y, text)
         x += deltaW
-        text.color = if (ambient) amb(AMB3, lowBit) else TXT3
+        text.color = TXT3
         canvas.drawText(SEP, x, y, text)
         x += sepW
         text.color = ageColour
@@ -850,47 +790,39 @@ class HaloWatchface : WatchFace() {
     }
 
     /**
-     * Status line between the meta line and the pill: the slot owner (W1 "Warte auf AAPS", W4-W9) in its level colour,
-     * otherwise "TT 5,6" (tt) and the basal ("0,85 U/h", TBR in tbr, zero basal in warn). Ambient: W1-W6 or the TT only.
+     * Status line between the meta line and the pill, drawn only when it has something to say: the slot owner
+     * (W1 "Warte auf AAPS", W4-W9) in its level colour; otherwise "TT 5,6" (an active temp target, tt) and / or the
+     * basal when a temp basal matters ([HaloFaceLogic.basalShown]: a TBR percentage, or zero during a low); otherwise
+     * nothing (declutter round: no routine "0,00 U/h").
      */
-    private fun drawSecondaryLine(canvas: Canvas, s: S, ambient: Boolean) {
-        val lowBit = ambient && lowBitAmbient
-        val aa = !lowBit
+    private fun drawSecondaryLine(canvas: Canvas, s: S) {
         val owner = HaloFaceLogic.secondaryOwner(s.owner)
         val t = s.ownerText
         if (owner != null && t != null) {
-            val colour = if (ambient) amb(AMB1, lowBit) else levelColour(t.level, TXT2)
-            drawFitText(canvas, t.text, cx, L.secondaryY, L.secondarySize, tf600, colour, aa, L.secondaryMaxW)
+            drawFitText(canvas, t.text, cx, L.secondaryY, L.secondarySize, tf600, levelColour(t.level, TXT2), maxWidth = L.secondaryMaxW)
             return
         }
         if (s.firstStart) return
         val tt = FaceState.display(st.tempTarget)
-        val ttOn = st.tempTargetLevel == 2 && tt != FaceState.NO_DATA
-        if (ambient) {
-            if (ttOn) drawFitText(canvas, "TT $tt", cx, L.secondaryY, L.secondarySize, tf400, amb(AMB2, lowBit), aa, L.secondaryMaxW)
-            return
-        }
-        val basal = FaceState.spacedUnit(st.currentBasal)
+        val ttText = if (st.tempTargetLevel == 2 && tt != FaceState.NO_DATA) "TT $tt" else ""
         val freshLow = FaceState.isLow(s.range)
+        val basal = if (HaloFaceLogic.basalShown(st.currentBasal, freshLow)) FaceState.spacedUnit(st.currentBasal) else ""
+        if (ttText.isEmpty() && basal.isEmpty()) return
         val basalColour = when (FaceState.basalTone(st.currentBasal, freshLow)) {
             FaceState.Tone.TBR  -> TBR
             FaceState.Tone.WARN -> AMBER
             FaceState.Tone.TXT3 -> TXT3
             else                -> SECONDARY
         }
-        if (!ttOn) {
-            drawFitText(canvas, basal, cx, L.secondaryY, L.secondarySize, tf500, basalColour, aa, L.secondaryMaxW)
-            return
-        }
-        // Two runs: "TT 5,6" in the tt hue, separator, basal in its tone; fitted together.
-        val ttText = "TT $tt"
+        // One or two runs: "TT 5,6" in the tt hue, separator, basal in its tone; fitted together.
+        val sep = if (ttText.isNotEmpty() && basal.isNotEmpty()) HaloFaceLogic.SEP else ""
         text.reset()
-        text.isAntiAlias = aa
+        text.isAntiAlias = true
         text.textAlign = Paint.Align.LEFT
         text.typeface = tf500
         text.textSize = L.secondarySize
         val w1 = text.measureText(ttText)
-        val w2 = text.measureText(HaloFaceLogic.SEP)
+        val w2 = text.measureText(sep)
         val w3 = text.measureText(basal)
         text.textSize = L.secondarySize * HaloFaceLogic.fitScale(w1 + w2 + w3, L.secondaryMaxW)
         val k = text.textSize / L.secondarySize
@@ -900,61 +832,34 @@ class HaloWatchface : WatchFace() {
         canvas.drawText(ttText, x, baseline, text)
         x += w1 * k
         text.color = TXT3
-        canvas.drawText(HaloFaceLogic.SEP, x, baseline, text)
+        canvas.drawText(sep, x, baseline, text)
         x += w2 * k
         text.color = basalColour
         canvas.drawText(basal, x, baseline, text)
     }
 
-    /** [pill]: the drawn loop pill (its width sets the COB / IOB anchors); null when the bolus ball takes its slot. */
-    private fun drawIobCob(canvas: Canvas, ambient: Boolean, pill: HaloLayout.Pill?) {
-        val lowBit = ambient && lowBitAmbient
-        val aa = !lowBit
-        val r = arcRect(L.iobR)
-        val half = L.iobHalfSweep
-        val fraction = iobFraction()
-        resetPaint(aa).apply {
-            style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
-            strokeWidth = if (ambient) L.ambIobW else L.iobW
-            color = if (ambient) AMB_LINE else IOB_TRACK
-        }
-        if (!lowBit) canvas.drawArc(r, -half, 2f * half, false, p)
-        if (fraction > 0f) {
-            val sweep = -2f * half * fraction
-            if (ambient) {
-                p.strokeWidth = L.ambIobFillW
-                p.color = amb(AMB2, lowBit)
-            } else {
-                p.color = CYAN
-                p.setShadowLayer(L.iobGlow, 0f, 0f, withAlpha(CYAN, 0x99))
-            }
-            canvas.drawArc(r, half, sweep, false, p)
-        }
-        // Bottom row: COB left, IOB right (next to the arc end it fills from), at the same gap to the pill.
+    /**
+     * Bottom row beside the pill / ball: IOB (right) as one number, COB (left) only while carbs are on board
+     * ([HaloFaceLogic.cobShown]). [pill]: the drawn loop pill (its width sets the anchors); null when the ball is shown.
+     */
+    private fun drawIobCob(canvas: Canvas, pill: HaloLayout.Pill?) {
         // Unit and colour say which is which; the unit is the value's hue at ~65 %. Values as the phone sent them.
-        val (cobValue, cobUnit) = HaloFaceLogic.valueUnit(st.cob, "g")
+        if (HaloFaceLogic.cobShown(st.cob)) {
+            val (cobValue, cobUnit) = HaloFaceLogic.valueUnit(st.cob, "g")
+            drawValueUnit(canvas, cobValue, cobUnit, pill?.let { L.cobRightFor(it.halfW) } ?: L.cobRight, alignRight = true, COB_VALUE, withAlpha(COB_VALUE, L.rowUnitAlpha))
+        }
         val (iobValue, iobUnit) = HaloFaceLogic.valueUnit(st.iobSum, "U")
-        val cobColour = when {
-            ambient                       -> amb(AMB2, lowBit)
-            cobValue == FaceState.NO_DATA -> TXT3
-            else                          -> COB_VALUE
-        }
-        val iobColour = when {
-            ambient                       -> amb(AMB2, lowBit)
-            iobValue == FaceState.NO_DATA -> TXT3
-            else                          -> IOB_VALUE
-        }
-        drawValueUnit(canvas, cobValue, cobUnit, pill?.let { L.cobRightFor(it.halfW) } ?: L.cobRight, alignRight = true, cobColour, if (ambient) amb(AMB3, lowBit) else withAlpha(COB_VALUE, L.rowUnitAlpha), aa)
-        drawValueUnit(canvas, iobValue, iobUnit, pill?.let { L.iobLeftFor(it.halfW) } ?: L.iobLeft, alignRight = false, iobColour, if (ambient) amb(AMB3, lowBit) else withAlpha(IOB_VALUE, L.rowUnitAlpha), aa)
+        val iobColour = if (iobValue == FaceState.NO_DATA) TXT3 else IOB_VALUE
+        drawValueUnit(canvas, iobValue, iobUnit, pill?.let { L.iobLeftFor(it.halfW) } ?: L.iobLeft, alignRight = false, iobColour, withAlpha(IOB_VALUE, L.rowUnitAlpha))
     }
 
     /**
      * "1,44" + smaller "U" on the same baseline in the bottom row, shrunk to [HaloLayout.rowMaxW]; anchored at [anchorX]
      * with its right edge ([alignRight], COB) or its left edge (IOB), so the gaps to the pill stay equal.
      */
-    private fun drawValueUnit(canvas: Canvas, value: String, unit: String, anchorX: Float, alignRight: Boolean, valueColour: Int, unitColour: Int, aa: Boolean) {
+    private fun drawValueUnit(canvas: Canvas, value: String, unit: String, anchorX: Float, alignRight: Boolean, valueColour: Int, unitColour: Int) {
         text.reset()
-        text.isAntiAlias = aa
+        text.isAntiAlias = true
         text.textAlign = Paint.Align.LEFT
         text.typeface = tf500
         text.textSize = L.rowValueSize
@@ -995,21 +900,11 @@ class HaloWatchface : WatchFace() {
      * remembered last temp basal enact ([loopTime], see [LoopRunTime]). Shapes, not only colours: loop off = pause bars
      * + "aus", open loop = hollow glyph + "Offen", never / no profile = hollow grey "--".
      */
-    private fun drawLoopPill(canvas: Canvas, s: S, ambient: Boolean, pill: HaloLayout.Pill) {
-        val lowBit = ambient && lowBitAmbient
-        val aa = !lowBit
+    private fun drawLoopPill(canvas: Canvas, s: S, pill: HaloLayout.Pill) {
         val look = pillLook(s)
         val label = loopLabel(s)
         rect.set(cx - pill.halfW, L.pillY - L.pillHalfH, cx + pill.halfW, L.pillY + L.pillHalfH)
         val corner = L.pillHalfH
-        if (ambient) {
-            resetPaint(aa).apply { style = Paint.Style.STROKE; strokeWidth = L.ambStroke; color = amb(AMB3, lowBit) }
-            canvas.drawRoundRect(rect, corner, corner, p)
-            val glyph = amb(if (look == PillLook.BAD || look == PillLook.OFF) AMB1 else AMB2, lowBit)
-            drawLoopGlyph(canvas, look, pill.glyphX, L.pillY, glyph, aa, glow = false)
-            drawPillText(canvas, label, pill, amb(AMB1, lowBit), aa)
-            return
-        }
         val fill = when (look) {
             PillLook.OK                    -> 0xFF12281E.toInt()
             PillLook.WARN                  -> 0xFF1C1E24.toInt()        // neutral: WARN means "check", not an alarm
@@ -1222,21 +1117,6 @@ class HaloWatchface : WatchFace() {
         return timeStr
     }
 
-    /** German date ("Fr 17. Okt") from the renderer's date. */
-    private fun dateString(): String {
-        val key = latestTime.year * 400 + latestTime.month * 32 + latestTime.monthDay
-        if (key != dateKey) {
-            dateKey = key
-            dateStr = try {
-                val date = LocalDate.of(latestTime.year, latestTime.month + 1, latestTime.monthDay)
-                HaloFaceLogic.germanDate(date.dayOfWeek.value, date.dayOfMonth, date.monthValue)
-            } catch (_: Exception) {
-                ""
-            }
-        }
-        return dateStr
-    }
-
     private fun arrowString(): String {
         if (bg.timeStamp <= 0L) return ""
         val src = bg.slopeArrow
@@ -1274,15 +1154,6 @@ class HaloWatchface : WatchFace() {
             }
             loopStr
         }
-    }
-
-    private fun iobFraction(): Float {
-        val s = st
-        if (s !== iobSrc) {
-            iobSrc = s
-            iobFrac = FaceState.iobFraction(s.iobSum)
-        }
-        return iobFrac
     }
 
     /** Amount shown on the ball, re-read only after a preference change. A tap always reads the preference itself. */
@@ -1455,13 +1326,11 @@ class HaloWatchface : WatchFace() {
         /** Loop WARN (13..19'): a desaturated amber, "check" rather than "alarm". */
         private const val AMBER_MUTED = 0xFFC9A465.toInt()
         private const val RED = 0xFFFF5A6E.toInt()
-        private const val CYAN = 0xFF5AC8FA.toInt()
         private const val TRACK = 0xFF1E2228.toInt()
         private const val BAND = 0xFF1C3E30.toInt()
         private const val FILL_START = 0xFF286EBE.toInt()
         private const val TAIL = 0xFFAAB4C3.toInt()
         private const val TIME = 0xFFEBEBF0.toInt()
-        private const val DATE = 0xFFA0A6B0.toInt()
         private const val DELTA = 0xFFDCE0E6.toInt()
         /** range.stale: any BG >= 12 min (no range hue). */
         private const val STALE = 0xFF8A93A8.toInt()
@@ -1471,13 +1340,7 @@ class HaloWatchface : WatchFace() {
         private const val TBR = 0xFF3DDBD9.toInt()
         private const val BALL_IDLE = 0xFF7888FF.toInt()
         private const val BALL_ARMED = 0xFF5B63F5.toInt()
-        /** Ambient greys (AMBIENT only; low-bit draws white). */
-        private const val AMB1 = 0xFFE0E0E0.toInt()
-        private const val AMB2 = 0xFF9A9A9A.toInt()
-        private const val AMB3 = 0xFF6E6E6E.toInt()
-        private const val AMB_LINE = 0xFF3C3C3C.toInt()
         private const val SECONDARY = 0xFFA0A6B0.toInt()
-        private const val IOB_TRACK = 0xFF1C1F25.toInt()  // dimmer than the ring track: only the blue fill should read
         private const val IOB_VALUE = 0xFFD7F0FF.toInt()
         private const val COB_VALUE = 0xFFFFE0B2.toInt()
     }
