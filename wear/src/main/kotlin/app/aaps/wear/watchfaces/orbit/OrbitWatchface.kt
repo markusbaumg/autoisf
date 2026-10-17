@@ -598,7 +598,10 @@ class OrbitWatchface : WatchFace() {
         val temps = d.treatmentData.temps
         val starts = LongArray(temps.size) { temps[it].startTime }
         val ends = LongArray(temps.size) { temps[it].endTime }
-        if (firstStart) {
+        // Final pass: no profile uses the same dim "--" skeleton as the first start (states.md conn.no_profile:
+        // IOB/COB/basal "--", loop indicator grey), as Halo and Glass do; hidden satellites read as a broken layout
+        val skeleton = firstStart || (noProfile && !loopOff)
+        if (skeleton) {
             balls[OrbitFaceLogic.IDX_LOOP] = Ball("--", "LOOP", Ring.DIM, dashed = true)
             balls[OrbitFaceLogic.IDX_IOB] = OrbitFaceLogic.placeholderBall("IOB")
             balls[OrbitFaceLogic.IDX_BASAL] = OrbitFaceLogic.placeholderBall(OrbitFaceLogic.BASAL_LABEL)
@@ -619,7 +622,7 @@ class OrbitWatchface : WatchFace() {
         }
         val tt = if (!firstStart && showTt) OrbitFaceLogic.ttBall(st.tempTarget, st.tempTargetLevel)?.value else null
         layoutDateLine(tt)
-        if (firstStart) {
+        if (skeleton) {
             if (!showLoop) balls[OrbitFaceLogic.IDX_LOOP] = null
             if (!showIob) balls[OrbitFaceLogic.IDX_IOB] = null
             if (!showBasal) balls[OrbitFaceLogic.IDX_BASAL] = null
@@ -627,7 +630,7 @@ class OrbitWatchface : WatchFace() {
         }
         // Glass/Orbit UX round 5: an unknown satellite ("--", e.g. no profile) is not drawn at all outside the first
         // start (the pill names the cause); the dashed never-looped LOOP stays
-        if (!firstStart) for (i in balls.indices) {
+        if (!skeleton) for (i in balls.indices) {
             val b = balls[i] ?: continue
             if (b.value == "--" && !b.dashed && !b.pause) balls[i] = null
         }
