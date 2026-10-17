@@ -155,6 +155,9 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val ballSubSize = font(18f)
     val ballSubDy = g(12f)
     val ballSubMaxW = g(46f)
+    /** "Auswahl" mode: the drawn plus in the amount line (half arm length, stroke). */
+    val ballPlusHalf = g(7.5f)
+    val ballPlusW = g(3.2f)
     val ballHitR = max(ballR, TAP_TARGET_DP / 2f * density)
     /** Top edge of the ball's tap area: the 48 dp circle is cut off here, 4 design px below the secondary line. */
     val ballHitTop = secondaryY + secondarySize * CAP_HEIGHT / 2f + g(4f)

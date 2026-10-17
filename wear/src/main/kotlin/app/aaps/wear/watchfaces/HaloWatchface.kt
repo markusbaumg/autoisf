@@ -40,6 +40,7 @@ import app.aaps.wear.comm.DataLayerListenerServiceWear
 import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
+import app.aaps.wear.interaction.actions.QuickBolusActivity
 import app.aaps.wear.interaction.menus.MainMenuActivity
 import app.aaps.wear.watchfaces.common.AodStyle
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
@@ -91,7 +92,8 @@ import kotlin.math.sin
  *
  * Optional "+X U" ball (bottom centre in the loop pill's slot, with a loop badge so the loop state stays visible; off by default) sends a bolus REQUEST on double-tap, exactly like BolusActivity
  * (ActionBolusPreCheck). The phone checks everything and the watch shows the standard confirmation; nothing is
- * delivered without confirming there. Interactive mode only: never in ambient, never in a headless (picker)
+ * delivered without confirming there. In the shared "Auswahl" mode the ball shows "+ U" and the same double tap opens
+ * QuickBolusActivity instead (no request yet, no pending lock), as Orbit. Interactive mode only: never in ambient, never in a headless (picker)
  * instance and never in a non-live render (screenshot / highlight layer). An editor preview drawn through the live
  * instance with default render parameters cannot be told apart; the face has no complications or styles, so the
  * system has no reason to open its editor.
@@ -304,17 +306,26 @@ class HaloWatchface : WatchFace() {
     private fun bolusAmount(): Double = BolusRequestPrefs.amount(sp)
     private fun maxBolus(): Double = BolusRequestPrefs.maxBolus(sp, getString(R.string.key_treatments_safety_max_bolus))
 
-    private fun bolusInput() = BolusRequestGuard.Input(
-        prefOn = BolusRequestPrefs.enabled(sp),
-        ambient = isAmbient,
-        wearControl = preferences.get(BooleanKey.WearControl),
-        amount = bolusAmount(),
-        maxBolus = maxBolus(),
-        lastPhoneMessage = data.lastUpdateTimestamp,
-        bgTimeStamp = data.bgData.timeStamp,
-        headless = headless || !isLiveRender,
-        firstStart = HaloFaceLogic.firstStart(data.bgData.timeStamp, LoopRunTime.of(data.statusData), data.statusData.iobSum)
-    )
+    /** "Feste Menge" (the double tap sends [bolusAmount]) or "Auswahl" (the same double tap opens QuickBolusActivity). */
+    private fun pickerMode(): Boolean = BolusRequestPrefs.mode(sp) == BolusRequestPrefs.Mode.PICKER
+
+    private fun bolusInput(): BolusRequestGuard.Input {
+        val picker = pickerMode()
+        // picker: the ball is usable when the smallest amount is (each amount is checked again in the picker)
+        val pickerAmounts = if (picker) BolusRequestPrefs.pickerAmounts(sp) else BolusTapGesture.ALLOWED_AMOUNTS
+        return BolusRequestGuard.Input(
+            prefOn = BolusRequestPrefs.enabled(sp),
+            ambient = isAmbient,
+            wearControl = preferences.get(BooleanKey.WearControl),
+            amount = if (picker) pickerAmounts.min() else bolusAmount(),
+            maxBolus = maxBolus(),
+            lastPhoneMessage = data.lastUpdateTimestamp,
+            bgTimeStamp = data.bgData.timeStamp,
+            headless = headless || !isLiveRender,
+            firstStart = HaloFaceLogic.firstStart(data.bgData.timeStamp, LoopRunTime.of(data.statusData), data.statusData.iobSum),
+            allowedAmounts = pickerAmounts
+        )
+    }
 
     /** The ball exists only with the setting on, Wear control allowed, a valid amount, interactive, not in a preview. */
     private fun bolusCheck(): BolusRequestGuard.Check = guard.check(bolusInput())
@@ -554,6 +565,11 @@ class HaloWatchface : WatchFace() {
         // 10. bolus ball (only when enabled; otherwise not drawn and not tappable)
         if (buttonShown) drawBolusButton(canvas, check.state, guard.isArmed, s, now)
         else if (guard.reset()) handler.removeCallbacks(armedTick)
+        // The SENT look ends with the shared pending lock, also when the picker (not this face) started it.
+        if (check.state == State.SENT) {
+            handler.removeCallbacks(redraw)
+            handler.postDelayed(redraw, guard.pendingLeftMs() + 10)
+        }
     }
 
     /**
@@ -1021,11 +1037,13 @@ class HaloWatchface : WatchFace() {
         val y = L.ballY
         val r = L.ballR
         val amount = amountString(drawnBolusAmount())
+        // "Auswahl": a drawn plus over "U" instead of the amount (the amount is chosen in the picker)
+        val picker = pickerMode()
         when {
             armed && state == State.IDLE -> {
                 resetPaint().apply { color = BALL_ARMED; setShadowLayer(L.ballGlowArmed, 0f, 0f, withAlpha(BALL_ARMED, 0xAA)) }
                 canvas.drawCircle(x, y, r, p)
-                drawText(canvas, amount, x, y + L.ballAmountDy, L.ballAmountSize, tf700, Color.WHITE)
+                drawBallAmount(canvas, picker, amount, x, y + L.ballAmountDy, Color.WHITE)
                 drawFitText(canvas, if (L.ballSmall) getString(R.string.face_bolus_again_short) else againLabel, x, y + L.ballSubDy, L.ballSubSize, tf600, Color.WHITE, maxWidth = L.ballSubMaxW)
                 // countdown: white ring from 12 o'clock, shrinking over the double-tap window
                 val left = (1f - (now - guard.armedAt).toFloat() / BolusTapGesture.WINDOW_MS).coerceIn(0f, 1f)
@@ -1054,7 +1072,7 @@ class HaloWatchface : WatchFace() {
                 resetPaint().apply { style = Paint.Style.STROKE; strokeWidth = L.ballStroke; strokeCap = Paint.Cap.ROUND; color = TXT3 }
                 canvas.drawLine(x - k, y + k, x + k, y - k, p)
                 knockOut = L.ballStroke * 2f
-                drawText(canvas, amount, x, y + L.ballAmountDy, L.ballAmountSize, tf700, TXT3)
+                drawBallAmount(canvas, picker, amount, x, y + L.ballAmountDy, TXT3)
                 drawFitText(canvas, unitLabel, x, y + L.ballSubDy, L.ballSubSize, tf600, TXT3, maxWidth = L.ballSubMaxW)
                 knockOut = 0f
             }
@@ -1064,7 +1082,7 @@ class HaloWatchface : WatchFace() {
                 canvas.drawCircle(x, y, r, p)
                 resetPaint().apply { style = Paint.Style.STROKE; strokeWidth = L.ballStroke; color = BALL_IDLE }
                 canvas.drawCircle(x, y, r, p)
-                drawText(canvas, amount, x, y + L.ballAmountDy, L.ballAmountSize, tf700, 0xFFE4E7FF.toInt())
+                drawBallAmount(canvas, picker, amount, x, y + L.ballAmountDy, 0xFFE4E7FF.toInt())
                 drawFitText(canvas, unitLabel, x, y + L.ballSubDy, L.ballSubSize, tf600, 0xFF96A0DC.toInt(), maxWidth = L.ballSubMaxW)
             }
         }
@@ -1080,6 +1098,23 @@ class HaloWatchface : WatchFace() {
             resetPaint().apply { style = Paint.Style.STROKE; strokeWidth = L.ballStroke; color = c }
             canvas.drawCircle(L.badgeX, L.badgeY, L.badgeR - L.ballStroke / 2f, p)
         }
+    }
+
+    /** The ball's amount line: "+0,5", or in "Auswahl" mode a drawn plus (a text "+" is thin and small), as Orbit. */
+    private fun drawBallAmount(canvas: Canvas, picker: Boolean, amount: String, x: Float, cy: Float, colour: Int) {
+        if (!picker) {
+            drawText(canvas, amount, x, cy, L.ballAmountSize, tf700, colour)
+            return
+        }
+        val k = L.ballPlusHalf
+        if (knockOut > 0f) {
+            resetPaint().apply { style = Paint.Style.STROKE; strokeWidth = L.ballPlusW + knockOut; strokeCap = Paint.Cap.ROUND; color = Color.BLACK }
+            canvas.drawLine(x - k, cy, x + k, cy, p)
+            canvas.drawLine(x, cy - k, x, cy + k, p)
+        }
+        resetPaint().apply { style = Paint.Style.STROKE; strokeWidth = L.ballPlusW; strokeCap = Paint.Cap.ROUND; color = colour }
+        canvas.drawLine(x - k, cy, x + k, cy, p)
+        canvas.drawLine(x, cy - k, x, cy + k, p)
     }
 
     private fun arcRectAt(x: Float, y: Float, r: Float): RectF = rect.apply { set(x - r, y - r, x + r, y + r) }
@@ -1229,7 +1264,10 @@ class HaloWatchface : WatchFace() {
         val inside = buttonShown && dy >= L.ballHitTop && BolusTapGesture.isInside(dx, dy, L.ballX, L.ballY, L.ballHitR)
         // A tap on the ball right after the face woke up is most likely a sleeve or palm: ignore it.
         if (inside && System.currentTimeMillis() - interactiveSince in 0 until WAKE_IGNORE_MS) return
-        val outcome = guard.onTap(eventTime, inside, bolusInput())
+        // The guard re-checks every rule and drops a duplicate delivery of the same tap event. In picker mode the
+        // double tap only opens the picker: no request yet, so the 30 s pending lock does not start.
+        val picker = pickerMode()
+        val outcome = guard.onTap(eventTime, inside, bolusInput(), commitSend = !picker)
         when (outcome.result) {
             TapResult.DUPLICATE -> return
             TapResult.ARM       -> {
@@ -1240,7 +1278,10 @@ class HaloWatchface : WatchFace() {
                 handler.postDelayed(armedTick, FRAME_MS)
             }
 
-            TapResult.SEND      -> {
+            TapResult.SEND      -> if (picker) {
+                handler.removeCallbacks(armedTick)
+                openQuickBolus()
+            } else {
                 handler.removeCallbacks(armedTick)
                 val amount = bolusAmount()
                 aapsLogger.info(LTag.WEAR, "HaloWatchface: double-tap bolus request $amount U")
@@ -1279,13 +1320,27 @@ class HaloWatchface : WatchFace() {
         }
     }
 
+    /** "Auswahl" mode: the double tap opens the quick-bolus picker (never in ambient or a preview), as Orbit. */
+    private fun openQuickBolus() {
+        if (isAmbient || headless) return
+        aapsLogger.info(LTag.WEAR, "HaloWatchface: double tap opens the quick-bolus picker")
+        try {
+            // own task (taskAffinity ""), cleared: never stacked on a menu or wizard left in the app's task
+            startActivity(Intent(this, QuickBolusActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            })
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.WEAR, "HaloWatchface: quick-bolus picker failed to open", e)
+        }
+    }
+
     private fun refused(reason: Reason) {
         aapsLogger.info(LTag.WEAR, "HaloWatchface: bolus request refused on the watch: $reason")
         vibrate(vibRefused)
         val message = when (reason) {
             Reason.OVER_MAX_BOLUS,
             Reason.NO_MAX_BOLUS    ->
-                getString(R.string.halo_bolus_refused_max, String.format(Locale.getDefault(), "%.1f", bolusAmount()), maxBolus().let { if (it.isNaN()) "?" else String.format(Locale.getDefault(), "%.1f", it) })
+                getString(R.string.halo_bolus_refused_max, String.format(Locale.getDefault(), "%.1f", bolusInput().amount), maxBolus().let { if (it.isNaN()) "?" else String.format(Locale.getDefault(), "%.1f", it) })
 
             Reason.PENDING         -> getString(R.string.halo_bolus_refused_pending)
             Reason.NO_PHONE        -> getString(R.string.halo_bolus_refused_phone)
