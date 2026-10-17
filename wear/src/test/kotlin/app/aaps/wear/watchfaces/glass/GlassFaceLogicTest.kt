@@ -545,17 +545,37 @@ class GlassFaceLogicTest {
 
     // ------------------------------------------------------------------ sparkline
 
+    @Test fun forecastDotsStartClearOfTheNowDotAndFollowThePath() {
+        // a straight 45 px forecast from the now dot: dots at 9, 15,5, 22, ... px, never on the dot itself
+        val xy = floatArrayOf(100f, 50f, 145f, 50f)
+        val out = FloatArray(48)
+        val n = GlassFaceLogic.forecastDots(xy, 2, 9f, 6.5f, out)
+        assertThat(n).isEqualTo(6)
+        assertThat(out[0]).isWithin(0.01f).of(109f)
+        assertThat(out[2]).isWithin(0.01f).of(115.5f)
+        assertThat(out[2 * (n - 1)]).isAtMost(145.01f)
+        for (i in 0 until n) assertThat(out[2 * i + 1]).isEqualTo(50f)
+        // a bend: the spacing is measured along the path
+        val bent = floatArrayOf(0f, 0f, 10f, 0f, 10f, 10f)
+        val m = GlassFaceLogic.forecastDots(bent, 3, 5f, 10f, out)
+        assertThat(m).isEqualTo(2)
+        assertThat(out[2]).isWithin(0.01f).of(10f)
+        assertThat(out[3]).isWithin(0.01f).of(5f)
+        // the output buffer bounds the count
+        assertThat(GlassFaceLogic.forecastDots(xy, 2, 0f, 1f, FloatArray(6))).isEqualTo(3)
+    }
+
     @Test fun sparklineGeometry() {
-        // Glass polish round 2: a 30 min forecast at the history's time scale (it took a third of the plot before)
-        assertThat(GlassFaceLogic.nowX()).isWithin(0.5f).of(331.5f)
+        // Glass polish round 3: a 45 min forecast at the history's time scale
+        assertThat(GlassFaceLogic.nowX()).isWithin(0.5f).of(313.8f)
         assertThat(GlassFaceLogic.sparkX(0f)).isEqualTo(72f)
-        assertThat(GlassFaceLogic.sparkX(41f)).isEqualTo(376f)
+        assertThat(GlassFaceLogic.sparkX(44f)).isEqualTo(376f)
         val pitchHistory = GlassFaceLogic.sparkX(1f) - GlassFaceLogic.sparkX(0f)
         assertThat(GlassFaceLogic.sparkX(36f) - GlassFaceLogic.sparkX(35f)).isWithin(0.01f).of(pitchHistory)
-        // with the ball: at least 190 px of history, at most 45 px of forecast
+        // with the ball: at least 180 px of history, at most 50 px of forecast
         val nowBall = GlassFaceLogic.nowX(GlassFaceLogic.SPARK_X0_BALL)
-        assertThat(nowBall - GlassFaceLogic.SPARK_X0_BALL).isAtLeast(190f)
-        assertThat(GlassFaceLogic.SPARK_X1 - nowBall).isAtMost(45f)
+        assertThat(nowBall - GlassFaceLogic.SPARK_X0_BALL).isAtLeast(180f)
+        assertThat(GlassFaceLogic.SPARK_X1 - nowBall).isAtMost(50f)
         // without a forecast the plot ends at now (no empty quarter), 19 px left of the card's corner
         assertThat(GlassFaceLogic.nowX(forecast = false)).isEqualTo(368f)
         assertThat(GlassFaceLogic.HERO_X1 - GlassFaceLogic.nowX(forecast = false)).isAtLeast(16f)
@@ -568,18 +588,25 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkY(190.0)).isEqualTo(top)
         assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(bottom)
         assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(top)
-        // Glass polish round 2: a linear range over the visible values AND the target band (+-10 mg/dL)
+        // Glass polish round 2/3: a linear range over the visible values AND the target band (+-15 mg/dL)
         assertThat(GlassFaceLogic.sparkRange(Double.NaN, Double.NaN)).isEqualTo(60.0 to 190.0)
-        assertThat(GlassFaceLogic.sparkRange(100.0, 110.0)).isEqualTo(60.0 to 190.0)
-        assertThat(GlassFaceLogic.sparkRange(90.0, 200.0)).isEqualTo(60.0 to 200.0)
+        assertThat(GlassFaceLogic.sparkRange(100.0, 110.0)).isEqualTo(55.0 to 195.0)
+        assertThat(GlassFaceLogic.sparkRange(90.0, 200.0)).isEqualTo(55.0 to 200.0)
         assertThat(GlassFaceLogic.sparkRange(39.0, 420.0)).isEqualTo(40.0 to 400.0)
-        assertThat(GlassFaceLogic.sparkRange(45.0, 50.0)).isEqualTo(45.0 to 190.0)
-        assertThat(GlassFaceLogic.sparkRange(395.0, 400.0)).isEqualTo(60.0 to 400.0)
+        assertThat(GlassFaceLogic.sparkRange(395.0, 400.0)).isEqualTo(55.0 to 400.0)
+        // round 3: anything below the low line puts the floor at 40 mg/dL, so hypo depth is on a fixed scale
+        assertThat(GlassFaceLogic.sparkRange(45.0, 50.0)).isEqualTo(40.0 to 195.0)
+        assertThat(GlassFaceLogic.sparkRange(63.0, 120.0)).isEqualTo(40.0 to 195.0)
+        assertThat(GlassFaceLogic.sparkRange(70.0, 120.0)).isEqualTo(55.0 to 195.0)
+        val (llo, lhi) = GlassFaceLogic.sparkRange(47.0, 126.0)
+        assertThat(GlassFaceLogic.sparkY(47.0, llo, lhi) - GlassFaceLogic.sparkY(63.0, llo, lhi)).isAtLeast(4f)
         // a narrow band still gets the 5 mmol/l minimum span
         assertThat(GlassFaceLogic.sparkRange(100.0, 110.0, 90.0, 120.0)).isEqualTo(60.0 to 150.0)
-        // calm: 0,2 mmol/l (3.6 mg/dL) of noise on a flat BG moves the line by about 1,2 px
+        // calm: 0,2 mmol/l (3.6 mg/dL) of noise on a flat BG moves the line by about 1 px
         val (flo, fhi) = GlassFaceLogic.sparkRange(104.0, 104.0)
-        assertThat(GlassFaceLogic.sparkY(107.6, flo, fhi) - GlassFaceLogic.sparkY(104.0, flo, fhi)).isWithin(0.2f).of(-1.2f)
+        assertThat(GlassFaceLogic.sparkY(107.6, flo, fhi) - GlassFaceLogic.sparkY(104.0, flo, fhi)).isWithin(0.2f).of(-1.0f)
+        // both default edges sit about 5 px inside the values' area, so the trace has room above and below the band
+        assertThat(GlassFaceLogic.sparkYRaw(180.0, flo, fhi) - (GlassFaceLogic.SPARK_Y0 + GlassFaceLogic.SPARK_INSET)).isWithin(0.5f).of(4.7f)
         // a flat 5,8 is well clear of the low edge (readable as "in range, not near low")
         assertThat(GlassFaceLogic.sparkYRaw(70.0, flo, fhi) - GlassFaceLogic.sparkY(104.0, flo, fhi)).isAtLeast(8f)
         // safety: every visible value is inside the range, so a trace is never clamped flat at the edge
@@ -623,8 +650,8 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.slotOf(bgTs, bgTs)).isEqualTo(35f)
         assertThat(GlassFaceLogic.slotOf(bgTs - 35 * slot, bgTs)).isEqualTo(0f)
         assertThat(GlassFaceLogic.slotOf(bgTs - 36 * slot, bgTs)).isNull()
-        assertThat(GlassFaceLogic.slotOf(bgTs + 6 * slot, bgTs)).isEqualTo(41f)
-        assertThat(GlassFaceLogic.slotOf(bgTs + 7 * slot, bgTs)).isNull()
+        assertThat(GlassFaceLogic.slotOf(bgTs + 9 * slot, bgTs)).isEqualTo(44f)
+        assertThat(GlassFaceLogic.slotOf(bgTs + 10 * slot, bgTs)).isNull()
     }
 
     // ------------------------------------------------------------------ bolus ball states

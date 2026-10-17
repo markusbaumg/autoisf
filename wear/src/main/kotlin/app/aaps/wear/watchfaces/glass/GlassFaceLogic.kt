@@ -540,8 +540,9 @@ object GlassFaceLogic {
      * Glass polish round 2: the y range always contains the target band (both edges inside the plot, the line's height
      * says "near low / near high" at a glance), the forecast is 30 min at the history's time scale (it took a third of
      * the plot for one faint line), and without a forecast now sits at [SPARK_X1_NOW], clear of the card's corner.
-     * Geometry with the ball and a forecast: history x 144..342 (198 px), forecast 342..376; without the ball now is
-     * at about x 331.
+     * Glass polish round 3: the forecast is 45 min (9 slots; the 30 min stub read as an ellipsis after the now dot).
+     * Geometry with the ball and a forecast: history x 144..328 (184 px), forecast 328..376; without the ball now is
+     * at about x 314.
      */
     const val SPARK_X0 = 72f
     const val SPARK_X0_BALL = 144f // Glass polish round 1: 140 -> 144, 17 px clear of the ball
@@ -551,7 +552,7 @@ object GlassFaceLogic {
     const val SPARK_Y1 = 354f
     const val SPARK_INSET = 8f
     const val SPARK_HISTORY = 36
-    const val SPARK_FORECAST = 6 // Glass polish round 2: 12 -> 6 (30 min), the same 5' pitch as the history
+    const val SPARK_FORECAST = 9 // Glass polish round 2: 12 -> 6 (30 min); round 3: 9 (45 min), the history's 5' pitch
     const val SPARK_TOTAL = SPARK_HISTORY + SPARK_FORECAST
     const val SLOT_MS = 5 * MINUTE_MS
 
@@ -565,8 +566,11 @@ object GlassFaceLogic {
      * are inside the plot (the reference never runs off it) and a flat BG sits at its true height in the band; with the
      * default band (70-180) 0,2 mmol/l of noise moves the line about 1,2 px. [SPARK_MIN_SPAN_MGDL] (5 mmol/l) still
      * holds for a narrow band. Without values the range is the default target band with a margin.
+     * Glass polish round 3: the margin 10 -> 15 mg/dL (both edges about 5 px inside the plot, room for the trace above
+     * and below), and as soon as a visible value is below the low line the range starts at [SPARK_FLOOR_MGDL], so the
+     * depth under the low edge is on a fixed scale (2,6 and 3,5 look clearly different, a hypo is never understated).
      */
-    const val SPARK_BAND_MARGIN_MGDL = 10.0
+    const val SPARK_BAND_MARGIN_MGDL = 15.0
     const val SPARK_MIN_SPAN_MGDL = 90.0
     const val SPARK_FLOOR_MGDL = 40.0
     const val SPARK_CEIL_MGDL = 400.0
@@ -581,7 +585,8 @@ object GlassFaceLogic {
         minMgdl: Double, maxMgdl: Double, lowMgdl: Double = DEFAULT_LOW_MGDL, highMgdl: Double = DEFAULT_HIGH_MGDL
     ): Pair<Double, Double> {
         if (minMgdl.isNaN() || maxMgdl.isNaN()) return SPARK_EMPTY_LO to SPARK_EMPTY_HI
-        var lo = min(minMgdl, lowMgdl - SPARK_BAND_MARGIN_MGDL).coerceAtLeast(SPARK_FLOOR_MGDL)
+        var lo = if (minMgdl < lowMgdl) SPARK_FLOOR_MGDL
+        else min(minMgdl, lowMgdl - SPARK_BAND_MARGIN_MGDL).coerceAtLeast(SPARK_FLOOR_MGDL)
         var hi = max(maxMgdl, highMgdl + SPARK_BAND_MARGIN_MGDL).coerceAtMost(SPARK_CEIL_MGDL).coerceAtLeast(lo)
         if (hi - lo < SPARK_MIN_SPAN_MGDL) {
             val mid = (lo + hi) / 2.0
@@ -603,7 +608,7 @@ object GlassFaceLogic {
         return x0 + slot / last * (x1 - x0)
     }
 
-    /** x of the now dot (about 331 with a forecast, 342 with the ball too, [SPARK_X1_NOW] without a forecast). */
+    /** x of the now dot (about 314 with a forecast, 328 with the ball too, [SPARK_X1_NOW] without a forecast). */
     fun nowX(x0: Float = SPARK_X0, forecast: Boolean = true): Float = sparkX((SPARK_HISTORY - 1).toFloat(), x0, forecast)
 
     /** y for a value in mg/dL, linear over [lo]..[hi] inside the plot less [SPARK_INSET], NOT clamped (band edges). */
@@ -617,6 +622,32 @@ object GlassFaceLogic {
     /** y for a value in mg/dL, clamped to the plot less [SPARK_INSET] at the top and bottom. */
     fun sparkY(mgdl: Double, lo: Double = SPARK_EMPTY_LO, hi: Double = SPARK_EMPTY_HI): Float =
         sparkYRaw(mgdl.coerceIn(lo, hi), lo, hi)
+
+    /**
+     * Forecast dots (Glass polish round 3): dot centres along the polyline [xy] (n points, x/y pairs, the first is the
+     * now dot), the first [start] px from it (clear of the now dot's ring and glow), then one every [step] px of path
+     * length. Written to [out] as x/y pairs; returns the number of dots (at most out.size / 2).
+     */
+    fun forecastDots(xy: FloatArray, n: Int, start: Float, step: Float, out: FloatArray): Int {
+        var count = 0
+        var next = start
+        var walked = 0f
+        for (i in 1 until n) {
+            val x0 = xy[2 * i - 2]; val y0 = xy[2 * i - 1]
+            val dx = xy[2 * i] - x0; val dy = xy[2 * i + 1] - y0
+            val len = kotlin.math.sqrt(dx * dx + dy * dy)
+            if (len <= 0f) continue
+            while (next <= walked + len + 0.01f && 2 * count + 1 < out.size) {
+                val f = ((next - walked) / len).coerceIn(0f, 1f)
+                out[2 * count] = x0 + f * dx
+                out[2 * count + 1] = y0 + f * dy
+                count++
+                next += step
+            }
+            walked += len
+        }
+        return count
+    }
 
     /** A band edge at [y] is drawn only inside the plot (an edge outside the range is not a line at the plot's border). */
     fun bandEdgeVisible(y: Float): Boolean = y > SPARK_Y0 + 1f && y < SPARK_Y1 - 1f
@@ -748,7 +779,8 @@ object GlassFaceLogic {
     // to the card; margins inside: ~15 px over the cap, ~14 px under the delta row (the comma-to-delta gap unchanged)
     const val HERO_Y0 = 132f
     const val HERO_Y1 = 280f
-    const val META_Y = 256f
+    // Glass polish round 3: the meta row 256 -> 258, 7 px of air under the comma's tail (margin under the row ~16 px)
+    const val META_Y = 258f
 
     /** Digits' centre next to the chip (Glass/Orbit UX round 4: 198 -> 200, equal optical padding left and right). */
     const val BG_X_CHIP = 191f // Glass polish round 1: the widest group (230 px digits, gap, chip) centred on the card

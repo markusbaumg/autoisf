@@ -209,6 +209,7 @@ class WatchfaceRenderHarness {
         // Glass polish round 2: bounded ramps (the default history ran below 2,2 and lay flat on the plot floor)
         RenderState("very_high") { now -> data(now, 22.2, "\u21c8", "+1.2", 1, history = List(36) { k -> 12.0 + 10.2 * (k / 35.0) * (k / 35.0) }) },
         RenderState("low") { now -> data(now, 3.4, "↓", "-0.3", -1) },
+        RenderState("low_3_5_fall") { now -> data(now, 3.5, "↘", "-0.2", -1, history = List(36) { k -> 6.0 - 2.5 * (k / 35.0) }) },
         RenderState("urgent_low") { now -> data(now, 2.6, "\u21ca", "-0.6", -1, history = List(36) { k -> 7.0 - 4.4 * (k / 35.0) * (k / 35.0) }) },
         RenderState("mgdl_224") { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true) },
         RenderState("stale_17") { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
