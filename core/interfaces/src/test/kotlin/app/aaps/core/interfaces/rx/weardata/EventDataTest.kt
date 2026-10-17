@@ -112,6 +112,14 @@ class EventDataTest {
             assertThat(EventData.deserializeByte(it.serializeByte())).isEqualTo(it)
             assertThat(EventData.deserialize(it.serialize())).isEqualTo(it)
         }
+        EventData.ActionBolusConfirmed(1.0, 2, 1234567890123L).let {
+            assertThat(EventData.deserializeByte(it.serializeByte())).isEqualTo(it)
+            assertThat(EventData.deserialize(it.serialize())).isEqualTo(it)
+        }
+        EventData.ActionFillConfirmed(1.0, 42L).let {
+            assertThat(EventData.deserializeByte(it.serializeByte())).isEqualTo(it)
+            assertThat(EventData.deserialize(it.serialize())).isEqualTo(it)
+        }
         EventData.ActionProfileSwitchConfirmed(1, 2, 3).let {
             assertThat(EventData.deserializeByte(it.serializeByte())).isEqualTo(it)
             assertThat(EventData.deserialize(it.serialize())).isEqualTo(it)
@@ -192,6 +200,28 @@ class EventDataTest {
         EventData.SnoozeAlert(1).let {
             assertThat(EventData.deserializeByte(it.serializeByte())).isEqualTo(it)
             assertThat(EventData.deserialize(it.serialize())).isEqualTo(it)
+        }
+    }
+
+    @Test
+    fun confirmPayloadsWithoutRequestIdStillParse() {
+        // payloads from before requestId existed decode with requestId = 0 (which the phone refuses)
+        assertThat(EventData.deserialize("""{"type":"app.aaps.core.interfaces.rx.weardata.EventData.ActionBolusConfirmed","insulin":1.5,"carbs":10}"""))
+            .isEqualTo(EventData.ActionBolusConfirmed(1.5, 10, 0L))
+        assertThat(EventData.deserialize("""{"type":"app.aaps.core.interfaces.rx.weardata.EventData.ActionFillConfirmed","insulin":0.5}"""))
+            .isEqualTo(EventData.ActionFillConfirmed(0.5, 0L))
+    }
+
+    @Test
+    fun requestIdSurvivesTheWatchRoundTrip() {
+        // the watch decodes ConfirmAction, re-serializes returnCommand and sends that string back unchanged
+        val bolus = EventData.ActionBolusConfirmed(1.5, 10, 987654321L)
+        val fill = EventData.ActionFillConfirmed(0.5, 123456789L)
+        for (returnCommand in listOf(bolus, fill)) {
+            val onWatch = EventData.deserialize(EventData.ConfirmAction("t", "m", returnCommand).serialize()) as EventData.ConfirmAction
+            assertThat(EventData.deserialize(onWatch.returnCommand!!.serialize())).isEqualTo(returnCommand)
+            val onWatchByte = EventData.deserializeByte(EventData.ConfirmAction("t", "m", returnCommand).serializeByte()) as EventData.ConfirmAction
+            assertThat(EventData.deserialize(onWatchByte.returnCommand!!.serialize())).isEqualTo(returnCommand)
         }
     }
 }

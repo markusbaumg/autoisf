@@ -200,14 +200,16 @@ sealed class EventData : Event() {
     @Serializable
     data class ActionTempTargetConfirmed(val isMgdl: Boolean = true, val duration: Int = 0, val low: Double = 0.0, val high: Double = 0.0) : EventData()
 
+    /** [requestId] echoes the id of the phone's precheck (0 = none, from an old phone: refused). */
     @Serializable
-    data class ActionBolusConfirmed(val insulin: Double, val carbs: Int) : EventData()
+    data class ActionBolusConfirmed(val insulin: Double, val carbs: Int, val requestId: Long = 0L) : EventData()
 
     @Serializable
     data class ActionECarbsConfirmed(val carbs: Int, val carbsTime: Long, val duration: Int) : EventData()
 
+    /** [requestId] echoes the id of the phone's precheck (0 = none, from an old phone: refused). */
     @Serializable
-    data class ActionFillConfirmed(val insulin: Double) : EventData()
+    data class ActionFillConfirmed(val insulin: Double, val requestId: Long = 0L) : EventData()
 
     @Serializable
     data class ActionProfileSwitchConfirmed(val timeShift: Int, val percentage: Int, val duration: Int) : EventData()
