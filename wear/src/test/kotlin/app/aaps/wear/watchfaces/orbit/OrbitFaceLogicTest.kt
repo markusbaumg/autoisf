@@ -485,7 +485,8 @@ class OrbitFaceLogicTest {
         val cobRight = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB) + OrbitFaceLogic.BALL_R
         // Glass/Orbit UX round 2: 16 px or more clearance to the 4 and 8 o'clock satellites (no plate around the plot)
         assertThat(OrbitFaceLogic.SPARK_X0 - cobRight).isAtLeast(12f) // Glass/Orbit UX round 5: 12 px, a wider chart
-        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(168f) // Glass/Orbit UX round 6: shorter chart
+        // Glass/Orbit UX round 6: shorter chart; variant discs: 146 px between the 4:30 / 7:30 discs
+        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(if (OrbitFaceLogic.DISCS) 146f else 168f)
         // Glass/Orbit UX round 6: the chart keeps 12 px or more to the KH / basal discs over its whole height
         for (deg in floatArrayOf(OrbitFaceLogic.DEG_COB, OrbitFaceLogic.DEG_BASAL)) {
             val sx = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, deg)
@@ -496,7 +497,15 @@ class OrbitFaceLogicTest {
         }
         // UX round 2: the pill row (TIEF/HOCH + status) stays 4 px or more clear of the 4 o'clock satellite's shell
         val basalLeft = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL) - OrbitFaceLogic.BALL_R
-        assertThat(OrbitFaceLogic.CX + OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f).isAtMost(basalLeft - 4f)
+        if (OrbitFaceLogic.DISCS) {
+            // variant discs: the 4:30 disc sits above the row, so the clearance is measured in 2D (rounded end to disc)
+            val capR = OrbitFaceLogic.ROW_PILL_H / 2f
+            val capX = OrbitFaceLogic.CX + OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f - capR
+            assertThat(kotlin.math.hypot(bx - capX, by - OrbitFaceLogic.SLOT_Y) - capR - OrbitFaceLogic.BALL_R).isAtLeast(12f)
+            // the stacked date (above a warning pill) keeps 8 px to the disc
+            val chordX = bx - kotlin.math.sqrt(OrbitFaceLogic.BALL_R * OrbitFaceLogic.BALL_R - (OrbitFaceLogic.DATE_STACK_Y - 11f - by).let { it * it })
+            assertThat(chordX - (OrbitFaceLogic.CX + OrbitFaceLogic.DATE_LINE_MAX_WIDTH / 2f)).isAtLeast(8f)
+        } else assertThat(OrbitFaceLogic.CX + OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f).isAtMost(basalLeft - 4f)
         // satellites keep 10 px or more of black margin to the 225 px display edge
         assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R).isAtMost(215f)
         // Glass/Orbit UX round 3: the bolus hit circle (48 px) never overlaps a tap on the LOOP or KH satellite next to it

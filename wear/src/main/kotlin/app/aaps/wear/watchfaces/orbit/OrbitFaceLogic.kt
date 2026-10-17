@@ -24,6 +24,17 @@ import kotlin.math.min
  */
 object OrbitFaceLogic {
 
+    /**
+     * EXPERIMENTAL (temporary): Orbit design variants, switched at compile time so each can be rendered by the
+     * harness. [Variant.CLASSIC] is the UX round 6 face (labels around a thin ring); [Variant.DISCS] brings back the
+     * signature status balls: four softly lit discs at 10:30 / 1:30 / 4:30 / 7:30 on the orbit, the bolus ball at 9.
+     */
+    enum class Variant { CLASSIC, DISCS }
+
+    /** The variant this build draws. */
+    val VARIANT: Variant = Variant.DISCS
+    val DISCS: Boolean get() = VARIANT == Variant.DISCS
+
     const val CX = 225f
     const val CY = 225f
 
@@ -77,11 +88,12 @@ object OrbitFaceLogic {
      * Glass/Orbit UX round 6: KH and basal 8 deg further down the ring (240 -> 232, 120 -> 128), clear of the shorter,
      * lower chart, so the lower third no longer reads as a row of tiles beside a boxed chart.
      */
-    const val DEG_LOOP = 310f
-    const val DEG_IOB = 50f
-    const val DEG_BASAL = 128f
+    /** Variant discs: exactly symmetric at 10:30 / 1:30 / 4:30 / 7:30. */
+    val DEG_LOOP = if (DISCS) 315f else 310f
+    val DEG_IOB = if (DISCS) 45f else 50f
+    val DEG_BASAL = if (DISCS) 135f else 128f
     const val DEG_BOLUS = 270f
-    const val DEG_COB = 232f
+    val DEG_COB = if (DISCS) 225f else 232f
     const val DEG_TT = 90f
     val BALL_DEGS = floatArrayOf(DEG_LOOP, DEG_IOB, DEG_BASAL, DEG_COB, DEG_TT)
     const val IDX_LOOP = 0
@@ -140,9 +152,10 @@ object OrbitFaceLogic {
      * stacks the date above it ([DATE_STACK_Y]), so the chart ends 8 px higher.
      */
     /** Glass/Orbit UX round 6: x 140..310, y 304..348, shorter and lower (less of a dashboard box). */
-    const val SPARK_X0 = 140f
-    const val SPARK_X_NOW = 287f
-    const val SPARK_X1 = 310f
+    /** Variant discs: x 152..298, 12 px clear of the KH / basal discs that sit lower and further in at 4:30 / 7:30. */
+    val SPARK_X0 = if (DISCS) 152f else 140f
+    val SPARK_X_NOW = if (DISCS) 278f else 287f
+    val SPARK_X1 = if (DISCS) 298f else 310f
     const val SPARK_Y_TOP = 304f
     const val SPARK_Y_BOTTOM = 348f
 
@@ -224,7 +237,8 @@ object OrbitFaceLogic {
     const val BALL_VALUE_MAX = 58f
     const val BALL_VALUE_HARD_MAX = 62f
     const val HERO_MAX_WIDTH = 200f
-    const val DATE_LINE_MAX_WIDTH = 196f
+    /** Variant discs: 156, the stacked date (above a warning pill) keeps 8 px to the 4:30 / 7:30 discs. */
+    val DATE_LINE_MAX_WIDTH = if (DISCS) 156f else 196f
     /** UX round 4: 212 -> 200, a HOCH/TIEF pill at the row's end keeps 20 px or more to the 4 and 8 o'clock satellites. */
     const val DELTA_ROW_MAX_WIDTH = 200f
 
