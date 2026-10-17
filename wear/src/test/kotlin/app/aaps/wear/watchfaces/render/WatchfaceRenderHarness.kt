@@ -2,12 +2,14 @@ package app.aaps.wear.watchfaces.render
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
+import android.os.BatteryManager
 import android.os.Looper
 import androidx.preference.PreferenceManager
 import androidx.wear.watchface.TapType
@@ -107,10 +109,16 @@ class WatchfaceRenderHarness {
         val picker: Boolean = false,
         /** A request sent this long ago (ms) by the picker or the ball: the shared 30 s pending lock. */
         val pendingAgoMs: Long? = null,
+        /** The watch's own battery (percent), shown at the bottom of the always-on look. */
+        val battery: Int = 82,
         val data: (now: Long) -> ComplicationData
     )
 
     // ------------------------------------------------------------------ data
+
+    /** aod_ states without the time on top, or with content in Samsung's status-icon / media-chip zones. */
+    private val aodTimeMisses = ArrayList<String>()
+    private val aodZoneHits = ArrayList<String>()
 
     /** States in which Orbit drew no date (must stay empty). */
     private val dateMisses = ArrayList<String>()
@@ -346,14 +354,22 @@ class WatchfaceRenderHarness {
         Triple("no_profile", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, iob = "", cob = "", basal = "", external = "Kein Profil")) },
         Triple("sentinel_high_400", Mode.AMBIENT) { now -> data(now, 22.3, "↗", "+0.4", 1) },
         Triple("very_stale_45", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 45, st = status(now, loopAgeMin = 45)) },
-        Triple("en_in_range", Mode.AMBIENT, inRange)
+        Triple("en_in_range", Mode.AMBIENT, inRange),
+        // the watch's own battery (owner: "it needs a little battery"): grey, white at 15 % or less
+        Triple("battery_low_9", Mode.AMBIENT, inRange),
+        Triple("battery_low_15_urgent_low_loop_23", Mode.AMBIENT) { now -> data(now, 2.6, "\u21ca", "-0.6", -1, st = status(now, loopAgeMin = 23)) },
+        Triple("battery_100", Mode.AMBIENT, inRange),
+        Triple("burnin_battery_low_9", Mode.BURN_IN, inRange),
+        Triple("lowbit_battery_low_9", Mode.LOW_BIT, inRange),
+        Triple("en_battery_low_9", Mode.AMBIENT, inRange)
     )
 
     /** aod_<case>: the one black-and-white always-on look (the ball enabled: it never shows in ambient). */
     private fun aodStates(): List<RenderState> = aodCases().map { (id, mode, d) ->
         RenderState(
             "aod_$id", lang = if (id.startsWith("en_")) "en" else "de", mode = mode, ball = Ball.IDLE,
-            phoneReachable = !id.endsWith("no_phone_14"), data = d
+            phoneReachable = !id.endsWith("no_phone_14"),
+            battery = Regex("battery_(?:low_)?(\\d+)").find(id)?.groupValues?.get(1)?.toInt() ?: 82, data = d
         )
     }
 
@@ -385,6 +401,12 @@ class WatchfaceRenderHarness {
                 edgeHit(bmp)?.let { edgeHits += "${face.id}/${s.id}: $it" }
                 // the always-on look is black and white only: every lit pixel a grey (R = G = B within a tolerance)
                 if (s.mode != Mode.INTERACTIVE) colourPixel(bmp)?.let { colourHits += "${face.id}/${s.id}: $it" }
+                if (s.id.startsWith("aod_") && s.px == 450) {
+                    if (litIn(bmp, 150, 300, 100, 160) < 200) aodTimeMisses += "${face.id}/${s.id}"
+                    val top = litIn(bmp, 0, 450, 15, 56)
+                    val bottom = litIn(bmp, 0, 450, 405, 431)
+                    if (top + bottom > 0) aodZoneHits += "${face.id}/${s.id}: top $top px, bottom $bottom px"
+                }
                 lit.append(s.id).append('\t').append("%.2f".format(Locale.US, 100.0 * litRatio(bmp))).append('\n')
             }
             if (rendered.isEmpty()) continue
@@ -395,6 +417,8 @@ class WatchfaceRenderHarness {
         // Watch5 Pro's raised bezel shades it. Checked after all renders are written, so a failure still leaves them.
         assertTrue("content within $EDGE_MARGIN_PX px of the bezel:\n" + edgeHits.joinToString("\n"), edgeHits.isEmpty())
         assertTrue("colour in the always-on look:\n" + colourHits.joinToString("\n"), colourHits.isEmpty())
+        assertTrue("no time in the always-on look:\n" + aodTimeMisses.joinToString("\n"), aodTimeMisses.isEmpty())
+        assertTrue("always-on content in Samsung's zones:\n" + aodZoneHits.joinToString("\n"), aodZoneHits.isEmpty())
         assertTrue("no date drawn in:\n" + dateMisses.joinToString("\n"), dateMisses.isEmpty())
         assertTrue("date closer than ${OrbitFaceLogic.DATE_RING_CLEAR} px to the ring:\n" + dateRingHits.joinToString("\n"), dateRingHits.isEmpty())
         assertTrue("hero group closer than $HERO_SIDE_MIN_PX px to the card:\n" + heroSideHits.joinToString("\n"), heroSideHits.isEmpty())
@@ -531,6 +555,15 @@ class WatchfaceRenderHarness {
     }
 
     /** AOD round 2: share of the round dial's pixels with a luminance above 20 (0..255), the AMOLED lit share. */
+    private fun litIn(bmp: Bitmap, x0: Int, x1: Int, y0: Int, y1: Int): Int {
+        var n = 0
+        for (y in y0 until y1) for (x in x0 until x1) {
+            val p = bmp.getPixel(x, y)
+            if (maxOf(Color.red(p), Color.green(p), Color.blue(p)) > 20) n++
+        }
+        return n
+    }
+
     private fun litRatio(bmp: Bitmap): Double {
         val r = bmp.width / 2.0
         var inside = 0
@@ -556,6 +589,9 @@ class WatchfaceRenderHarness {
         val sp: SP = SPImpl(shared, context)
         prefs(context, sp, s)
         PhoneReachability.offlineAnswer = s.phoneReachable
+        // the watch's own battery: the sticky ACTION_BATTERY_CHANGED the faces read in ambient
+        @Suppress("DEPRECATION")
+        context.sendStickyBroadcast(Intent(Intent.ACTION_BATTERY_CHANGED).putExtra(BatteryManager.EXTRA_LEVEL, s.battery).putExtra(BatteryManager.EXTRA_SCALE, 100))
 
         val wf: WatchFace = when (face) {
             Face.HALO  -> Robolectric.buildService(HaloWatchface::class.java).get().also { inject(it, sp, context) }

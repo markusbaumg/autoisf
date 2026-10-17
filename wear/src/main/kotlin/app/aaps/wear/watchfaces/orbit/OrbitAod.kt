@@ -8,8 +8,8 @@ import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Slot
 import app.aaps.wear.watchfaces.orbit.OrbitFaceLogic.Trend
 
 /**
- * Orbit always-on: the family's one black-and-white look ([MonoAod]): the BG and its arrow, and at most one grey line
- * of words. This object only turns Orbit's state into the shared [MonoAod.Model]; [MonoAod.Painter] draws it.
+ * Orbit always-on: the family's one black-and-white look ([MonoAod]): the time, the BG and its arrow, at most one grey line
+ * of words and the watch battery. This object only turns Orbit's state into the shared [MonoAod.Model]; [MonoAod.Painter] draws it.
  * No ring, discs, chart, date or bolus button.
  */
 object OrbitAod {

@@ -2,6 +2,8 @@ package app.aaps.wear.watchfaces.common
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.os.BatteryManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -55,7 +57,7 @@ class MonoAodRenderTest {
 
     private enum class Mode { AMBIENT, BURN_IN, LOW_BIT }
 
-    private class Case(val id: String, val mode: Mode, val data: (Long) -> ComplicationData)
+    private class Case(val id: String, val mode: Mode, val battery: Int = 82, val data: (Long) -> ComplicationData)
 
     private val cases = listOf(
         Case("in_range", Mode.AMBIENT) { now -> data(now, "6,4", 115.0, "→", 0) },
@@ -66,7 +68,10 @@ class MonoAodRenderTest {
         Case("burnin_urgent_low", Mode.BURN_IN) { now -> data(now, "2,6", 47.0, "⇊", -1) },
         Case("burnin_in_range", Mode.BURN_IN) { now -> data(now, "6,4", 115.0, "→", 0) },
         Case("lowbit_in_range", Mode.LOW_BIT) { now -> data(now, "6,4", 115.0, "→", 0) },
-        Case("lowbit_stale", Mode.LOW_BIT) { now -> data(now, "6,4", 115.0, "→", 0, ageMin = 17, loopAgeMin = 17) }
+        Case("lowbit_stale", Mode.LOW_BIT) { now -> data(now, "6,4", 115.0, "→", 0, ageMin = 17, loopAgeMin = 17) },
+        Case("battery_low", Mode.AMBIENT, battery = 9) { now -> data(now, "6,4", 115.0, "→", 0) },
+        Case("burnin_battery_low", Mode.BURN_IN, battery = 12) { now -> data(now, "2,6", 47.0, "⇊", -1, loopAgeMin = 23) },
+        Case("lowbit_battery_low", Mode.LOW_BIT, battery = 15) { now -> data(now, "6,4", 115.0, "→", 0) }
     )
 
     @After fun tearDown() {
@@ -94,7 +99,72 @@ class MonoAodRenderTest {
             val share = lit.toDouble() / (bmp.width * bmp.height)
             assertWithMessage("$face/${c.id}: lit share").that(share).isGreaterThan(0.02)
             assertWithMessage("$face/${c.id}: lit share").that(share).isLessThan(0.15)
+            // the time on top, the battery at the bottom, Samsung's status icons and media chip zones clear
+            assertWithMessage("$face/${c.id}: time").that(litIn(bmp, 150, 300, 100, 160)).isGreaterThan(200)
+            assertWithMessage("$face/${c.id}: battery").that(litIn(bmp, 150, 300, 362, 392)).isGreaterThan(60)
+            assertWithMessage("$face/${c.id}: Samsung top zone").that(litIn(bmp, 0, 450, 15, 56)).isEqualTo(0)
+            assertWithMessage("$face/${c.id}: Samsung bottom zone").that(litIn(bmp, 0, 450, 405, 431)).isEqualTo(0)
         }
+    }
+
+    /** The battery glyph and words: white and heavier at 15 % or less, grey above (no colour in either). */
+    @Test fun lowBatteryIsWhiteNormalBatteryGrey() {
+        fun brightest(percent: Int): Int {
+            val bmp = Bitmap.createBitmap(450, 450, Bitmap.Config.ARGB_8888)
+            val c = Canvas(bmp)
+            c.drawColor(Color.BLACK)
+            val m = MonoAod.model("6,4", FaceState.Range.IN, FaceState.BgAge.FRESH, FaceState.Caption.NONE, 90f, 1, null, "2′", "vor %s")
+            MonoAod.Painter().draw(c, m, "22:20", percent, lowBit = false, burnIn = false)
+            var max = 0
+            for (y in 362 until 392) for (x in 0 until 450) max = maxOf(max, Color.red(bmp.getPixel(x, y)))
+            return max
+        }
+        assertWithMessage("82 %").that(brightest(82)).isAtMost(Color.red(MonoAod.GREY_WORDS))
+        assertWithMessage("15 %").that(brightest(15)).isAtLeast(Color.red(MonoAod.WHITE_D) - 2)
+        assertWithMessage("3 %").that(brightest(3)).isAtLeast(Color.red(MonoAod.WHITE_D) - 2)
+    }
+
+    /** No battery known: nothing at the bottom; the time is still drawn. */
+    @Test fun unknownBatteryDrawsNothing() {
+        val bmp = Bitmap.createBitmap(450, 450, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.BLACK)
+        val m = MonoAod.model("6,4", FaceState.Range.IN, FaceState.BgAge.FRESH, FaceState.Caption.NONE, 90f, 1, null, "2′", "vor %s")
+        val p = MonoAod.Painter()
+        p.draw(c, m, "22:20", null, lowBit = false, burnIn = false)
+        assertWithMessage("battery").that(litIn(bmp, 0, 450, 362, 392)).isEqualTo(0)
+        assertWithMessage("battery box").that(p.batteryBox.isEmpty).isTrue()
+        assertWithMessage("time box").that(p.timeBox.isEmpty).isFalse()
+    }
+
+    /** The sticky ACTION_BATTERY_CHANGED intent is read at most once a minute (no receiver, no polling). */
+    @Test fun batteryReadsTheStickyIntentOncePerMinute() {
+        var reads = 0
+        var level = 82
+        val b = MonoAod.Battery {
+            reads++
+            Intent(Intent.ACTION_BATTERY_CHANGED).putExtra(BatteryManager.EXTRA_LEVEL, level).putExtra(BatteryManager.EXTRA_SCALE, 100)
+        }
+        val t0 = 1_000L * FaceState.MINUTE_MS
+        assertWithMessage("first").that(b.percent(t0)).isEqualTo(82)
+        level = 81
+        assertWithMessage("same minute").that(b.percent(t0 + 30_000L)).isEqualTo(82)
+        assertWithMessage("reads").that(reads).isEqualTo(1)
+        assertWithMessage("next minute").that(b.percent(t0 + FaceState.MINUTE_MS)).isEqualTo(81)
+        assertWithMessage("reads").that(reads).isEqualTo(2)
+        assertWithMessage("no intent").that(MonoAod.Battery { null }.percent(t0)).isNull()
+        // the real path: the sticky broadcast the system keeps
+        context.sendStickyBroadcast(Intent(Intent.ACTION_BATTERY_CHANGED).putExtra(BatteryManager.EXTRA_LEVEL, 37).putExtra(BatteryManager.EXTRA_SCALE, 100))
+        assertWithMessage("sticky").that(MonoAod.Battery(context).percent(t0)).isEqualTo(37)
+    }
+
+    private fun litIn(bmp: Bitmap, x0: Int, x1: Int, y0: Int, y1: Int): Int {
+        var n = 0
+        for (y in y0 until y1) for (x in x0 until x1) {
+            val p = bmp.getPixel(x, y)
+            if (maxOf(Color.red(p), Color.green(p), Color.blue(p)) > 20) n++
+        }
+        return n
     }
 
     private fun render(face: String, c: Case): Bitmap {
@@ -106,6 +176,8 @@ class MonoAodRenderTest {
         sp.putBoolean(BolusRequestPrefs.KEY_ENABLED, true)
         sp.putString(BolusRequestPrefs.KEY_AMOUNT, "0.5")
         PhoneReachability.offlineAnswer = true
+        @Suppress("DEPRECATION")
+        context.sendStickyBroadcast(Intent(Intent.ACTION_BATTERY_CHANGED).putExtra(BatteryManager.EXTRA_LEVEL, c.battery).putExtra(BatteryManager.EXTRA_SCALE, 100))
         val prefs = mock<Preferences> { on { get(any<BooleanKey>()) } doReturn true }
         val wf: WatchFace
         val now = System.currentTimeMillis()

@@ -2,4 +2,5 @@
 <!-- values-de so that de-CH and de-AT use it too -->
 <resources>
     <string name="face_aod_age_ago">vor %1$s</string>
+    <string name="face_aod_battery">%1$d %%</string>
 </resources>

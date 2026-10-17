@@ -573,9 +573,9 @@ class HaloWatchface : WatchFace() {
     }
 
     /**
-     * Always-on in the family's one black-and-white look ([MonoAod], owner: "simple and black and white only"): the BG
-     * with the trend arrow and at most one grey line of words (TIEF / HOCH, old data, loop or phone). No time, ring,
-     * tail, pill, IOB or bolus ball (never in ambient). Low-bit: pure white, no anti-aliasing. Burn-in protection:
+     * Always-on in the family's one black-and-white look ([MonoAod], owner: "simple and black and white only"): the
+     * time, the BG with the trend arrow, at most one grey line of words (TIEF / HOCH, old data, loop or phone) and the
+     * watch's battery. No ring, tail, pill, IOB or bolus ball (never in ambient). Low-bit: pure white, no anti-aliasing. Burn-in protection:
      * everything shifts by up to 4 px every minute. Ages are computed at draw time (once a minute).
      */
     private fun drawAmbient(canvas: Canvas) {
@@ -588,6 +588,9 @@ class HaloWatchface : WatchFace() {
         )
         aodPainter.lowWord = words().low
         aodPainter.highWord = words().high
+        aodPainter.batteryFormat = getString(R.string.face_aod_battery).replace("%1\$d", "%d")
+        val time = MonoAod.timeText(latestTime.hour, latestTime.minute, is24HourFormat)
+        val battery = aodBattery.percent(now)
         canvas.save()
         try {
             if (burnInProtection) {
@@ -595,13 +598,14 @@ class HaloWatchface : WatchFace() {
                 canvas.translate(L.burnIn(HaloFaceLogic.burnInOffsetX(key)), L.burnIn(HaloFaceLogic.burnInOffsetY(key)))
             }
             canvas.scale(L.u, L.u)
-            aodPainter.draw(canvas, model, lowBitAmbient, burnInProtection)
+            aodPainter.draw(canvas, model, time, battery, lowBitAmbient, burnInProtection)
         } finally {
             canvas.restore()
         }
     }
 
     private val aodPainter = MonoAod.Painter()
+    private val aodBattery by lazy { MonoAod.Battery(this) }
 
     private fun drawCut(canvas: Canvas, angle: Float, rIn: Float, rOut: Float) =
         canvas.drawLine(pointX(angle, rIn), pointY(angle, rIn), pointX(angle, rOut), pointY(angle, rOut), p)

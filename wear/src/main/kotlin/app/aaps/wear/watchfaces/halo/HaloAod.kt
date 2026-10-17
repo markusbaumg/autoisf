@@ -7,8 +7,8 @@ import app.aaps.wear.watchfaces.common.FaceState.Trend
 import app.aaps.wear.watchfaces.common.MonoAod
 
 /**
- * Halo always-on: the family's one black-and-white look ([MonoAod]): the BG and its arrow, and at most one grey line of
- * words. This object only turns Halo's state into the shared [MonoAod.Model]; [MonoAod.Painter] draws it.
+ * Halo always-on: the family's one black-and-white look ([MonoAod]): the time, the BG and its arrow, at most one grey line
+ * of words and the watch battery. This object only turns Halo's state into the shared [MonoAod.Model]; [MonoAod.Painter] draws it.
  * The ring, knob, tail, loop pill, IOB and the bolus ball are interactive-only.
  */
 object HaloAod {

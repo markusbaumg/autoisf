@@ -219,6 +219,7 @@ class GlassWatchface : WatchFace() {
     /** Always-on: the frame's content ([MonoAod]), rebuilt with the state; drawn by [aodPainter]. */
     private var aod: MonoAod.Model? = null
     private val aodPainter = MonoAod.Painter()
+    private val aodBattery by lazy { MonoAod.Battery(this) }
 
     private var ball = BallState.HIDDEN
     private var bolusCheck = BolusRequestGuard.Check(BolusRequestGuard.State.HIDDEN, Reason.PREF_OFF)
@@ -674,6 +675,7 @@ class GlassWatchface : WatchFace() {
         val aodRun = aodOwner?.let { GlassFaceLogic.warningText(it, footerInput.copy(warnings = warnings), slotWords) }
         aodPainter.lowWord = getString(R.string.face_low)
         aodPainter.highWord = getString(R.string.face_high)
+        aodPainter.batteryFormat = getString(R.string.face_aod_battery).replace("%1\$d", "%d")
         aod = GlassAod.model(
             hero = bgText, range = range, bgAge = bgAge, trend = trend, caption = caption,
             owner = aodOwner, ownerText = aodRun?.text, age = GlassFaceLogic.ageText(age, ageWords),
@@ -1650,12 +1652,14 @@ class GlassWatchface : WatchFace() {
     }
 
     /**
-     * Always-on: the family's one black-and-white look ([MonoAod]): the BG, its arrow and at most one grey line of words.
-     * No time, card, chart, pills or ball: the bolus ball is never drawn here.
+     * Always-on: the family's one black-and-white look ([MonoAod]): the time, the BG with its arrow, at most one grey
+     * line of words and the watch's battery. No card, chart, pills or ball: the bolus ball is never drawn here.
      */
     private fun drawAmbient(canvas: Canvas) {
         val m = aod ?: return
-        aodPainter.draw(canvas, m, lowBitAmbient, burnInProtection)
+        val now = if (latestEpochMillis > 0L) latestEpochMillis else System.currentTimeMillis()
+        val time = MonoAod.timeText(latestTime.hour, latestTime.minute, is24HourFormat)
+        aodPainter.draw(canvas, m, time, aodBattery.percent(now), lowBitAmbient, burnInProtection)
     }
 
     private fun withAlpha(colour: Int, alpha: Int) = (colour and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)

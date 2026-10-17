@@ -7,8 +7,8 @@ import app.aaps.wear.watchfaces.common.MonoAod
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Trend
 
 /**
- * Glass always-on: the family's one black-and-white look ([MonoAod]): the BG and its arrow, and at most one grey line
- * of words. This object only turns Glass's state into the shared [MonoAod.Model]; [MonoAod.Painter] draws it.
+ * Glass always-on: the family's one black-and-white look ([MonoAod]): the time, the BG and its arrow, at most one grey line
+ * of words and the watch battery. This object only turns Glass's state into the shared [MonoAod.Model]; [MonoAod.Painter] draws it.
  * No card, chart, pills or ball: the bolus ball is never drawn in ambient.
  */
 object GlassAod {

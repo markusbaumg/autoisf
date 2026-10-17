@@ -242,6 +242,7 @@ class OrbitWatchface : WatchFace() {
     /** Offline render harness only: the always-on model of the last ambient rebuild. */
     @VisibleForTesting internal var aodModel: MonoAod.Model? = null
     private val aodPainter = MonoAod.Painter()
+    private val aodBattery by lazy { MonoAod.Battery(this) }
     private var aodAgoFormat = "vor %s"
     @VisibleForTesting internal var drawnDateText = ""
     /** Offline render harness only: the glyph box (design px) of the date line drawn by the last frame. */
@@ -715,6 +716,7 @@ class OrbitWatchface : WatchFace() {
         aodModel = OrbitAod.model(heroText, range, bgAge, trend, caption, slot, deltaRow.agePart, aodAgoFormat)
         aodPainter.lowWord = labels.sentinelLow
         aodPainter.highWord = labels.sentinelHigh
+        aodPainter.batteryFormat = getString(R.string.face_aod_battery).replace("%1\$d", "%d")
     }
 
     private fun labelWidth(label: String, size: Float, tracking: Float): Float {
@@ -1082,13 +1084,14 @@ class OrbitWatchface : WatchFace() {
     }
 
     /**
-     * Always-on (owner: "simple and black and white only"): the family's one black-and-white look ([MonoAod]), the BG
-     * with the trend arrow and one grey line of words only when something needs attention. No time, ring, discs,
-     * chart, date or bolus button.
+     * Always-on (owner: "simple and black and white only"): the family's one black-and-white look ([MonoAod]): the
+     * time, the BG with the trend arrow, one grey line of words only when something needs attention, and the watch's
+     * battery. No ring, discs, chart, date or bolus button.
      */
     private fun drawAmbient(canvas: Canvas) {
         val m = aodModel ?: return
-        aodPainter.draw(canvas, m, lowBitAmbient, burnInProtection)
+        val time = MonoAod.timeText(if (isHeadless) SAMPLE_HOUR else latestTime.hour, if (isHeadless) SAMPLE_MINUTE else latestTime.minute, is24HourFormat)
+        aodPainter.draw(canvas, m, time, aodBattery.percent(renderNow()), lowBitAmbient, burnInProtection)
     }
 
     /** Time with the optional AM/PM suffix (locale.en_12h), below the system status icon (UX round 3). */

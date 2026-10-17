@@ -65,8 +65,58 @@ class MonoAodTest {
         assertThat(m.words).isEqualTo("Loop 23′")
     }
 
+    @Test fun batteryPercentFromLevelAndScale() {
+        assertThat(MonoAod.batteryPercent(82, 100)).isEqualTo(82)
+        assertThat(MonoAod.batteryPercent(41, 50)).isEqualTo(82)
+        assertThat(MonoAod.batteryPercent(255, 255)).isEqualTo(100)
+        assertThat(MonoAod.batteryPercent(0, 100)).isEqualTo(0)
+        // unknown: nothing is drawn
+        assertThat(MonoAod.batteryPercent(-1, 100)).isNull()
+        assertThat(MonoAod.batteryPercent(50, 0)).isNull()
+        assertThat(MonoAod.batteryPercent(50, -1)).isNull()
+        // never above 100
+        assertThat(MonoAod.batteryPercent(120, 100)).isEqualTo(100)
+    }
+
+    @Test fun batteryWordsPerLocale() {
+        assertThat(MonoAod.batteryText(82)).isEqualTo("82 %")
+        assertThat(MonoAod.batteryText(82, "%d%%")).isEqualTo("82%")
+        assertThat(MonoAod.batteryText(5, "%d %%")).isEqualTo("5 %")
+        assertThat(MonoAod.batteryText(100, "%d %%")).isEqualTo("100 %")
+    }
+
+    @Test fun lowBatteryIsEmphasisedAtFifteenOrLess() {
+        assertThat(MonoAod.batteryLow(15)).isTrue()
+        assertThat(MonoAod.batteryLow(3)).isTrue()
+        assertThat(MonoAod.batteryLow(0)).isTrue()
+        assertThat(MonoAod.batteryLow(16)).isFalse()
+        assertThat(MonoAod.batteryLow(82)).isFalse()
+    }
+
+    @Test fun timeIn24And12Hours() {
+        assertThat(MonoAod.timeText(7, 5, true)).isEqualTo("07:05")
+        assertThat(MonoAod.timeText(22, 20, true)).isEqualTo("22:20")
+        assertThat(MonoAod.timeText(0, 0, true)).isEqualTo("00:00")
+        assertThat(MonoAod.timeText(22, 20, false)).isEqualTo("10:20")
+        assertThat(MonoAod.timeText(0, 7, false)).isEqualTo("12:07")
+        assertThat(MonoAod.timeText(12, 30, false)).isEqualTo("12:30")
+    }
+
+    @Test fun layoutKeepsSamsungZonesClear() {
+        // centre lines plus half heights (the burn-in shift is at most 4 px)
+        val shift = 4f
+        assertThat(MonoAod.TIME_Y - MonoAod.TIME_SIZE / 2f - shift).isGreaterThan(MonoAod.SAMSUNG_TOP_Y1)
+        assertThat(MonoAod.BATTERY_Y + MonoAod.BATTERY_SIZE / 2f + shift).isLessThan(MonoAod.SAMSUNG_BOTTOM_Y0)
+        // order: time above BG above the line above the battery, the BG the largest
+        assertThat(MonoAod.TIME_Y).isLessThan(MonoAod.HERO_Y)
+        assertThat(MonoAod.HERO_Y).isLessThan(MonoAod.LINE_Y)
+        assertThat(MonoAod.LINE_Y + MonoAod.BADGE_H / 2f).isLessThan(MonoAod.BATTERY_Y - MonoAod.BATTERY_SIZE / 2f)
+        assertThat(MonoAod.HERO_SIZE).isGreaterThan(2f * MonoAod.TIME_SIZE)
+        assertThat(MonoAod.TIME_SIZE).isGreaterThan(MonoAod.BATTERY_SIZE)
+    }
+
     @Test fun paletteIsGreyOnly() {
-        for (c in listOf(MonoAod.WHITE_D, MonoAod.GREY_BG, MonoAod.GREY_WORDS)) {
+        for (c in listOf(MonoAod.WHITE_D, MonoAod.GREY_BG, MonoAod.GREY_WORDS, MonoAod.GREY_TIME)) {
             assertThat(c ushr 24).isEqualTo(0xFF)
             assertThat(c shr 16 and 0xFF).isEqualTo(c shr 8 and 0xFF)
             assertThat(c shr 8 and 0xFF).isEqualTo(c and 0xFF)

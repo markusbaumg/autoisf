@@ -1,14 +1,19 @@
 package app.aaps.wear.watchfaces.common
 
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.BatteryManager
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -17,13 +22,17 @@ import kotlin.math.sqrt
  * AOD live: "Always on screen is too much information. It should be simple and black and white only.").
  *
  * BLACK AND WHITE ONLY: a dimmed white and greys on pure black, in every mode (normal, burn-in protection, low-bit).
- * SIMPLE: the BG, big and bold, with its trend arrow, and nothing else in the normal case: no time, date, delta, ring,
- * card or discs. Because colour is gone, the safety states are said in words, on at most ONE line under the BG:
+ * SIMPLE: the time on top (secondary), the BG with its trend arrow in the middle (the most prominent element) and a
+ * small battery of the watch at the bottom; no date, delta, ring, card or discs (owner, 17 Oct 2026 ~22:20: "But the
+ * watch is missing on the always-on display. Make it smaller. It's too big. Actually, it needs a little battery.").
+ * Samsung's status icons (top, about y 15-55) and media chip (bottom, about y 405-430) keep their zones.
+ * Because colour is gone, the safety states are said in words, on at most ONE line under the BG:
  * - urgent low / very high: "TIEF" / "HOCH" in a solid white pill with black letters (burn-in: a white outline pill);
  * - low: the white word "TIEF" (no pill), so the pill always means a danger level;
  * - old data: the BG grey, smaller and struck through, with "Keine Daten · 17′" / "vor 17′" in grey;
  * - aging data (from 6′): "vor 8′" in grey;
  * - loop stopped, phone lost, no profile (W1-W6): the face's one short warning in grey.
+ * The battery is grey, and white at [BATTERY_LOW] % or less (still no colour).
  * The face shifts the canvas by a few px every minute under burn-in protection; low-bit draws pure white without
  * anti-aliasing. The bolus ball is never drawn in ambient. All coordinates are on the 450 px design grid.
  *
@@ -99,21 +108,44 @@ object MonoAod {
     /** The word line (warnings, data age). */
     const val GREY_WORDS = 0xFFA6A6A6.toInt()
 
-    /** Layout on the 450 grid (centre lines): the BG a little above the middle, the one line under it. */
+    /** The time: a light grey, quieter than the BG. */
+    const val GREY_TIME = 0xFFC4C4C4.toInt()
+
+    /** Layout on the 450 grid (centre lines): the time on top, the BG in the middle, the one line, the battery. */
     const val C = 225f
-    const val HERO_Y = 212f
-    const val HERO_SIZE = 172f
-    const val HERO_MAX_W = 330f
-    const val LINE_Y = 334f
+    const val TIME_Y = 130f
+    const val TIME_SIZE = 52f
+    const val HERO_Y = 228f
+    /** About 65 % of the former 172 px (owner: "Make it smaller. It's too big."); still the biggest element. */
+    const val HERO_SIZE = 112f
+    const val HERO_MAX_W = 300f
+    const val LINE_Y = 314f
+    const val BATTERY_Y = 376f
+    const val BATTERY_SIZE = 24f
+    /** The battery glyph (body without the nub), its outline and the nub. */
+    const val BATTERY_W = 28f
+    const val BATTERY_H = 14f
+    const val BATTERY_RING = 2f
+    const val BATTERY_NUB_W = 3f
+    const val BATTERY_NUB_H = 6f
+    const val BATTERY_GAP = 8f
+    /** At or below this the battery is drawn white (and bold), so it stands out without colour. */
+    const val BATTERY_LOW = 15
+
+    /** Samsung's zones the always-on look keeps clear (450 grid, rows): status icons on top, the media chip below. */
+    const val SAMSUNG_TOP_Y0 = 15f
+    const val SAMSUNG_TOP_Y1 = 55f
+    const val SAMSUNG_BOTTOM_Y0 = 405f
+    const val SAMSUNG_BOTTOM_Y1 = 430f
 
     const val ARROW_BOX = 0.46f
     const val ARROW_GAP = 0.06f
     /** Close to the digits' stroke at weight 700 (about 0.14 em), so the arrow is as heavy as the number. */
     const val ARROW_STROKE = 0.13f
     const val ARROW_STROKE_DOUBLE = 0.10f
-    const val LINE_SIZE = 34f
-    const val BADGE_SIZE = 34f
-    const val BADGE_H = 50f
+    const val LINE_SIZE = 30f
+    const val BADGE_SIZE = 30f
+    const val BADGE_H = 44f
     const val STALE_K = 0.75f
     /** Cap height of the digits in em (Roboto about 0.71). */
     const val CAP_K = 0.71f
@@ -123,10 +155,55 @@ object MonoAod {
     const val STRIKE_MIN = 8f
     const val STRIKE_GAP = 2f
     const val STRIKE_OVER = 20f
-    const val BADGE_PAD = 14f
+    const val BADGE_PAD = 12f
     const val BADGE_RING = 4f
     const val LINE_GAP = 14f
     const val MIN_K = 0.72f
+
+    /** The watch's battery in percent from level and scale (as in ACTION_BATTERY_CHANGED), null when unknown. */
+    fun batteryPercent(level: Int, scale: Int): Int? =
+        if (level < 0 || scale <= 0) null else (level * 100f / scale).roundToInt().coerceIn(0, 100)
+
+    /** The battery's words: "82 %" ([format] is the locale's "%d %%" or "%d%%"). */
+    fun batteryText(percent: Int, format: String = "%d %%"): String = format.format(percent)
+
+    /** A low battery is drawn white (no colour exists here). */
+    fun batteryLow(percent: Int): Boolean = percent <= BATTERY_LOW
+
+    /** The time without AM/PM (simple): "07:05" in 24 h, "7:05" in 12 h. */
+    fun timeText(hour: Int, minute: Int, is24h: Boolean): String {
+        val h = if (is24h) hour else (hour % 12).let { if (it == 0) 12 else it }
+        val mm = if (minute < 10) "0$minute" else "$minute"
+        return if (is24h && h < 10) "0$h:$mm" else "$h:$mm"
+    }
+
+    /**
+     * The watch's own battery from the sticky ACTION_BATTERY_CHANGED broadcast (no receiver, no polling: read when an
+     * always-on frame is drawn, at most once a minute). [read] returns that sticky intent; injectable for tests.
+     */
+    class Battery(private val read: () -> Intent?) {
+
+        constructor(context: Context) : this({
+            try {
+                context.applicationContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            } catch (_: Exception) {
+                null
+            }
+        })
+
+        private var minute = Long.MIN_VALUE
+        private var last: Int? = null
+
+        /** The percent at [nowMs], read again only when the minute changed; null when unknown (nothing is drawn). */
+        fun percent(nowMs: Long): Int? {
+            val m = nowMs / FaceState.MINUTE_MS
+            if (m != minute) {
+                minute = m
+                last = read()?.let { batteryPercent(it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1), it.getIntExtra(BatteryManager.EXTRA_SCALE, -1)) }
+            }
+            return last
+        }
+    }
 
     /** Half chord of the dial at [y] (450 grid, radius 225), less [margin] on each side. */
     fun halfChord(y: Float, margin: Float = 40f): Float {
@@ -146,9 +223,14 @@ object MonoAod {
 
         var lowWord = "TIEF"
         var highWord = "HOCH"
+        /** The battery's words for the locale ("%d %%" in German, "%d%%" in English). */
+        var batteryFormat = "%d %%"
 
         /** Lit area of the last frame's BG group (design px), for the harness. */
         val heroBox = RectF()
+        /** Lit area of the last frame's time and battery (design px; empty when not drawn), for tests. */
+        val timeBox = RectF()
+        val batteryBox = RectF()
 
         private fun tf(weight: Int): Typeface = faces.getOrPut(weight) { Typeface.create(Typeface.DEFAULT, weight, false) }
 
@@ -181,9 +263,53 @@ object MonoAod {
         /** Low-bit: pure white for everything (no greys exist there). */
         private fun c(colour: Int, lowBit: Boolean) = if (lowBit) Color.WHITE else colour
 
-        fun draw(canvas: Canvas, m: Model, lowBit: Boolean, burnIn: Boolean) {
+        /** One frame: [time] on top, the BG, the one line, and [battery] (percent, null: not drawn) at the bottom. */
+        fun draw(canvas: Canvas, m: Model, time: String, battery: Int?, lowBit: Boolean, burnIn: Boolean) {
+            drawTime(canvas, time, lowBit, burnIn)
             drawHero(canvas, m, lowBit, burnIn)
             if (m.lineShown) drawLine(canvas, m, lowBit, burnIn)
+            batteryBox.setEmpty()
+            if (battery != null) drawBattery(canvas, battery, lowBit, burnIn)
+        }
+
+        private fun drawTime(canvas: Canvas, time: String, lowBit: Boolean, burnIn: Boolean) {
+            timeBox.setEmpty()
+            if (time.isBlank()) return
+            setText(TIME_SIZE, if (burnIn) 400 else 500, c(GREY_TIME, lowBit), !lowBit)
+            val w = text.measureText(time)
+            val by = baseline(TIME_Y)
+            canvas.drawText(time, C - w / 2f, by, text)
+            timeBox.set(C - w / 2f, by - CAP_K * TIME_SIZE, C + w / 2f, by)
+        }
+
+        /** A small battery glyph (outline, nub, a bar for the level) and "82 %", centred as one group. */
+        private fun drawBattery(canvas: Canvas, percent: Int, lowBit: Boolean, burnIn: Boolean) {
+            val aa = !lowBit
+            val low = batteryLow(percent)
+            val colour = c(if (low) WHITE_D else GREY_WORDS, lowBit)
+            val words = batteryText(percent, batteryFormat)
+            setText(BATTERY_SIZE, if (low) 700 else if (burnIn) 400 else 500, colour, aa)
+            val tw = text.measureText(words)
+            val gw = BATTERY_W + BATTERY_NUB_W + BATTERY_GAP + tw
+            val x0 = C - gw / 2f
+            val y = BATTERY_Y
+            // body outline
+            setStroke(BATTERY_RING, colour, aa)
+            stroke.strokeJoin = Paint.Join.MITER
+            box.set(x0, y - BATTERY_H / 2f, x0 + BATTERY_W, y + BATTERY_H / 2f)
+            box.inset(BATTERY_RING / 2f, BATTERY_RING / 2f)
+            canvas.drawRoundRect(box, 2.5f, 2.5f, stroke)
+            // nub and the level bar (at least a sliver, so an empty battery still shows a mark)
+            stroke.style = Paint.Style.FILL
+            canvas.drawRect(x0 + BATTERY_W, y - BATTERY_NUB_H / 2f, x0 + BATTERY_W + BATTERY_NUB_W, y + BATTERY_NUB_H / 2f, stroke)
+            val inner = BATTERY_RING + 1.5f
+            val fullW = BATTERY_W - 2f * inner
+            val fillW = max(2f, fullW * percent / 100f)
+            canvas.drawRect(x0 + inner, y - BATTERY_H / 2f + inner, x0 + inner + fillW, y + BATTERY_H / 2f - inner, stroke)
+            val tx = x0 + BATTERY_W + BATTERY_NUB_W + BATTERY_GAP
+            val by = baseline(y)
+            canvas.drawText(words, tx, by, text)
+            batteryBox.set(x0, min(y - BATTERY_H / 2f, by - CAP_K * BATTERY_SIZE), tx + tw, max(y + BATTERY_H / 2f, by))
         }
 
         private fun drawHero(canvas: Canvas, m: Model, lowBit: Boolean, burnIn: Boolean) {
