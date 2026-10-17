@@ -29,6 +29,7 @@ class PreferenceMenuActivity : MenuListActivity() {
                 SelectedWatchFace.CIRCLE -> add(MenuItem(R.drawable.watchface_circle, getString(R.string.label_watchface_circle)))
                 SelectedWatchFace.HALO -> add(MenuItem(R.drawable.watchface_halo, getString(R.string.label_watchface_halo)))
                 SelectedWatchFace.GLASS -> add(MenuItem(R.drawable.watchface_glass, getString(R.string.label_watchface_glass)))
+                SelectedWatchFace.ORBIT -> add(MenuItem(R.drawable.watchface_orbit, getString(R.string.label_watchface_orbit)))
             }
         }
 
@@ -58,7 +59,8 @@ class PreferenceMenuActivity : MenuListActivity() {
             getString(R.string.label_watchface_digital_style),
             getString(R.string.label_watchface_circle),
             getString(R.string.label_watchface_halo),
-            getString(R.string.label_watchface_glass)      -> startActivity(Intent(this, WatchfaceConfigurationActivity::class.java).apply {
+            getString(R.string.label_watchface_glass),
+            getString(R.string.label_watchface_orbit)      -> startActivity(Intent(this, WatchfaceConfigurationActivity::class.java).apply {
                 when (lastWatchface) {
                     SelectedWatchFace.NONE    -> Unit
                     SelectedWatchFace.CUSTOM  -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_custom)
@@ -66,6 +68,7 @@ class PreferenceMenuActivity : MenuListActivity() {
                     SelectedWatchFace.CIRCLE  -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_circle)
                     SelectedWatchFace.HALO    -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_halo)
                     SelectedWatchFace.GLASS   -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_glass)
+                    SelectedWatchFace.ORBIT   -> putExtra(getString(R.string.key_preference_id), R.xml.watch_face_configuration_orbit)
                 }
             })
         }
