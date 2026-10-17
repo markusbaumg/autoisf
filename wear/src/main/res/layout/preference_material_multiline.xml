@@ -3,31 +3,49 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:minHeight="56dp"
-    android:orientation="vertical"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
     android:paddingStart="30dp"
     android:paddingTop="12dp"
     android:paddingEnd="30dp"
     android:paddingBottom="12dp"
     android:background="?android:attr/selectableItemBackground">
 
-    <TextView
-        android:id="@android:id/title"
-        android:layout_width="match_parent"
+    <LinearLayout
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:textSize="16sp"
-        android:textColor="#FFFFFF"
-        android:maxLines="3"
-        android:ellipsize="end" />
+        android:layout_weight="1"
+        android:orientation="vertical">
 
-    <TextView
-        android:id="@android:id/summary"
-        android:layout_width="match_parent"
+        <TextView
+            android:id="@android:id/title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:maxLines="3"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@android:id/summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textSize="14sp"
+            android:textColor="#CCCCCC"
+            android:maxLines="4"
+            android:ellipsize="end"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- Checkbox / switch of two-state preferences; without it the toggle is invisible -->
+    <LinearLayout
+        android:id="@android:id/widget_frame"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:textSize="14sp"
-        android:textColor="#CCCCCC"
-        android:maxLines="4"
-        android:ellipsize="end"
-        android:visibility="gone" />
+        android:layout_marginStart="8dp"
+        android:gravity="center"
+        android:orientation="vertical" />
 
 </LinearLayout>
