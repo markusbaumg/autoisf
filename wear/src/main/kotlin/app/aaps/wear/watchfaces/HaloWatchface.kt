@@ -693,7 +693,7 @@ class HaloWatchface : WatchFace() {
                 else                    -> 0xFF8C8C8C.toInt()
             }
             drawLoopGlyph(canvas, L.pillGlyphX, L.pillY, glyph, aa, glow = false)
-            drawText(canvas, label, L.pillTextX, L.pillY, L.pillTextSize, tf600, amb(0xFFC8C8C8.toInt(), lowBit), aa)
+            drawFitText(canvas, label, L.pillTextX, L.pillY, L.pillTextSize, tf600, amb(0xFFC8C8C8.toInt(), lowBit), aa, L.pillTextMaxW)
             return
         }
         resetPaint().apply {
@@ -724,7 +724,7 @@ class HaloWatchface : WatchFace() {
             LoopState.STALE -> 0xFFFFD2D8.toInt()
             LoopState.UNKNOWN -> GREY
         }
-        drawText(canvas, label, L.pillTextX, L.pillY, L.pillTextSize, tf600, textColour)
+        drawFitText(canvas, label, L.pillTextX, L.pillY, L.pillTextSize, tf600, textColour, maxWidth = L.pillTextMaxW)
     }
 
     private fun loopColour(state: LoopState): Int = when (state) {

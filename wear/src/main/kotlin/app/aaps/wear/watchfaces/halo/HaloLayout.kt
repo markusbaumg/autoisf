@@ -16,7 +16,7 @@ import kotlin.math.min
  * - text never goes below [MIN_TEXT_PX] (a 384 px screen would otherwise shrink a 17 px label to 14.5 px);
  * - the bolus tap target is a fixed 48 dp ([TAP_TARGET_DP]), not scaled.
  *
- * Current variant: "M", refined (rounds 1 and 2): ring R 158 (top at y 60, clear of the system status icon), hero 140 px
+ * Current variant: "M", refined (rounds 1 to 3; round 3 enlarged only the loop pill text and the secondary line): ring R 158 (top at y 60, clear of the system status icon), hero 140 px
  * (7.7 mm cap height), delta / secondary / bottom row on an even ~41 px step, and one bottom row COB - pill - IOB
  * with the values anchored at an equal gap to the pill (COB right-aligned, IOB left-aligned), so the row stays
  * balanced whatever the values are. The bolus ball (when enabled) takes the pill's slot but carries a loop badge.
@@ -64,7 +64,7 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val timeY = g(102f)
     val timeSize = font(38f)
     val dateY = g(137f)                 // ~3 px more air under the time than round 1
-    val dateSize = font(22f)
+    val dateSize = font(24f)                // ~1.3 mm cap height (round 3: was 22, at the 1.2 mm floor)
 
     // Hero BG.
     val heroY = g(214f)
@@ -82,21 +82,23 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val arrowGap = g(6f)
 
     // Secondary line (temp target + basal), between the delta line and the pill.
-    val secondaryY = g(331f)
-    val secondarySize = font(24f)
+    val secondaryY = g(328f)
+    val secondarySize = font(26f)       // ~1.4 mm cap height: grey TT / basal line must read in sunlight
     val secondaryMaxW = g(180f)          // "TT 5.6 · 0.00U/h" shrinks to fit, clear of the ring ends
 
     // Loop pill: loop glyph (a circular arrow in the state colour) and the loop age.
     val pillY = g(372f)
-    val pillHalfW = g(42f)
-    val pillHalfH = g(17f)
-    val pillTextSize = font(22f)
-    val pillGlyphX = c - g(24f)
+    val pillHalfW = g(46f)
+    val pillHalfH = g(19f)
+    val pillTextSize = font(26f)        // ~1.4 mm cap height: the only safety status on the face
+    val pillGlyphX = c - g(26f)
     val pillGlyphR = g(8.5f)            // ~1.4 mm: large enough to carry the state colour at a glance
     val pillGlyphStroke = g(3f)
     val pillGlyphHead = g(5f)
     val pillGlyphGlow = g(4f)
-    val pillTextX = c + g(11f)
+    val pillTextX = c + g(12f)
+    /** Widest loop label that fits between the glyph (4 px gap) and the pill's right edge (6 px), centred at [pillTextX]. */
+    val pillTextMaxW = 2f * min(pillTextX - (pillGlyphX + pillGlyphR + pillGlyphStroke / 2f) - g(4f), c + pillHalfW - g(6f) - pillTextX)
     val pillStroke = g(1f)
 
     // Bottom row: COB value (left, right-aligned) and IOB value (right, left-aligned) at the same gap to the pill.

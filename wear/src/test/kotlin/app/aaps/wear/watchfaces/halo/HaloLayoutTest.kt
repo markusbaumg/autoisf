@@ -151,10 +151,26 @@ class HaloLayoutTest {
             val glyphLeft = l.pillGlyphX - l.pillGlyphR - l.pillGlyphStroke / 2f
             val glyphRight = l.pillGlyphX + l.pillGlyphR + l.pillGlyphStroke / 2f
             assertWithMessage("glyph inside the pill at d=$d").that(glyphLeft).isAtLeast(l.pillBox().left + 6f * l.u)
-            // Widest label "19'" (~3 x 0.55 em), centred at pillTextX: >= 4 px to the glyph and inside the pill.
+            // Widest label "25'" (~3 x 0.55 em), centred at pillTextX: >= 4 px to the glyph and inside the pill.
             val half = l.pillTextSize * 0.55f * 3f / 2f
             assertWithMessage("glyph / text gap at d=$d").that(l.pillTextX - half - glyphRight).isAtLeast(4f * l.u)
             assertWithMessage("text inside the pill at d=$d").that(l.pillTextX + half).isAtMost(l.pillBox().right)
+            // "25'" and "--" fit at full size (no shrink); longer labels ("120'") shrink to pillTextMaxW.
+            assertWithMessage("pill text max width at d=$d").that(l.pillTextMaxW).isAtLeast(2f * half)
+            // The inner gaps stay balanced: glyph pad on the left vs. text pad on the right differ by < 4 design px.
+            val leftPad = glyphLeft - l.pillBox().left
+            val rightPad = l.pillBox().right - (l.pillTextX + half)
+            assertWithMessage("pill pads at d=$d").that(kotlin.math.abs(leftPad - rightPad)).isAtMost(4f * l.u)
+            // Safety status: >= 1.4 mm cap height on the 450 grid (26 design px).
+            assertWithMessage("pill text size at d=$d").that(l.pillTextSize).isAtLeast(26f * l.u - 0.01f)
+        }
+    }
+
+    @Test fun secondaryLineKeepsItsGapToTheDelta() {
+        for (d in diameters) {
+            val l = HaloLayout(d)
+            val secondary = l.boxes().first { it.name == "secondary" }
+            assertWithMessage("delta / secondary gap at d=$d").that(secondary.top - l.deltaBox(11).bottom).isAtLeast(8f * l.u)
         }
     }
 }
