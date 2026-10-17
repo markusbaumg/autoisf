@@ -536,6 +536,28 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         verify(commandQueue, never()).bolus(any(), anyOrNull())
     }
 
+    @Test fun `a constrained bolus shows the amount that is delivered and names the requested one as a warning`() {
+        whenever(constraintsChecker.applyBolusConstraints(any())).thenAnswer {
+            it.getArgument<Constraint<Double>>(0).also { c -> c.setIfSmaller(2.0, "max", this) }
+        }
+        rxBus.send(EventData.ActionBolusPreCheck(5.0, 0))
+
+        val confirm = confirmActions().last()
+        val offered = confirm.returnCommand as EventData.ActionBolusConfirmed
+        // the big amount on the watch, the command sent back and the pending amount are the same number
+        assertThat(offered.insulin).isEqualTo(2.0)
+        assertThat(confirm.details!!.insulin).isEqualTo(offered.insulin)
+        assertThat(confirm.details!!.carbs).isEqualTo(offered.carbs)
+        val constraint = confirm.details!!.warnings.single { it.code == EventData.ConfirmWarning.W_CONSTRAINT }
+        assertThat(constraint.value).isEqualTo(5.0)
+        assertThat(constraint.value2).isNull()
+
+        // and that number is what the pending confirm delivers
+        rxBus.send(offered)
+        assertThat(errorsToWatch()).isEmpty()
+        assertThat(deliveredBoluses().single().insulin).isEqualTo(2.0)
+    }
+
     @Test fun `quick wizard confirm carries the button name and the calculation as details`() {
         prepareWizard(insulin = 2.0, carbs = 30)
         quickWizardEntry(30)

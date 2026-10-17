@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Page 2 of the watch confirm screen (AcceptActivity): the confirm button. Filled by ConfirmScreen. -->
+<!-- Page 2 of the watch confirm screen (AcceptActivity): the amount, the top warning and the confirm button.
+     Filled by ConfirmScreen. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -7,20 +8,20 @@
     android:background="@color/black"
     android:gravity="center"
     android:orientation="vertical"
-    android:paddingBottom="14dp">
+    android:paddingTop="22dp"
+    android:paddingBottom="30dp">
 
     <TextView
         android:id="@+id/confirm_ok_kind"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:fontFamily="sans-serif-medium"
         android:ellipsize="end"
-        android:letterSpacing="0.1"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.08"
         android:maxWidth="150dp"
         android:maxLines="1"
-        android:textAllCaps="true"
         android:textColor="@color/confirm_muted"
-        android:textSize="13sp"
+        android:textSize="15sp"
         android:visibility="gone"
         tools:text="Bolus"
         tools:visibility="visible" />
@@ -34,20 +35,41 @@
         android:includeFontPadding="false"
         android:maxLines="2"
         android:textColor="@color/confirm_text"
-        android:textSize="26sp"
+        android:textSize="34sp"
         android:visibility="gone"
         tools:text="0,5 U"
         tools:visibility="visible" />
 
+    <TextView
+        android:id="@+id/confirm_ok_warning"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxWidth="170dp"
+        android:maxLines="1"
+        android:paddingStart="12dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="5dp"
+        android:textColor="@color/confirm_text"
+        android:textSize="16sp"
+        android:visibility="gone"
+        tools:text="TIEF 3,6 · +1"
+        tools:visibility="visible" />
+
     <ImageView
         android:id="@+id/confirmbutton"
-        android:layout_width="84dp"
-        android:layout_height="84dp"
-        android:layout_marginTop="8dp"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:layout_marginTop="10dp"
         android:layout_marginBottom="6dp"
         android:background="@drawable/confirm_ring"
         android:contentDescription="@string/action_confirm"
-        android:padding="19dp"
+        android:padding="16dp"
         android:src="@drawable/ic_confirm"
         android:tint="@color/confirm_ok" />
 
@@ -59,17 +81,5 @@
         android:text="@string/confirm_tap_confirm"
         android:textColor="@color/confirm_text_dim"
         android:textSize="15sp" />
-
-    <TextView
-        android:id="@+id/confirm_ok_warning"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:fontFamily="sans-serif-medium"
-        android:maxLines="1"
-        android:textSize="14sp"
-        android:visibility="gone"
-        tools:text="TIEF · +1 weitere"
-        tools:visibility="visible" />
 
 </LinearLayout>

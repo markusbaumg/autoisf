@@ -13,6 +13,8 @@ import kotlin.math.roundToInt
  * ConfirmAction's returnCommand alone, and the phone delivers only what it stored in PendingWearConfirm. The warnings
  * never block: the watch shows them and its confirm works exactly as without them. Effect and timing are rough
  * estimates (labelled "≈" on the watch): BG change = insulin × ISF, carbs covered = insulin × IC, no loop forecast.
+ * ISF and IC are the profile's (the same the phone's bolus wizard uses), not AutoISF's adjusted ISF of the last loop
+ * run; the watch names them as the source of the estimate.
  */
 internal object WearConfirmDetails {
 
@@ -81,7 +83,8 @@ internal object WearConfirmDetails {
             else                                      -> null
         }
         val carbsCovered = if (dosing && ic != null) i.insulin * ic else null
-        val insulinForCarbs = if (positiveCarbs && !dosing && ic != null) i.carbs / ic else null
+        // no "insulin these carbs need" for carbs alone: carbs from the watch are often the treatment of a low, and
+        // such a number would read like advice to bolus
         val iobNow = i.iobNow?.takeIf { it.isFinite() }
         val iobAfter = if (dosing && iobNow != null) iobNow + i.insulin else null
         val cobNow = i.cobNow?.takeIf { it.isFinite() && it >= 0.0 }
@@ -136,7 +139,9 @@ internal object WearConfirmDetails {
             arrow = i.arrow,
             bgEffectMgdl = bgEffect,
             carbsCovered = carbsCovered,
-            insulinForCarbs = insulinForCarbs,
+            // the profile values the estimates come from, shown as their source
+            isfMgdl = if (bgEffect != null) isf else null,
+            ic = if (carbsCovered != null || (bgEffect != null && !dosing)) ic else null,
             iobNow = if (dosing) iobNow else null,
             iobAfter = iobAfter,
             cobNow = if (cobAfter != null) cobNow else null,

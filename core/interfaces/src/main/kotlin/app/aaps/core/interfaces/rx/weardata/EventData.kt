@@ -456,7 +456,8 @@ sealed class EventData : Event() {
      * @param insulin insulin of the treatment as offered (U); [carbs] carbs as offered (g)
      * @param label extra name, e.g. the quick wizard button text
      * @param bgEffectMgdl ≈ BG change of this treatment: -insulin × ISF (+ carbs × ISF / IC when there is no insulin)
-     * @param carbsCovered ≈ carbs this insulin covers (insulin × IC); [insulinForCarbs] ≈ insulin these carbs need (carbs / IC)
+     * @param carbsCovered ≈ carbs this insulin covers (insulin × IC)
+     * @param isfMgdl / [ic] the profile ISF (mg/dL per U) and IC (g per U) the estimates were made with, shown as their source
      * @param iobNow / [iobAfter] IOB now and right after this bolus (U); [cobNow] / [cobAfter] the same for COB (g)
      * @param deliverySeconds ≈ time the pump needs to deliver [insulin]; [insulinPeakMin] peak time of the active insulin
      * @param lastBolusMinAgo / [lastBolusAmount] the last manual (normal) bolus
@@ -476,7 +477,8 @@ sealed class EventData : Event() {
         val arrow: String = "",
         val bgEffectMgdl: Double? = null,
         val carbsCovered: Double? = null,
-        val insulinForCarbs: Double? = null,
+        val isfMgdl: Double? = null,
+        val ic: Double? = null,
         val iobNow: Double? = null,
         val iobAfter: Double? = null,
         val cobNow: Double? = null,

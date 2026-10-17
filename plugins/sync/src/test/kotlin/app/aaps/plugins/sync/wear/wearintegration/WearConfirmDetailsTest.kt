@@ -36,15 +36,18 @@ class WearConfirmDetailsTest {
         assertThat(d.lastBolusAmount).isEqualTo(1.5)
         assertThat(d.bgAgeMin).isEqualTo(2)
         assertThat(d.unitsMgdl).isFalse()
-        assertThat(d.insulinForCarbs).isNull()
+        // the profile values the estimate was made with travel along, as its source
+        assertThat(d.isfMgdl).isEqualTo(45.0)
+        assertThat(d.ic).isEqualTo(13.0)
         assertThat(d.cobAfter).isNull()
         assertThat(d.warnings).isEmpty()
     }
 
-    @Test fun `carbs only show the rise, the insulin they need and COB`() {
+    @Test fun `carbs only show the rise and COB, never an insulin need`() {
         val d = WearConfirmDetails.build(inputs(kind = ConfirmDetails.KIND_CARBS, insulin = 0.0, carbs = 26))
         assertThat(d.bgEffectMgdl!!).isWithin(1e-9).of(90.0)
-        assertThat(d.insulinForCarbs!!).isWithin(1e-9).of(2.0)
+        assertThat(d.isfMgdl).isEqualTo(45.0)
+        assertThat(d.ic).isEqualTo(13.0)
         assertThat(d.cobNow).isEqualTo(12.0)
         assertThat(d.cobAfter).isEqualTo(38.0)
         assertThat(d.carbsCovered).isNull()
@@ -62,7 +65,6 @@ class WearConfirmDetailsTest {
         val d = WearConfirmDetails.build(inputs(insulin = 1.0, carbs = 20))
         assertThat(d.bgEffectMgdl!!).isWithin(1e-9).of(-45.0)
         assertThat(d.carbsCovered!!).isWithin(1e-9).of(13.0)
-        assertThat(d.insulinForCarbs).isNull()
         assertThat(d.cobAfter).isEqualTo(32.0)
         assertThat(d.iobAfter!!).isWithin(1e-9).of(2.2)
     }
@@ -130,7 +132,7 @@ class WearConfirmDetailsTest {
         assertThat(d.carbsStart).isEqualTo(now + 30 * 60_000L)
         assertThat(d.carbsDurationH).isEqualTo(3)
         assertThat(d.cobAfter).isNull()
-        assertThat(d.insulinForCarbs!!).isWithin(1e-9).of(30 / 13.0)
+        assertThat(d.bgEffectMgdl!!).isWithin(1e-9).of(30 * 45.0 / 13.0)
     }
 
     @Test fun `missing profile values leave the effect out`() {
@@ -139,6 +141,8 @@ class WearConfirmDetailsTest {
         assertThat(d.carbsCovered).isNull()
         assertThat(d.deliverySeconds).isNull()
         assertThat(d.iobAfter).isNotNull()
+        assertThat(d.isfMgdl).isNull()
+        assertThat(d.ic).isNull()
     }
 
     @Test fun `an old last bolus is not shown`() {

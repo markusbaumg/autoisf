@@ -39,7 +39,15 @@ class AcceptActivity : ViewSelectorActivity() {
         message = extras?.getString(DataLayerListenerServiceWear.KEY_MESSAGE, "") ?: ""
         actionKey = extras?.getString(DataLayerListenerServiceWear.KEY_ACTION_DATA, "") ?: ""
         confirmTitle = extras?.getString(DataLayerListenerServiceWear.KEY_TITLE, "") ?: ""
-        details = ConfirmScreen.decode(extras?.getString(ConfirmScreen.KEY_DETAILS))
+        // the details are shown only when they name exactly what the confirm button sends (else the phone's text)
+        details = try {
+            ConfirmScreen.matchingDetails(
+                ConfirmScreen.decode(extras?.getString(ConfirmScreen.KEY_DETAILS)),
+                if (actionKey.isEmpty()) null else EventData.deserialize(actionKey)
+            )
+        } catch (_: Exception) {
+            null
+        }
         if (message.isEmpty()) {
             finish()
             return
@@ -61,7 +69,11 @@ class AcceptActivity : ViewSelectorActivity() {
 
     /** The phone's error screens come as a ConfirmAction whose returnCommand is an Error (ignored by the phone). */
     private val isError: Boolean
-        get() = actionKey.isNotEmpty() && EventData.deserialize(actionKey) is EventData.Error
+        get() = actionKey.isNotEmpty() && try {
+            EventData.deserialize(actionKey) is EventData.Error
+        } catch (_: Exception) {
+            false
+        }
 
     private inner class MyPagerAdapter : PagerAdapter() {
 
