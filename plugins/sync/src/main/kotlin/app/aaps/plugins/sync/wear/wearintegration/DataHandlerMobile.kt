@@ -2135,7 +2135,8 @@ class DataHandlerMobile @Inject constructor(
                 deltaMgdl = glucoseStatus?.takeIf { lastBg != null && abs(it.date - lastBg.timestamp) < 60_000L }?.delta,
                 arrow = orNull { trendCalculator.getTrendArrow(iobCobCalculator.ads)?.symbol } ?: "",
                 lowMarkMgdl = orNull { profileUtil.convertToMgdl(preferences.get(UnitDoubleKey.OverviewLowMark), units) },
-                isfMgdl = orNull { profile?.getIsfMgdl("DataHandlerMobile confirm") },
+                // the profile ISF read directly: getIsfMgdl() would run AutoISF and write its cache (a loop input)
+                isfMgdl = orNull { profile?.getProfileIsfMgdl() },
                 ic = orNull { profile?.getIc() },
                 iobNow = orNull {
                     iobCobCalculator.calculateIobFromBolus().round().iob + iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().round().basaliob

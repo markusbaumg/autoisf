@@ -13,8 +13,9 @@ import kotlin.math.roundToInt
  * ConfirmAction's returnCommand alone, and the phone delivers only what it stored in PendingWearConfirm. The warnings
  * never block: the watch shows them and its confirm works exactly as without them. Effect and timing are rough
  * estimates (labelled "≈" on the watch): BG change = insulin × ISF, carbs covered = insulin × IC, no loop forecast.
- * ISF and IC are the profile's (the same the phone's bolus wizard uses), not AutoISF's adjusted ISF of the last loop
- * run; the watch names them as the source of the estimate.
+ * ISF and IC are the plain profile values at this time (Profile.getProfileIsfMgdl / getIc), not AutoISF's adjusted ISF
+ * and not the 24 h average ISF the phone's bolus wizard uses (getIsfMgdlForCarbs); the watch names them as the source of
+ * the estimate. Reading them must not run AutoISF (getIsfMgdl would write its cache, which feeds the loop's COB).
  */
 internal object WearConfirmDetails {
 
