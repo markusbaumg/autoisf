@@ -240,6 +240,19 @@ class NSClientV3ServiceTest : TestBaseWithProfile() {
     }
 
     @Test
+    fun `an incoming document keeps the CPU awake for the short data timeout only`() {
+        val wakeLock = mock<PowerManager.WakeLock>()
+        whenever(config.AAPSCLIENT).thenReturn(false)
+        sut.wakeLock = wakeLock
+
+        sut.stayAwake(NSClientV3Service.DATA_WAKE_LOCK_TIMEOUT)
+
+        verify(wakeLock).acquire(NSClientV3Service.DATA_WAKE_LOCK_TIMEOUT)
+        verify(wakeLock, never()).acquire(NSClientV3Service.WAKE_LOCK_TIMEOUT)
+        verify(wakeLock, never()).acquire()
+    }
+
+    @Test
     fun `AAPSClient keeps its wake lock without timeout`() {
         val wakeLock = mock<PowerManager.WakeLock>()
         whenever(config.AAPSCLIENT).thenReturn(true)

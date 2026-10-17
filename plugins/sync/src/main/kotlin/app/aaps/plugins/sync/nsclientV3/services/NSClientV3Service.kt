@@ -67,10 +67,11 @@ class NSClientV3Service : DaggerService() {
     // The wake lock used to be held for the whole life of the service, which with websockets on is
     // all the time: the CPU never suspended (hours of kernel suspend blocker, several % battery per
     // hour). AAPS is woken anyway for every BG and loop run, and an incoming packet on the socket wakes
-    // the device, so it is now only held for a while around socket work: connecting, the subscribe
-    // answer, incoming data, alarms and disconnects (socket.io then reconnects by itself, and a new
-    // connection loads what was missed via REST). AAPSClient, whose whole job is following over the
-    // socket, keeps it for the life of the service as before.
+    // the device, so it is now only held for a while around socket work: [WAKE_LOCK_TIMEOUT] around
+    // connection work (connecting, the subscribe answer, disconnects; socket.io then reconnects by
+    // itself, and a new connection loads what was missed via REST) and [DATA_WAKE_LOCK_TIMEOUT] for
+    // an incoming document or alarm. AAPSClient, whose whole job is following over the socket, keeps
+    // it for the life of the service as before.
     @SuppressLint("WakelockTimeout")
     override fun onCreate() {
         super.onCreate()
@@ -82,10 +83,14 @@ class NSClientV3Service : DaggerService() {
         initializeWebSockets("onCreate")
     }
 
-    /** Keeps the CPU awake for [WAKE_LOCK_TIMEOUT] from now, for socket work that just started. */
-    @VisibleForTesting internal fun stayAwake() {
+    /**
+     * Keeps the CPU awake for [timeout] from now: [WAKE_LOCK_TIMEOUT] for connection work (the
+     * default), [DATA_WAKE_LOCK_TIMEOUT] for an incoming document or alarm. The lock is not
+     * reference counted, so the latest acquire sets the end.
+     */
+    @VisibleForTesting internal fun stayAwake(timeout: Long = WAKE_LOCK_TIMEOUT) {
         // AAPSClient holds it without timeout; an acquire with timeout would turn that into a timed one
-        if (!config.AAPSCLIENT) wakeLock?.acquire(WAKE_LOCK_TIMEOUT)
+        if (!config.AAPSCLIENT) wakeLock?.acquire(timeout)
     }
 
     override fun onDestroy() {
@@ -236,7 +241,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onDataCreateUpdate = Emitter.Listener { args ->
-        stayAwake()
+        stayAwake(DATA_WAKE_LOCK_TIMEOUT)
         val response = args[0] as JSONObject
         val collection = response.getString("colName")
         val docJson = response.getJSONObject("doc")
@@ -279,7 +284,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onDataDelete = Emitter.Listener { args ->
-        stayAwake()
+        stayAwake(DATA_WAKE_LOCK_TIMEOUT)
         val response = args[0] as JSONObject
         aapsLogger.debug(LTag.NSCLIENT, "onDataDelete: $response")
         val collection = response.optString("colName") ?: return@Listener
@@ -296,7 +301,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onAnnouncement = Emitter.Listener { args ->
-        stayAwake()
+        stayAwake(DATA_WAKE_LOCK_TIMEOUT)
 
         /*
         {
@@ -316,7 +321,7 @@ class NSClientV3Service : DaggerService() {
             uiInteraction.addNotificationWithAction(NSAlarmObject(data))
     }
     private val onAlarm = Emitter.Listener { args ->
-        stayAwake()
+        stayAwake(DATA_WAKE_LOCK_TIMEOUT)
 
         /*
         {
@@ -342,7 +347,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onUrgentAlarm = Emitter.Listener { args: Array<Any> ->
-        stayAwake()
+        stayAwake(DATA_WAKE_LOCK_TIMEOUT)
         val data = args[0] as JSONObject
         rxBus.send(EventNSClientNewLog("◄ URGENT ALARM", data.optString("message")))
         aapsLogger.debug(LTag.NSCLIENT, data.toString())
@@ -354,7 +359,7 @@ class NSClientV3Service : DaggerService() {
     }
 
     private val onClearAlarm = Emitter.Listener { args ->
-        stayAwake()
+        stayAwake(DATA_WAKE_LOCK_TIMEOUT)
 
         /*
         {
@@ -378,7 +383,17 @@ class NSClientV3Service : DaggerService() {
 
     companion object {
 
-        /** Long enough for a reconnect (socket.io backs off up to 5 s), the subscribe and storing a document. */
+        /** Connection work: long enough for a reconnect (socket.io backs off up to 5 s) and the subscribe. */
         const val WAKE_LOCK_TIMEOUT = 30_000L
+
+        /**
+         * An incoming document or alarm. It is parsed and stored on the socket's event thread within
+         * milliseconds (p90 under 5 ms, max 0.1 s in two days of logs); what follows (rx events,
+         * the upload side) runs under WorkManager's own job wakelock or is woken by the next event.
+         * Nightscout echoes every AAPS upload back, 2-3 documents a minute, and each echo re-armed
+         * the 30 s hold: the lock was held 63-73 % of the screen-off time, the largest partial
+         * wakelock on the phone. With 5 s it is 10-24 %.
+         */
+        const val DATA_WAKE_LOCK_TIMEOUT = 5_000L
     }
 }
