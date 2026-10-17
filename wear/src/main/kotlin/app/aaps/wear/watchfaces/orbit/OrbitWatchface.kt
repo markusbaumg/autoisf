@@ -251,7 +251,7 @@ class OrbitWatchface : WatchFace() {
     private val predY = FloatArray(OrbitFaceLogic.PREDICTION_DOTS)
     private var predCount = 0
     private var lowY = 0f
-    private val bandFadeIn = bandFade(withAlpha(GREEN, 26))
+    private val bandFadeIn = bandFade(withAlpha(GREEN, 14)) // Glass/Orbit UX round 6: 26 -> 14, a whisper of a strip
     private val bandFadeOut = bandFade(withAlpha(Color.WHITE, 8))
     private var highY = 0f
     private val sparkTop = OrbitFaceLogic.SPARK_Y_TOP
@@ -299,10 +299,8 @@ class OrbitWatchface : WatchFace() {
     private var cacheScale = 0f
     private val corona = arrayOfNulls<Bitmap>(3)
     private val coronaDst = RectF()
-    private val shells = arrayOfNulls<Bitmap>(Ring.entries.size)
     private var bolusIdle: Bitmap? = null
     private var bolusArmed: Bitmap? = null
-    private val shellDst = RectF()
     private val bolusDst = RectF()
 
     override fun onCreate() {
@@ -388,7 +386,6 @@ class OrbitWatchface : WatchFace() {
         disposable.clear()
         watchfaceScope.cancel()
         for (i in corona.indices) corona[i]?.recycle()
-        for (i in shells.indices) shells[i]?.recycle()
         bolusIdle?.recycle()
         bolusArmed?.recycle()
         super.onDestroy()
@@ -740,7 +737,8 @@ class OrbitWatchface : WatchFace() {
      * The group is centred at x 225; without a glyph the digits re-centre. Builds the vector trend glyph.
      */
     private fun layoutHero() {
-        setText(OrbitFaceLogic.HERO_REF, tf700)
+        setText(OrbitFaceLogic.HERO_REF, tf600)
+        text.letterSpacing = HERO_TRACKING
         val w108 = text.measureText(heroText)
         val glyph = trend != Trend.NONE
         heroSize = OrbitFaceLogic.heroSize(w108, glyph)
@@ -892,29 +890,7 @@ class OrbitWatchface : WatchFace() {
                 fill.maskFilter = null
             }
         }
-        // ball shells per ring colour
-        val side = (OrbitFaceLogic.BALL_R + SHELL_PAD) * 2f
-        for (ring in Ring.entries) {
-            shells[ring.ordinal]?.recycle()
-            shells[ring.ordinal] = softBitmap(side, side, s) { c ->
-                val m = side / 2f
-                val r = OrbitFaceLogic.BALL_R
-                // Glass/Orbit UX round 3: hairline rings on true black (four filled discs read as a complication grid):
-                // the satellites and the ring are one orbit system; only an alarm (amber, red) keeps a 2 px coloured rim
-                // Glass/Orbit UX round 5: four equal grey rings read as a complications dashboard. At rest a satellite
-                // is its value and label alone (the orbit's break frames it); only a warning (amber, red) draws a solid
-                // 2.5 px coloured ring on a black disc, so it stands out against the calm face
-                val alarm = ring == Ring.AMBER || ring == Ring.RED
-                if (alarm) {
-                    fill.reset(); fill.isAntiAlias = true; fill.color = Color.BLACK
-                    c.drawCircle(m, m, r, fill)
-                    stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE
-                    stroke.strokeWidth = 2.5f
-                    stroke.color = ringColour(ring)
-                    c.drawCircle(m, m, r - stroke.strokeWidth / 2f, stroke)
-                }
-            }
-        }
+        // Glass/Orbit UX round 6: no baked alarm shells any more (a status dot and the value's hue carry the alarm)
         // bolus button shells
         val bs = OrbitFaceLogic.BOLUS_HALF * 2f + 2 * BOLUS_PAD
         bolusIdle?.recycle()
@@ -1209,7 +1185,9 @@ class OrbitWatchface : WatchFace() {
         val dashes = heroText == "---"
         val urgent = range == Range.URGENT_LOW
         // ambient: Light, urgent low one weight step up (Regular)
-        setText(heroSize, if (ambient) (if (urgent) tf400 else tf300) else tf700, aa)
+        // Glass/Orbit UX round 6: weight 600 (as Glass; 700 read black and sporty) with -0.02 em tracking
+        setText(heroSize, if (ambient) (if (urgent) tf400 else tf300) else tf600, aa)
+        text.letterSpacing = HERO_TRACKING
         text.color = if (dashes && !ambient) TXT2 else colour
         // Glass/Orbit UX round 5: an old reading in AOD is a thin AMB2 outline, never brighter than a live one
         val staleAmbient = ambient && OrbitFaceLogic.isOld(bgAge) && !dashes
@@ -1223,7 +1201,7 @@ class OrbitWatchface : WatchFace() {
             text.strokeWidth = if (urgent) 3f else 2f
         }
         // UX round 3: a tighter, fainter glow (12 px at 110/150 made the digits look blurry and neon)
-        if (glow) text.setShadowLayer(7f, 0f, 0f, withAlpha(rangeColour, if (OrbitFaceLogic.emphasis(range)) 110 else 80))
+        if (glow) text.setShadowLayer(7f, 0f, 0f, withAlpha(rangeColour, if (OrbitFaceLogic.emphasis(range)) 110 else 50))
         canvas.drawText(heroText, heroX, baseline(HERO_Y), text)
         text.clearShadowLayer()
         var right = heroX + heroW / 2f
@@ -1464,21 +1442,17 @@ class OrbitWatchface : WatchFace() {
             canvas.drawCircle(x, y, r - 1f, stroke)
             stroke.pathEffect = null
         } else {
-            // UX round 3: one ring style; only an alarm (amber, red) keeps a coloured ring, the value carries the hue
-            val shellRing = when (b.ring) {
-                Ring.AMBER, Ring.RED, Ring.DIM -> b.ring
-                else                           -> Ring.NEUTRAL
-            }
-            val shell = shells[shellRing.ordinal]
-            if (shell != null && (shellRing == Ring.AMBER || shellRing == Ring.RED)) {
-                val half = r + SHELL_PAD
-                shellDst.set(x - half, y - half, x + half, y + half)
-                canvas.drawBitmap(shell, null, shellDst, bmpPaint)
+            // Glass/Orbit UX round 6: no solid r 35 alarm ring (it competed with the BG); the value carries the hue, a
+            // 6 px status dot sits left of it, and red adds a hairline ring at 55 %
+            if (b.ring == Ring.RED) {
+                setStroke(1.5f, withAlpha(RED, 140), true)
+                canvas.drawCircle(x, y, r - 1f, stroke)
             }
         }
         val dim = b.ring == Ring.DIM || b.dimValue
         // UX round 3: labels neutral; the value carries the hue (loop green, IOB cyan, TBR teal, TT violet)
-        val labelColour = if (b.ring == Ring.DIM) DIM_TXT else LBL_NEUTRAL
+        // Glass/Orbit UX round 6: the labels a step quieter (TXT3), the values are the jewels
+        val labelColour = if (b.ring == Ring.DIM) DIM_TXT else TXT3
         val valueColour = when {
             dim                   -> DIM_TXT
             b.ring == Ring.GREEN  -> GREEN
@@ -1496,7 +1470,13 @@ class OrbitWatchface : WatchFace() {
         else {
             val size = ballSize[i]
             val tf = if (size < OrbitFaceLogic.BALL_VALUE_SIZE) tf700 else tf600
-            drawText(canvas, b.value, x, if (b.label.isEmpty()) y else y - BALL_VALUE_DY, size, tf, valueColour, true)
+            val vy = if (b.label.isEmpty()) y else y - BALL_VALUE_DY
+            drawText(canvas, b.value, x, vy, size, tf, valueColour, true)
+            if (!dim && !muted && (b.ring == Ring.AMBER || b.ring == Ring.RED)) {
+                val vw = text.measureText(b.value)
+                setFill(if (b.ring == Ring.RED) RED else AMBER, true)
+                canvas.drawCircle(x - vw / 2f - STATUS_DOT_GAP - STATUS_DOT_R, vy, STATUS_DOT_R, fill)
+            }
         }
         if (b.label.isNotEmpty()) drawText(canvas, b.label, x, y + BALL_LABEL_DY, ballLabelSize[i], tf600, labelColour, true, ballLabelTrack[i])
     }
@@ -1612,17 +1592,6 @@ class OrbitWatchface : WatchFace() {
 
     /** Ambient grey, or white in low-bit ambient. */
     private fun amb(colour: Int): Int = if (lowBitAmbient) Color.WHITE else colour
-
-    private fun ringColour(ring: Ring): Int = when (ring) {
-        Ring.NEUTRAL -> NEUTRAL_RING
-        Ring.DIM     -> DIM_RING
-        Ring.GREEN   -> GREEN
-        Ring.AMBER   -> AMBER
-        Ring.RED     -> RED
-        Ring.CYAN    -> CYAN
-        Ring.TEAL    -> TEAL
-        Ring.VIOLET  -> VIOLET
-    }
 
     /** Horizontal fade of the target band over its first and last [BAND_FADE] px (Glass/Orbit UX round 4). */
     private fun bandFade(colour: Int): Shader {
@@ -1779,7 +1748,7 @@ class OrbitWatchface : WatchFace() {
         private const val BALL_VALUE_DY = 11f
         private const val BALL_LABEL_DY = 13f
         private const val BAND_CORNER = 4f
-        private const val BAND_FADE = 24f
+        private const val BAND_FADE = 40f // Glass/Orbit UX round 6: 24 -> 40
         private const val BOLUS_SUB_SIZE = OrbitFaceLogic.MIN_TEXT_PX
         private val HEAD_SIGNS = intArrayOf(-1, 1)
         private const val AMPM_GAP = 3f
@@ -1789,9 +1758,8 @@ class OrbitWatchface : WatchFace() {
         /** Graph tap zone (spec §9), design px. */
         private const val GRAPH_X0 = OrbitFaceLogic.SPARK_X0
         private const val GRAPH_X1 = OrbitFaceLogic.SPARK_X1
-        private const val GRAPH_Y0 = 290f
+        private const val GRAPH_Y0 = 296f // Glass/Orbit UX round 6: follows the lower chart
         private const val GRAPH_Y1 = 378f
-        private const val SHELL_PAD = 6f
         private val PAUSE_OFFSETS = floatArrayOf(-5.5f, 5.5f)
 
         /** Bitmap margin around the corona ellipse, and the blur radius (a 60 px Gaussian of the mockup). */
@@ -1800,6 +1768,9 @@ class OrbitWatchface : WatchFace() {
         private const val CORONA_EMPHASIS_ALPHA = 36   // UX round 3: fainter (was 41), the BG read neon
         private const val CORONA_NORMAL_ALPHA = 150    // Glass/Orbit UX round 3: 200 -> 150, the high haze read neon
         private const val LABEL_TRACKING = 0.04f // Glass/Orbit UX round 2: tracked small labels (LOOP, IOB, KH)
+        private const val HERO_TRACKING = -0.02f // Glass/Orbit UX round 6: closes the "6 , 4" comma gap
+        private const val STATUS_DOT_R = 3f // Glass/Orbit UX round 6: a 6 px status dot replaces the alarm ring
+        private const val STATUS_DOT_GAP = 4f
         private const val ARROW_STROKE = 8f // Glass/Orbit UX round 4: 9.5 -> 8, lighter than the digits' stems (read as clip-art)
         private const val ARROW_STROKE_MIN = 6.5f
         private const val DISABLED_FILL = 0xFF12152A.toInt() // disabled bolus: a dark disc, no sphere
@@ -1822,7 +1793,6 @@ class OrbitWatchface : WatchFace() {
         private const val VIOLET = 0xFFB388FF.toInt()
         // UX round 4: neutral rings darker (5A6B85 -> 3A4250) so the hero stays dominant; dim one step darker still
         private const val NEUTRAL_RING = 0xFF3A4250.toInt()
-        private const val LBL_NEUTRAL = 0xFF9AA6B8.toInt()
         private const val DIM_RING = 0xFF2C323D.toInt()
         private const val DIM_TXT = 0xFF7D8796.toInt()
         private const val TXT2 = 0xFF9AA6C4.toInt()

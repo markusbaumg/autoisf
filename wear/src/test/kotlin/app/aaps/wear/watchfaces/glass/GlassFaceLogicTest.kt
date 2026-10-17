@@ -164,10 +164,10 @@ class GlassFaceLogicTest {
     @Test fun bgSizeForMmolAndMgdlByMeasuredWidth() {
         // Glass rework: 134 px start (Halo's ~95 px cap), floor 80; Glass/Orbit UX round 4: 232 px next to the chip
         assertThat(bgFit("9,4")).isEqualTo(134f)
-        assertThat(bgFit("11,8")).isEqualTo(110f)
-        assertThat(bgFit("400+")).isEqualTo(94f)
-        assertThat(bgFit("22,2+")).isEqualTo(82f)
-        assertThat(bgFit("254")).isEqualTo(132f) // three mg/dL digits keep (nearly) the full size next to the chip
+        assertThat(bgFit("11,8")).isEqualTo(108f) // Glass/Orbit UX round 6: 228 px next to the larger chip
+        assertThat(bgFit("400+")).isEqualTo(92f)
+        assertThat(bgFit("22,2+")).isEqualTo(80f)
+        assertThat(bgFit("254")).isEqualTo(130f) // three mg/dL digits keep (nearly) the full size next to the chip
         assertThat(bgFit("---")).isEqualTo(134f)
         // the result fits, in 2 px steps from the start size
         for (v in listOf("9,4", "11,8", "400+", "254", "39")) {
@@ -551,7 +551,7 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkX(47f)).isEqualTo(380f)
         // without a forecast the plot ends at now (no empty quarter); with the ball it starts right of it
         assertThat(GlassFaceLogic.nowX(forecast = false)).isEqualTo(380f)
-        assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(128f)
+        assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(140f)
         assertThat(GlassFaceLogic.SPARK_X0_BALL).isGreaterThan(GlassFaceLogic.BALL_X + GlassFaceLogic.BALL_R + 8f)
         // UX round 4: values stay 4 px inside the plot (the line never meets the card or the pills)
         assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(341f)
@@ -710,6 +710,8 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.digitTone(Range.VERY_HIGH, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.HIGH)
         assertThat(GlassFaceLogic.digitTone(Range.STALE, stale = true)).isEqualTo(GlassFaceLogic.DigitTone.STALE)
         assertThat(GlassFaceLogic.digitTone(Range.LOW, stale = true)).isEqualTo(GlassFaceLogic.DigitTone.STALE)
+        // Glass/Orbit UX round 6: from 30' a quieter tone
+        assertThat(GlassFaceLogic.digitTone(Range.STALE, stale = true, veryStale = true)).isEqualTo(GlassFaceLogic.DigitTone.VERY_STALE)
     }
 
     @Test fun decimalSeparatorSplit() {
@@ -790,8 +792,13 @@ class GlassFaceLogicTest {
         assertThat(o(Range.HIGH)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.LINE, false))
         assertThat(o(Range.VERY_HIGH)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A3, false))
         assertThat(o(Range.LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.LINE, false))
-        // UX round 3: urgent low is one 2 px line (low: a double thin line), a different SHAPE, not only a grey level
-        assertThat(o(Range.URGENT_LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.SOLID, 2f, 0f, AmbTone.A3, true))
+        // UX round 3: urgent low is one heavy line (low: a double thin line), a different SHAPE; Glass/Orbit UX round 6: 3 px
+        assertThat(o(Range.URGENT_LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.SOLID, 3f, 0f, AmbTone.A3, true))
+        // Glass/Orbit UX round 6: burn-in protection drops the static outline, only the (temporary) lows keep theirs
+        for (r in listOf(Range.IN, Range.STALE, Range.HIGH, Range.VERY_HIGH))
+            assertThat(GlassFaceLogic.ambientOutline(r, lowBit = false, burnIn = true).style).isEqualTo(OutlineStyle.NONE)
+        assertThat(GlassFaceLogic.ambientOutline(Range.LOW, lowBit = false, burnIn = true)).isEqualTo(o(Range.LOW))
+        assertThat(GlassFaceLogic.ambientOutline(Range.URGENT_LOW, lowBit = false, burnIn = true)).isEqualTo(o(Range.URGENT_LOW))
         assertThat(o(Range.URGENT_LOW).style).isNotEqualTo(o(Range.LOW).style)
         for (r in Range.entries) assertThat(o(r).tone).isNotIn(listOf(AmbTone.A1, AmbTone.A2))
         // low-bit keeps every non-in shape (drawn white, AA off)

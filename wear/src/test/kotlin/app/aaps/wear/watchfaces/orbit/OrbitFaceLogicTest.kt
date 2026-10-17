@@ -485,7 +485,15 @@ class OrbitFaceLogicTest {
         val cobRight = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB) + OrbitFaceLogic.BALL_R
         // Glass/Orbit UX round 2: 16 px or more clearance to the 4 and 8 o'clock satellites (no plate around the plot)
         assertThat(OrbitFaceLogic.SPARK_X0 - cobRight).isAtLeast(12f) // Glass/Orbit UX round 5: 12 px, a wider chart
-        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(180f)
+        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(168f) // Glass/Orbit UX round 6: shorter chart
+        // Glass/Orbit UX round 6: the chart keeps 12 px or more to the KH / basal discs over its whole height
+        for (deg in floatArrayOf(OrbitFaceLogic.DEG_COB, OrbitFaceLogic.DEG_BASAL)) {
+            val sx = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, deg)
+            val sy = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, deg)
+            val nx = if (sx < OrbitFaceLogic.CX) OrbitFaceLogic.SPARK_X0 else OrbitFaceLogic.SPARK_X1
+            for (y in floatArrayOf(OrbitFaceLogic.SPARK_Y_TOP, OrbitFaceLogic.SPARK_Y_BOTTOM))
+                assertThat(kotlin.math.hypot(nx - sx, y - sy) - OrbitFaceLogic.BALL_R).isAtLeast(12f)
+        }
         // UX round 2: the pill row (TIEF/HOCH + status) stays 4 px or more clear of the 4 o'clock satellite's shell
         val basalLeft = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL) - OrbitFaceLogic.BALL_R
         assertThat(OrbitFaceLogic.CX + OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f).isAtMost(basalLeft - 4f)
@@ -516,11 +524,11 @@ class OrbitFaceLogicTest {
 
     @Test fun worstCaseWidths() {
         // ball value (Glass/Orbit UX round 5): 26 px up to 58 px, 21 px bold beyond, shrink when even that is too wide
-        assertThat(OrbitFaceLogic.ballValueSize(50f)).isEqualTo(26f)
+        assertThat(OrbitFaceLogic.ballValueSize(50f)).isEqualTo(OrbitFaceLogic.BALL_VALUE_SIZE)
         assertThat(OrbitFaceLogic.ballValueSize(70f)).isEqualTo(21f)
         val small = OrbitFaceLogic.ballValueSize(80f)
         assertThat(small).isLessThan(21f)
-        assertThat(80f * small / 26f).isWithin(0.01f).of(OrbitFaceLogic.BALL_VALUE_HARD_MAX)
+        assertThat(80f * small / OrbitFaceLogic.BALL_VALUE_SIZE).isWithin(0.01f).of(OrbitFaceLogic.BALL_VALUE_HARD_MAX)
         // never below the family's 18 px floor
         assertThat(OrbitFaceLogic.ballValueSize(110f)).isEqualTo(OrbitFaceLogic.MIN_TEXT_PX)
         // the hero group (BG + glyph) never reaches the 3 o'clock TT ball
@@ -644,18 +652,21 @@ class OrbitFaceLogicTest {
         // Glass/Orbit UX round 3: Glass's adaptive log range, values 8 px inside the plot
         val top = OrbitFaceLogic.SPARK_Y_TOP + OrbitFaceLogic.SPARK_INSET
         val bottom = OrbitFaceLogic.SPARK_Y_BOTTOM - OrbitFaceLogic.SPARK_INSET
-        assertThat(OrbitFaceLogic.sparkRange(Double.NaN, Double.NaN)).isEqualTo(60.0 to 220.0)
-        assertThat(OrbitFaceLogic.sparkRange(90.0, 160.0)).isEqualTo(60.0 to 220.0)
+        assertThat(OrbitFaceLogic.sparkRange(Double.NaN, Double.NaN)).isEqualTo(55.0 to 240.0)
+        assertThat(OrbitFaceLogic.sparkRange(90.0, 160.0)).isEqualTo(55.0 to 240.0)
         assertThat(OrbitFaceLogic.sparkRange(39.0, 420.0)).isEqualTo(40.0 to 400.0)
-        assertThat(OrbitFaceLogic.sparkY(60.0)).isEqualTo(bottom)
-        assertThat(OrbitFaceLogic.sparkY(220.0)).isEqualTo(top)
+        assertThat(OrbitFaceLogic.sparkY(55.0)).isEqualTo(bottom)
+        assertThat(OrbitFaceLogic.sparkY(240.0)).isEqualTo(top)
         // an urgent low and a very high trace stay inside the plot (never on or over its edge)
         val (lo, hi) = OrbitFaceLogic.sparkRange(39.0, 400.0)
         assertThat(OrbitFaceLogic.sparkY(39.0, lo, hi)).isAtMost(bottom)
         assertThat(OrbitFaceLogic.sparkY(400.0, lo, hi)).isAtLeast(top)
         assertThat(OrbitFaceLogic.sparkY(399.0, lo, hi)).isGreaterThan(OrbitFaceLogic.sparkY(400.0, lo, hi))
         // the in-range band carries information again: 70-180 is 25 px or more (was about 15 px)
-        assertThat(OrbitFaceLogic.sparkY(70.0) - OrbitFaceLogic.sparkY(180.0)).isAtLeast(25f)
+        // Glass/Orbit UX round 6: ... but a strip with headroom, not the whole plot (about 60-70 %)
+        val band = OrbitFaceLogic.sparkY(70.0) - OrbitFaceLogic.sparkY(180.0)
+        assertThat(band).isAtLeast(22f)
+        assertThat(band).isAtMost(0.7f * (bottom - top))
         assertThat(OrbitFaceLogic.sparkX(now, now)).isEqualTo(OrbitFaceLogic.SPARK_X_NOW)
         assertThat(OrbitFaceLogic.sparkX(now - OrbitFaceLogic.SPARK_HISTORY_MS, now)).isWithin(0.01f).of(OrbitFaceLogic.SPARK_X0)
         assertThat(OrbitFaceLogic.predictionX(5)).isWithin(0.01f).of(OrbitFaceLogic.SPARK_X1)

@@ -176,9 +176,14 @@ object GlassFaceLogic {
      * and 12,4 looked alike); in range is a pale mint (the family maps hue to state the same way on all three faces,
      * Glass keeps its calmer, lighter tint).
      */
-    enum class DigitTone { IN, HIGH, LOW, STALE }
+    /**
+     * Glass/Orbit UX round 6: VERY_STALE (30' or more) is a step quieter than STALE: grey digits at 60 %, so a
+     * 45' old value no longer reads like a current one.
+     */
+    enum class DigitTone { IN, HIGH, LOW, STALE, VERY_STALE }
 
-    fun digitTone(range: Range, stale: Boolean): DigitTone = when {
+    fun digitTone(range: Range, stale: Boolean, veryStale: Boolean = false): DigitTone = when {
+        stale && veryStale                                 -> DigitTone.VERY_STALE
         stale                                              -> DigitTone.STALE
         range == Range.LOW || range == Range.URGENT_LOW    -> DigitTone.LOW
         range == Range.HIGH || range == Range.VERY_HIGH    -> DigitTone.HIGH
@@ -197,7 +202,7 @@ object GlassFaceLogic {
     const val BG_SIZE = 134f
     const val BG_SIZE_STEP = 2f
     const val BG_MIN_SIZE = 80f
-    const val BG_MAX_WIDTH = 232f // Glass/Orbit UX round 4: 240 -> 232 (centred at 200): wide values (22,2) kept only ~20 px to the card's left edge
+    const val BG_MAX_WIDTH = 228f // Glass/Orbit UX round 6: 232 -> 228 for the larger chip (r 28 at x 348). Glass/Orbit UX round 4: 240 -> 232 (centred at 200): wide values (22,2) kept only ~20 px to the card's left edge
     const val BG_MAX_WIDTH_NO_CHIP = 300f
 
     /**
@@ -520,7 +525,7 @@ object GlassFaceLogic {
      * low trace never touches its edge. The plot is y 294..350 (Glass/Orbit UX round 4) so the 70-180 band keeps about 28 px.
      */
     const val SPARK_X0 = 70f
-    const val SPARK_X0_BALL = 128f // Glass/Orbit UX round 2: 140 -> 128, the ball sits tighter to the chart
+    const val SPARK_X0_BALL = 140f // Glass/Orbit UX round 6: 128 -> 140, a clear gap after the larger ball (read as a chart marker). Glass/Orbit UX round 2: 140 -> 128
     const val SPARK_Y0 = 294f // Glass/Orbit UX round 4: y 294..350, 8 px under the taller card
     const val SPARK_X1 = 380f
     const val SPARK_Y1 = 350f
@@ -641,9 +646,9 @@ object GlassFaceLogic {
      * UX round 4: (90, 322); Glass rework (92, 324), 10 px under the card, 30 px or more from the bezel; its hit area reaches 78 px down from
      * the card to the bezel and 88 px across, the pill row moves right of it.
      */
-    const val BALL_X = 90f // Glass/Orbit UX round 4: (90, 322), 8 px under the taller card, 30 px to the bezel. Before: Glass/Orbit UX round 2: (92, 324) -> (88, 318): 12 px to the graph at 128, 31 px to the bezel
-    const val BALL_Y = 322f
-    const val BALL_R = 28f
+    const val BALL_X = 96f // Glass/Orbit UX round 6: (96, 325) r 31 (was (90, 322) r 28): a larger visible target, 13 px clear of the chart, 30 px to the bezel. Glass/Orbit UX round 4: (90, 322), 8 px under the taller card, 30 px to the bezel. Before: Glass/Orbit UX round 2: (92, 324) -> (88, 318): 12 px to the graph at 128, 31 px to the bezel
+    const val BALL_Y = 325f
+    const val BALL_R = 31f
 
     /** Pill row band (UX round 4: borderless; Glass/Orbit UX round 3: text centred at y 372, 12 px lower). */
     const val PILL_Y0 = 362f
@@ -684,11 +689,12 @@ object GlassFaceLogic {
     const val META_Y = 262f
 
     /** Digits' centre next to the chip (Glass/Orbit UX round 4: 198 -> 200, equal optical padding left and right). */
-    const val BG_X_CHIP = 200f
+    const val BG_X_CHIP = 196f // Glass/Orbit UX round 6: 200 -> 196 for the larger chip
 
     /** Trend chip column (UX round 4: r 18 -> 24). */
-    const val CHIP_X = 352f
-    const val CHIP_R = 24f
+    /** Glass/Orbit UX round 6: r 24 -> 28 at x 348, the arrow about 0.6 of the disc (the main signal after the BG). */
+    const val CHIP_X = 348f
+    const val CHIP_R = 28f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
         showChip  -> if (metaEmpty) HeroLayout(BG_X_CHIP, 203f, BG_MAX_WIDTH, 201f, 225f, META_Y) else HeroLayout(BG_X_CHIP, 178f, BG_MAX_WIDTH, 176f, 225f, META_Y)
@@ -806,13 +812,21 @@ object GlassFaceLogic {
      * thin line, plain TIEF word) and urgent low (single heavy line, double-outlined TIEF badge) differ by shape, not
      * only by grey level; in low-bit both are white.
      */
-    fun ambientOutline(range: Range, lowBit: Boolean): AmbientOutline = when (range) {
+    /**
+     * Glass/Orbit UX round 6: urgent low is a 3 px line (2 px read too close to low's double line), and with burn-in
+     * protection the static card outline is dropped for in range, high and stale (only the temporary lows keep it).
+     */
+    fun ambientOutline(range: Range, lowBit: Boolean, burnIn: Boolean = false): AmbientOutline =
+        if (burnIn && range != Range.LOW && range != Range.URGENT_LOW) AmbientOutline(OutlineStyle.NONE, 0f, 0f, AmbTone.LINE, false)
+        else ambientOutlineByRange(range, lowBit)
+
+    private fun ambientOutlineByRange(range: Range, lowBit: Boolean): AmbientOutline = when (range) {
         Range.IN, Range.STALE -> if (lowBit) AmbientOutline(OutlineStyle.NONE, 0f, 0f, AmbTone.LINE, false)
                                  else AmbientOutline(OutlineStyle.SOLID, 1f, 0f, AmbTone.LINE, false)
         Range.HIGH            -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.LINE, false)
         Range.VERY_HIGH       -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A3, false)
         Range.LOW             -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.LINE, false)
-        Range.URGENT_LOW      -> AmbientOutline(OutlineStyle.SOLID, 2f, 0f, AmbTone.A3, true)
+        Range.URGENT_LOW      -> AmbientOutline(OutlineStyle.SOLID, 3f, 0f, AmbTone.A3, true)
     }
 
     /** Random burn-in offset in [-4, +4] px from a 0..1 source. */

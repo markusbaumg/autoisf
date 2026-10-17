@@ -489,7 +489,7 @@ class GlassWatchface : WatchFace() {
             FaceState.Caption.HIGH_WORD                             -> getString(R.string.face_high)
             FaceState.Caption.NONE                                  -> ""
         }
-        outline = GlassFaceLogic.ambientOutline(range, lowBitAmbient)
+        outline = GlassFaceLogic.ambientOutline(range, lowBitAmbient, burnInProtection)
 
         // meta line (delta · age); empty for age.none / first start
         val (deltaOn, ageOn) = GlassFaceLogic.metaVisible(
@@ -512,7 +512,8 @@ class GlassWatchface : WatchFace() {
         showChip = GlassFaceLogic.chipShown(sp.getBoolean(R.string.key_show_direction, true), strike, bgText)
         hero = GlassFaceLogic.heroLayout(showChip, metaEmpty = !showDelta && !showAge && captionText.isEmpty())
         // UX round 3 (spec F1): low AND urgent low digits are red; a white 3,4 next to a white 6,4 hid the low in sunlight
-        bgColour = when (GlassFaceLogic.digitTone(range, stale)) {
+        bgColour = when (GlassFaceLogic.digitTone(range, stale, bgAge == BgAge.VERY_STALE)) {
+            GlassFaceLogic.DigitTone.VERY_STALE -> withAlpha(STALE_COL, 153) // Glass/Orbit UX round 6: a step quieter from 30'
             GlassFaceLogic.DigitTone.STALE -> STALE_DIGIT_COL // UX round 4: brighter than TXT2 on the grey card
             GlassFaceLogic.DigitTone.LOW   -> LOW_COL
             GlassFaceLogic.DigitTone.HIGH  -> HIGH_COL        // Glass/Orbit UX round 2: high is amber, not white
@@ -912,7 +913,7 @@ class GlassWatchface : WatchFace() {
         if (!stale && !GlassFaceLogic.isLow(range)) text.setShadowLayer(7f, 0f, 0f, withAlpha(rangeColour, 0x4E))
         drawBg(canvas, hero.bgX, hero.bgY)
         if (strike && bgText != "---") {
-            line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE; line.strokeWidth = 3f; line.color = STALE_DIGIT_COL
+            line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE; line.strokeWidth = 3f; line.color = bgColour
             canvas.drawLine(hero.bgX - bgHalfWidth - 4f, hero.bgY + 2f, hero.bgX + bgHalfWidth + 4f, hero.bgY + 2f, line)
         }
         drawCaption(canvas, ambient = false, lowBit = false)
@@ -922,12 +923,16 @@ class GlassWatchface : WatchFace() {
             // Glass/Orbit UX round 2: a filled disc and a 4 px arrow with the weight of the bold digits.
             // Glass/Orbit UX round 3: the 18 % disc read muddy; a fainter 12 % disc with a crisp 1 px rim at 30 % of the
             // state colour (as the ambient chip, which looked cleaner)
-            fill.reset(); fill.isAntiAlias = true; fill.color = withAlpha(rangeColour, 30)
+            // Glass/Orbit UX round 6: a dark disc (black under a 16 % tint) with a 1.5 px rim at 45 %, so the arrow stands
+            // out (the tinted 12 % disc made a dim orange-on-orange chip); the arrow is lifted 25 % toward white
+            fill.reset(); fill.isAntiAlias = true; fill.color = CHIP_BASE
             canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, fill)
-            stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1f
-            stroke.color = withAlpha(rangeColour, 77)
-            canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R - 0.5f, stroke)
-            drawArrow(canvas, rangeColour, aa = true, maxWidth = 4.6f)
+            fill.color = withAlpha(rangeColour, 40)
+            canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, fill)
+            stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1.5f
+            stroke.color = withAlpha(rangeColour, 115)
+            canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R - 0.75f, stroke)
+            drawArrow(canvas, lift(rangeColour, 0.25f), aa = true, maxWidth = 4.6f)
         }
 
         // meta line + phone-off glyph (W10); UX round 3: a normal age in the delta colour (TXT2 was 4.2:1 on the glass)
@@ -1057,15 +1062,30 @@ class GlassWatchface : WatchFace() {
         val cy = hero.chipY
         canvas.save()
         canvas.rotate(-trend.angle, CHIP_X, cy)
-        canvas.drawLine(CHIP_X - ARROW_L, cy, CHIP_X + ARROW_L, cy, line)
-        drawChevron(canvas, CHIP_X + ARROW_L, cy)
-        if (trend.double) drawChevron(canvas, CHIP_X + ARROW_L - 9f, cy)
+        if (trend.double) {
+            // Glass/Orbit UX round 6 (safety): two parallel arrows side by side, as Orbit and Halo; stacked chevrons 9 px
+            // apart merged into one arrow with a stray bar
+            line.strokeWidth = min(line.strokeWidth, 3.6f)
+            for (off in DOUBLE_OFFSETS) {
+                canvas.drawLine(CHIP_X - ARROW_L + 2f, cy + off, CHIP_X + ARROW_L, cy + off, line)
+                drawChevron(canvas, CHIP_X + ARROW_L, cy + off, DOUBLE_HEAD_DX, DOUBLE_HEAD_DY)
+            }
+        } else {
+            canvas.drawLine(CHIP_X - ARROW_L, cy, CHIP_X + ARROW_L, cy, line)
+            drawChevron(canvas, CHIP_X + ARROW_L, cy, HEAD_DX, HEAD_DY)
+        }
         canvas.restore()
     }
 
-    private fun drawChevron(canvas: Canvas, tipX: Float, cy: Float) {
-        canvas.drawLine(tipX, cy, tipX - HEAD_DX, cy - HEAD_DY, line)
-        canvas.drawLine(tipX, cy, tipX - HEAD_DX, cy + HEAD_DY, line)
+    private fun drawChevron(canvas: Canvas, tipX: Float, cy: Float, hdx: Float, hdy: Float) {
+        canvas.drawLine(tipX, cy, tipX - hdx, cy - hdy, line)
+        canvas.drawLine(tipX, cy, tipX - hdx, cy + hdy, line)
+    }
+
+    /** [colour] moved [f] of the way toward white (alpha kept). */
+    private fun lift(colour: Int, f: Float): Int {
+        fun ch(v: Int) = (v + (255 - v) * f).toInt().coerceIn(0, 255)
+        return (colour and 0xFF000000.toInt()) or (ch(Color.red(colour)) shl 16) or (ch(Color.green(colour)) shl 8) or ch(Color.blue(colour))
     }
 
     private fun drawPhoneOff(canvas: Canvas, cx: Float, cy: Float, colour: Int) {
@@ -1292,17 +1312,16 @@ class GlassWatchface : WatchFace() {
             stroke.pathEffect = DashPathEffect(floatArrayOf(dash * 0.55f, dash * 0.45f), 0f)
             canvas.drawCircle(bx, by, r, stroke)
             stroke.pathEffect = null
-            stroke.color = TXT3; stroke.strokeCap = Paint.Cap.ROUND
-            val k = r * 0.7071f
-            canvas.drawLine(bx - k, by + k, bx + k, by - k, stroke)
-            // knock-out under the amount, so it stays legible over the slash
-            setText(tf700, BALL_AMOUNT_SIZE, true, Paint.Align.CENTER)
-            text.style = Paint.Style.STROKE; text.strokeWidth = 4f; text.color = Color.BLACK
-            canvas.drawText(amountText, bx, baseline(by - 4f), text)
-            text.style = Paint.Style.FILL
+            // Glass/Orbit UX round 6: no slash through the digits (it read as "broken"); the dashed rim and the dim
+            // sphere say "disabled", the amount stays readable in LABEL_COL
         }
-        val textColour = if (disabled) TXT3 else if (ball == BallState.SENT) withAlpha(Color.WHITE, 191) else Color.WHITE
-        drawCentred(canvas, amountText, bx, by - 4f, tf700, BALL_AMOUNT_SIZE, textColour)
+        val textColour = if (disabled) LABEL_COL else if (ball == BallState.SENT) withAlpha(Color.WHITE, 191) else Color.WHITE
+        // Glass/Orbit UX round 6 (sunlight): a 1 px dark shadow under the amount on the sphere
+        setText(tf700, BALL_AMOUNT_SIZE, true, Paint.Align.CENTER)
+        text.color = textColour
+        if (!armed) text.setShadowLayer(1.5f, 0f, 1f, BALL_TEXT_SHADOW)
+        canvas.drawText(amountText, bx, baseline(by - 4f), text)
+        text.clearShadowLayer()
         when {
             armed                   -> {
                 // Glass/Orbit UX round 1: a confirm tick ("tap again to send") instead of "nochmal", which did not fit
@@ -1314,7 +1333,7 @@ class GlassWatchface : WatchFace() {
             }
 
             ball == BallState.SENT  -> drawCentred(canvas, "…", bx, by + 14f, tf700, BALL_SUB_SIZE, withAlpha(BALL_UNIT_COL, 191))
-            else                    -> drawCentred(canvas, "U", bx, by + 14f, tf600, BALL_SUB_SIZE, if (disabled) TXT3 else BALL_UNIT_COL)
+            else                    -> drawCentred(canvas, "U", bx, by + 14f, tf600, BALL_SUB_SIZE, if (disabled) LABEL_COL else BALL_UNIT_COL)
         }
     }
 
@@ -1420,7 +1439,13 @@ class GlassWatchface : WatchFace() {
                     floatArrayOf(0f, fh, fh, fl, fl, 1f), Shader.TileMode.CLAMP
                 )
             }
-            val fade = LinearGradient(sparkX0, 0f, nowX, 0f, withAlpha(Color.WHITE, 115), Color.WHITE, Shader.TileMode.CLAMP)
+            // Glass/Orbit UX round 6: older history at 40-60 %, only the last 15 min at full strength, so the eye goes
+            // to the end of the trace (an old orange segment pulled it away from a falling urgent low)
+            val f15 = ((GlassFaceLogic.SPARK_HISTORY - 4f) / (GlassFaceLogic.SPARK_HISTORY - 1f)).coerceIn(0f, 1f)
+            val fade = LinearGradient(
+                sparkX0, 0f, nowX, 0f, intArrayOf(withAlpha(Color.WHITE, 100), withAlpha(Color.WHITE, 150), Color.WHITE, Color.WHITE),
+                floatArrayOf(0f, (f15 - 0.04f).coerceAtLeast(0f), f15, 1f), Shader.TileMode.CLAMP
+            )
             ComposeShader(zones, fade, PorterDuff.Mode.DST_IN)
         }.also { historyShaders[r.ordinal] = it }
     }
@@ -1579,7 +1604,12 @@ class GlassWatchface : WatchFace() {
             c.drawCircle(cx, cx, r + 2f, p)
             p.maskFilter = null
         }
-        p.shader = RadialGradient(cx - 4f, cx - 8f, r + 8f, 0xFFA3ACFF.toInt(), 0xFF2C3290.toInt(), Shader.TileMode.CLAMP)
+        // Glass/Orbit UX round 6 (contrast): the light indigo only as a top-left highlight, the body a deeper indigo, so
+        // the white amount keeps 4.5:1 or more (the old linear ramp put it on a 3.6:1 mid-tone)
+        p.shader = RadialGradient(
+            cx - 10f, cx - 14f, r + 12f, intArrayOf(0xFFA3ACFF.toInt(), 0xFF5A63D2.toInt(), 0xFF3E46B8.toInt(), 0xFF2C3290.toInt()),
+            floatArrayOf(0f, 0.22f, 0.45f, 1f), Shader.TileMode.CLAMP
+        )
         p.alpha = 235
         c.drawCircle(cx, cx, r, p)
         p.shader = null
@@ -1587,7 +1617,7 @@ class GlassWatchface : WatchFace() {
         if (variant == 0) {
             p.color = withAlpha(Color.WHITE, 70)
             p.maskFilter = BlurMaskFilter(3f * 1.73f, BlurMaskFilter.Blur.NORMAL)
-            c.drawOval(cx - 16f, cx - 24f, cx + 5f, cx - 12f, p)
+            c.drawOval(cx - 18f, cx - 27f, cx + 3f, cx - 15f, p)
             p.maskFilter = null
         }
         p.style = Paint.Style.STROKE
@@ -1735,7 +1765,12 @@ class GlassWatchface : WatchFace() {
         // UX round 4: chip r 18 -> 24 and a 30 px arrow with a 3.4 px stroke (the double arrow reads at arm's length)
         private const val CHIP_X = GlassFaceLogic.CHIP_X
         private const val CHIP_R = GlassFaceLogic.CHIP_R
-        private const val ARROW_L = 15f
+        private const val ARROW_L = 17f // Glass/Orbit UX round 6: 15 -> 17, a 34 px arrow in the r 28 chip
+        private val DOUBLE_OFFSETS = floatArrayOf(-8f, 8f)
+        private val DOUBLE_HEAD_DX = (6.5 * cos(Math.toRadians(42.0))).toFloat()
+        private val DOUBLE_HEAD_DY = (6.5 * sin(Math.toRadians(42.0))).toFloat()
+        private val CHIP_BASE = 0xD9000000.toInt()
+        private val BALL_TEXT_SHADOW = 0x99000000.toInt()
         private val HEAD_DX = (10.0 * cos(Math.toRadians(42.0))).toFloat()
         private val HEAD_DY = (10.0 * sin(Math.toRadians(42.0))).toFloat()
         private const val META_SIZE = 28f
@@ -1763,8 +1798,8 @@ class GlassWatchface : WatchFace() {
         private val IS_CLIENT = BuildConfig.FLAVOR.startsWith("aapsclient")
         private const val FOOTER_Y = GlassFaceLogic.FOOTER_Y
         private const val FOOTER_SEP = "  ·  "
-        private const val BALL_BOX = 44f
-        private const val RING_R = 32f
+        private const val BALL_BOX = 48f // Glass/Orbit UX round 6: 44 -> 48 for the r 31 ball and its halo
+        private const val RING_R = 35f // Glass/Orbit UX round 6: 32 -> 35, 4 px outside the r 31 ball
 
         // Family colour tokens (designsystem/states.md §3)
         private val BG_CENTRE = 0xFF0D101C.toInt()

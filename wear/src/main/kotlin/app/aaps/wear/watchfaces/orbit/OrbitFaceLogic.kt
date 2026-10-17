@@ -73,11 +73,15 @@ object OrbitFaceLogic {
      * Glass/Orbit UX round 5: LOOP and IOB move 10 deg toward 12 o'clock (300 -> 310, 60 -> 50), so the hero grows
      * (132 px) without touching them; KH and basal stay at 8 / 4 o'clock, so the sparkline keeps its full width.
      */
+    /**
+     * Glass/Orbit UX round 6: KH and basal 8 deg further down the ring (240 -> 232, 120 -> 128), clear of the shorter,
+     * lower chart, so the lower third no longer reads as a row of tiles beside a boxed chart.
+     */
     const val DEG_LOOP = 310f
     const val DEG_IOB = 50f
-    const val DEG_BASAL = 120f
+    const val DEG_BASAL = 128f
     const val DEG_BOLUS = 270f
-    const val DEG_COB = 240f
+    const val DEG_COB = 232f
     const val DEG_TT = 90f
     val BALL_DEGS = floatArrayOf(DEG_LOOP, DEG_IOB, DEG_BASAL, DEG_COB, DEG_TT)
     const val IDX_LOOP = 0
@@ -113,8 +117,12 @@ object OrbitFaceLogic {
      * within 40-400 ([sparkRange]); values sit [SPARK_INSET] px inside the plot so the trace and the now dot never
      * leave it.
      */
-    const val SPARK_MIN_MGDL = 60.0
-    const val SPARK_MAX_MGDL = 220.0
+    /**
+     * Glass/Orbit UX round 6: at least 55-240 mg/dL (was 60-220), so in range the 70-180 band is a strip with headroom
+     * above and below in the lower, shorter plot (it filled the whole height and read as a box).
+     */
+    const val SPARK_MIN_MGDL = 55.0
+    const val SPARK_MAX_MGDL = 240.0
     const val SPARK_FLOOR_MGDL = 40.0
     const val SPARK_CEIL_MGDL = 400.0
     const val SPARK_INSET = 4f // Glass/Orbit UX round 5: 8 -> 4, the trace uses the whole height
@@ -131,11 +139,12 @@ object OrbitFaceLogic {
      * Glass/Orbit UX round 5: x 125..325 (12 px clear of the KH / basal discs), y 298..350: a warning pill at 6 o'clock
      * stacks the date above it ([DATE_STACK_Y]), so the chart ends 8 px higher.
      */
-    const val SPARK_X0 = 125f
-    const val SPARK_X_NOW = 298f
-    const val SPARK_X1 = 325f
-    const val SPARK_Y_TOP = 298f
-    const val SPARK_Y_BOTTOM = 350f
+    /** Glass/Orbit UX round 6: x 140..310, y 304..348, shorter and lower (less of a dashboard box). */
+    const val SPARK_X0 = 140f
+    const val SPARK_X_NOW = 287f
+    const val SPARK_X1 = 310f
+    const val SPARK_Y_TOP = 304f
+    const val SPARK_Y_BOTTOM = 348f
 
     /**
      * Delta row centre and the pill row under it (its own row, 8 px or more below the delta baseline: never over the
@@ -175,7 +184,7 @@ object OrbitFaceLogic {
      * Rework: text budget of a W1-W3 pill in the delta row. At [SLOT_MAX_WIDTH] its rounded ends touched the 4 and 8
      * o'clock satellites (0.7 px); 180 px keeps 8 px or more (the text shrinks to fit, the age is never cut).
      */
-    const val SLOT_IN_DELTA_MAX_WIDTH = 172f // Glass/Orbit UX round 4: 180 -> 172 for the r 35 discs
+    const val SLOT_IN_DELTA_MAX_WIDTH = 164f // Glass/Orbit UX round 6: 172 -> 164, the pill clear of the KH value on the 384 px round. Glass/Orbit UX round 4: 180 -> 172 for the r 35 discs
 
     /**
      * Glass/Orbit UX round 5: the whole delta-row pill (text, icon, padding) is clamped to the horizontal gap between
@@ -190,7 +199,7 @@ object OrbitFaceLogic {
     }
 
     /** Width of the pill row at 6 o'clock (its rounded ends keep 12 px or more to the bezel). */
-    const val PILL_ROW_MAX_WIDTH = 196f // Glass/Orbit UX round 5: 216 -> 196, the row sits 5 px lower
+    const val PILL_ROW_MAX_WIDTH = 184f // Glass/Orbit UX round 6: 196 -> 184. Before: Glass/Orbit UX round 5: 216 -> 196, the row sits 5 px lower
 
     /**
      * UX round 3: the TIEF/HOCH caption follows the delta on the delta row (as Glass), 30 px tall, so a W4-W9 pill
@@ -592,7 +601,7 @@ object OrbitFaceLogic {
 
     /** Ball value size (UX round 1: 22 -> 24) and the step-down size for wide values; labels 15 -> 18 (UX round 2, short words). */
     /** Glass/Orbit UX round 5: values 24 -> 26 and labels 19 -> 20 (a 14 px cap); the resting discs have no ring now. */
-    const val BALL_VALUE_SIZE = 26f
+    const val BALL_VALUE_SIZE = 24f // Glass/Orbit UX round 6: 26 -> 24, satellites rather than tiles
     const val BALL_VALUE_SMALL = 21f
     const val BALL_LABEL_SIZE = 20f
     /** Widest label ("BASAL") inside a disc; a wider label steps down to the 18 px floor. */
