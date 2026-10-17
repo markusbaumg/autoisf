@@ -94,6 +94,9 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 
+/** The caller string IobCobOref1Worker passes when it asks for the ISF of every 5 min bucket. */
+internal const val IOB_COB_WORKER_CALLER = "iobCobOref1Worker"
+
 @Singleton
 open class OpenAPSAutoISFPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
@@ -212,7 +215,7 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
             )
         else
             uiInteraction.dismissNotification(Notification.DYN_ISF_FALLBACK)
-        profiler.log(LTag.APS, String.format(Locale.getDefault(), "getIsfMgdl() %s %f %s %s", sensitivity.first, sensitivity.second, dateUtil.dateAndTimeAndSecondsString(start), caller), start)
+        profiler.log(LTag.AUTOISF, String.format(Locale.getDefault(), "getIsfMgdl() %s %f %s %s", sensitivity.first, sensitivity.second, dateUtil.dateAndTimeAndSecondsString(start), caller), start)
         return sensitivity.second?.let { it * multiplier }
     }
 
@@ -227,7 +230,10 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
             }
         }
         val sensitivity = if (count == 0) null else sum / count
-        aapsLogger.debug(LTag.APS, "getAverageIsfMgdl() $sensitivity from $count values ${dateUtil.dateAndTimeAndSecondsString(timestamp)} $caller")
+        // The IobCob worker asks once per 5 min bucket of the whole window (10,000 lines in an hour
+        // without BG); that trace goes to the AUTOISF tag, the loop's and overview's calls stay in APS.
+        val tag = if (caller == IOB_COB_WORKER_CALLER) LTag.AUTOISF else LTag.APS
+        aapsLogger.debug(tag, "getAverageIsfMgdl() $sensitivity from $count values ${dateUtil.dateAndTimeAndSecondsString(timestamp)} $caller")
         return sensitivity
     }
 
@@ -274,7 +280,7 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
         val sensitivity = autoISF(profile)
         if (sensitivity > 0) {
             // can default to 0, e.g. for the first 2-3 loops in a virgin setup
-            aapsLogger.debug("calculateVariableIsf CALC ${dateUtil.dateAndTimeAndSecondsString(timestamp)} $sensitivity")
+            aapsLogger.debug(LTag.AUTOISF, "calculateVariableIsf CALC ${dateUtil.dateAndTimeAndSecondsString(timestamp)} $sensitivity")
             autoIsfCache.put(key, sensitivity)
             if (autoIsfCache.size() > 1000) autoIsfCache.clear()
         }
@@ -504,8 +510,10 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "Glucose status:     $glucoseStatus")
         aapsLogger.debug(LTag.APS, "Current temp:       $currentTemp")
         // iobArray[0] is the IOB the algorithm starts from; the rest is the IOB curve for the
-        // predictions (~21 KB as JSON per run, 1.3 MB/h, the largest line in the log).
+        // predictions (~21 KB as JSON per run, 1.3 MB/h, the largest line in the log). The full
+        // array is available under the AUTOISF tag; the accessor form builds the JSON only then.
         aapsLogger.debug(LTag.APS, "IOB data:           ${iobArray.size} points, now ${gson.toJson(iobData)}")
+        aapsLogger.debug(LTag.AUTOISF) { "IOB data (full):    ${gson.toJson(iobArray)}" }
         aapsLogger.debug(LTag.APS, "Profile:            $oapsProfile")
         aapsLogger.debug(LTag.APS, "Autosens data:      $autosensResult")
         aapsLogger.debug(LTag.APS, "Meal data:          $mealData")
