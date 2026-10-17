@@ -500,6 +500,55 @@ class DataHandlerMobileWatchBolusSafetyTest : TestBaseWithProfile() {
         assertThat(delivered[0].carbs).isEqualTo(10.0)
     }
 
+    // ---- display-only confirm details ----
+
+    private fun confirmActions(): List<EventData.ConfirmAction> =
+        synchronized(toWatch) { toWatch.toList() }.filterIsInstance<EventData.ConfirmAction>().filter { it.returnCommand !is EventData.Error }
+
+    @Test fun `offered confirms carry display-only details that never change what is delivered`() {
+        whenever(ads.lastBg()).thenReturn(InMemoryGlucoseValue(timestamp = now - 120_000L, value = 65.0))
+
+        rxBus.send(EventData.ActionBolusPreCheck(1.0, 10))
+        val bolus = confirmActions().last()
+        assertThat(bolus.details!!.kind).isEqualTo(EventData.ConfirmDetails.KIND_BOLUS)
+        assertThat(bolus.details!!.insulin).isEqualTo(1.0)
+        assertThat(bolus.details!!.carbs).isEqualTo(10)
+        assertThat(bolus.details!!.bgMgdl).isEqualTo(65.0)
+        // the confirm itself is exactly as before
+        assertThat((bolus.returnCommand as EventData.ActionBolusConfirmed).insulin).isEqualTo(1.0)
+        assertThat((bolus.returnCommand as EventData.ActionBolusConfirmed).carbs).isEqualTo(10)
+
+        rxBus.send(EventData.ActionBolusPreCheck(0.0, 20))
+        assertThat(confirmActions().last().details!!.kind).isEqualTo(EventData.ConfirmDetails.KIND_CARBS)
+
+        rxBus.send(EventData.ActionFillPreCheck(0.5))
+        assertThat(confirmActions().last().details!!.kind).isEqualTo(EventData.ConfirmDetails.KIND_FILL)
+
+        rxBus.send(EventData.ActionECarbsPreCheck(30, 15, 3))
+        confirmActions().last().details!!.let {
+            assertThat(it.kind).isEqualTo(EventData.ConfirmDetails.KIND_ECARBS)
+            assertThat(it.carbs).isEqualTo(30)
+            assertThat(it.carbsDurationH).isEqualTo(3)
+        }
+
+        rxBus.send(offeredBolus()) // the bolus pending was replaced by the later prechecks
+        assertThat(errorsToWatch()).containsExactly(confirmRefused)
+        verify(commandQueue, never()).bolus(any(), anyOrNull())
+    }
+
+    @Test fun `quick wizard confirm carries the button name and the calculation as details`() {
+        prepareWizard(insulin = 2.0, carbs = 30)
+        quickWizardEntry(30)
+        rxBus.send(EventData.ActionQuickWizardPreCheck("guid"))
+        confirmActions().last().details!!.let {
+            assertThat(it.kind).isEqualTo(EventData.ConfirmDetails.KIND_WIZARD)
+            assertThat(it.label).isEqualTo("Meal")
+            assertThat(it.insulin).isEqualTo(2.0)
+            assertThat(it.carbs).isEqualTo(30)
+            assertThat(it.note).isEqualTo("explain")
+        }
+    }
+
     @Test fun `wizard confirm without precheck is refused`() {
         rxBus.send(EventData.ActionWizardConfirmed(now))
 

@@ -437,8 +437,99 @@ sealed class EventData : Event() {
     @Serializable
     data class OpenLoopRequest(val title: String, val message: String, val returnCommand: EventData?) : EventData()
 
-    @Serializable // returnCommand is sent back to Mobile after confirmation
-    data class ConfirmAction(val title: String, val message: String, val returnCommand: EventData?) : EventData()
+    /**
+     * returnCommand is sent back to Mobile after confirmation. [details] (optional, newer phones) only feeds the watch's
+     * confirm screen: what the treatment is, the estimated effect and timing and warnings. It is display-only: the watch
+     * never sends it back and the phone never reads it, the treatment is defined by [returnCommand] alone.
+     * A watch without this field cannot decode a ConfirmAction that carries it (strict JSON): phone and watch apps that
+     * send / show [details] are installed as a matched pair.
+     */
+    @Serializable
+    data class ConfirmAction(val title: String, val message: String, val returnCommand: EventData?, val details: ConfirmDetails? = null) : EventData()
+
+    /**
+     * Display-only content of a treatment confirm screen on the watch (see [ConfirmAction.details]). Glucose values are mg/dL
+     * ([unitsMgdl] says how to show them); effect and timing values are estimates the watch labels with "≈". Null = unknown,
+     * not shown.
+     *
+     * @param kind one of the KIND_ constants
+     * @param insulin insulin of the treatment as offered (U); [carbs] carbs as offered (g)
+     * @param label extra name, e.g. the quick wizard button text
+     * @param bgEffectMgdl ≈ BG change of this treatment: -insulin × ISF (+ carbs × ISF / IC when there is no insulin)
+     * @param carbsCovered ≈ carbs this insulin covers (insulin × IC); [insulinForCarbs] ≈ insulin these carbs need (carbs / IC)
+     * @param iobNow / [iobAfter] IOB now and right after this bolus (U); [cobNow] / [cobAfter] the same for COB (g)
+     * @param deliverySeconds ≈ time the pump needs to deliver [insulin]; [insulinPeakMin] peak time of the active insulin
+     * @param lastBolusMinAgo / [lastBolusAmount] the last manual (normal) bolus
+     * @param carbsStart / [carbsDurationH] start time and duration of extended carbs
+     * @param note extra lines, e.g. the wizard's calculation
+     */
+    @Serializable
+    data class ConfirmDetails(
+        val kind: String = KIND_OTHER,
+        val insulin: Double = 0.0,
+        val carbs: Int = 0,
+        val label: String = "",
+        val unitsMgdl: Boolean = true,
+        val bgMgdl: Double? = null,
+        val bgAgeMin: Int? = null,
+        val deltaMgdl: Double? = null,
+        val arrow: String = "",
+        val bgEffectMgdl: Double? = null,
+        val carbsCovered: Double? = null,
+        val insulinForCarbs: Double? = null,
+        val iobNow: Double? = null,
+        val iobAfter: Double? = null,
+        val cobNow: Double? = null,
+        val cobAfter: Double? = null,
+        val deliverySeconds: Int? = null,
+        val insulinPeakMin: Int? = null,
+        val lastBolusMinAgo: Int? = null,
+        val lastBolusAmount: Double? = null,
+        val carbsStart: Long? = null,
+        val carbsDurationH: Int? = null,
+        val note: String = "",
+        val warnings: List<ConfirmWarning> = emptyList()
+    ) {
+
+        companion object {
+
+            const val KIND_BOLUS = "bolus"
+            const val KIND_CARBS = "carbs"
+            const val KIND_WIZARD = "wizard"
+            const val KIND_ECARBS = "ecarbs"
+            const val KIND_FILL = "fill"
+            const val KIND_OTHER = "other"
+        }
+    }
+
+    /**
+     * A warning on the confirm screen (display only, never blocks). [code] is one of the W_ constants (an unknown code is
+     * shown generically), [level] 1 = caution (amber), 2 = danger (red); [value] / [value2] its numbers (see the codes).
+     */
+    @Serializable
+    data class ConfirmWarning(val code: String, val level: Int = LEVEL_CAUTION, val value: Double? = null, val value2: Double? = null) {
+
+        companion object {
+
+            const val LEVEL_CAUTION = 1
+            const val LEVEL_DANGER = 2
+
+            /** BG below the low mark. value = BG mg/dL */
+            const val W_BG_LOW = "bg_low"
+            /** BG falling. value = delta mg/dL per 5 min */
+            const val W_BG_FALLING = "bg_falling"
+            /** Last BG reading old. value = age in minutes */
+            const val W_BG_STALE = "bg_stale"
+            /** No BG reading at all. */
+            const val W_NO_BG = "no_bg"
+            /** A manual bolus shortly before. value = minutes ago, value2 = its amount U */
+            const val W_RECENT_BOLUS = "recent_bolus"
+            /** Close to the max bolus. value = max bolus U */
+            const val W_NEAR_MAX_BOLUS = "near_max_bolus"
+            /** Constraints changed the request. value = requested insulin U (or null), value2 = requested carbs g (or null) */
+            const val W_CONSTRAINT = "constraint"
+        }
+    }
 
     @Serializable
     data class SnoozeAlert(val timeStamp: Long) : EventData()

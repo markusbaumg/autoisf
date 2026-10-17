@@ -48,6 +48,7 @@ import app.aaps.wear.complications.UploaderBatteryComplication
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.interaction.WatchfaceConfigurationActivity
 import app.aaps.wear.interaction.actions.AcceptActivity
+import app.aaps.wear.interaction.actions.ConfirmScreen
 import app.aaps.wear.interaction.actions.ProfileSwitchActivity
 import app.aaps.wear.tile.ActionsTileService
 import app.aaps.wear.tile.LoopStateTileService
@@ -104,6 +105,8 @@ class DataHandlerWear @Inject constructor(
                             bundle.putString(DataLayerListenerServiceWear.KEY_TITLE, it.title)
                             bundle.putString(DataLayerListenerServiceWear.KEY_MESSAGE, it.message)
                             bundle.putString(DataLayerListenerServiceWear.KEY_ACTION_DATA, it.returnCommand?.serialize())
+                            // display only (ConfirmScreen); never sent back
+                            ConfirmScreen.encode(it.details)?.let { details -> bundle.putString(ConfirmScreen.KEY_DETAILS, details) }
                         }
                     )
                 })

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Watch confirm screen (AcceptActivity). Effect and timing values are estimates and always carry "≈". -->
+<resources>
+    <string name="confirm_kind_bolus">Bolus</string>
+    <string name="confirm_kind_bolus_carbs">Bolus + carbs</string>
+    <string name="confirm_kind_carbs">Carbs</string>
+    <string name="confirm_kind_wizard">Wizard</string>
+    <string name="confirm_kind_ecarbs">Extended carbs</string>
+    <string name="confirm_kind_fill">Prime / fill</string>
+    <string name="confirm_insulin">%1$s&#160;U</string>
+    <string name="confirm_grams">%1$s&#160;g</string>
+    <string name="confirm_plus_carbs">%1$s&#160;g carbs</string>
+    <string name="confirm_section_effect">Effect ≈</string>
+    <string name="confirm_section_timing">Timing</string>
+    <string name="confirm_section_calc">Calculation</string>
+    <string name="confirm_row_bg">BG</string>
+    <string name="confirm_row_bg_without_carbs">Insulin</string>
+    <string name="confirm_row_iob">IOB</string>
+    <string name="confirm_row_cob">COB</string>
+    <string name="confirm_row_covers">Covers</string>
+    <string name="confirm_row_needs">Needs</string>
+    <string name="confirm_row_delivery">Delivery</string>
+    <string name="confirm_row_peak">Peak</string>
+    <string name="confirm_row_last_bolus">Last bolus</string>
+    <string name="confirm_row_start">Start</string>
+    <string name="confirm_row_duration">Duration</string>
+    <string name="confirm_approx">≈ %1$s</string>
+    <string name="confirm_covers_of">≈ %1$s of %2$s g</string>
+    <string name="confirm_change">%1$s → %2$s</string>
+    <string name="confirm_seconds">≈&#160;%1$d&#160;s</string>
+    <string name="confirm_min_seconds">≈&#160;%1$d&#160;min&#160;%2$d&#160;s</string>
+    <string name="confirm_in_minutes">≈ in&#160;%1$d&#160;min</string>
+    <string name="confirm_minutes_ago">%1$d&#160;min ago</string>
+    <string name="confirm_hours">%1$d&#160;h</string>
+    <string name="confirm_per_5min">%1$s&#160;/ 5 min</string>
+    <string name="confirm_swipe_hint">Swipe to confirm  ›</string>
+    <string name="confirm_tap_deliver">Tap to deliver</string>
+    <string name="confirm_tap_enter">Tap to enter</string>
+    <string name="confirm_tap_confirm">Tap to confirm</string>
+    <string name="confirm_tap_close">Tap to close</string>
+    <string name="confirm_warnings_more">+%1$d more</string>
+    <string name="confirm_w_low">LOW</string>
+    <string name="confirm_w_falling">FALLING</string>
+    <string name="confirm_w_falling_fast">FALLING FAST</string>
+    <string name="confirm_w_stale">OLD DATA</string>
+    <string name="confirm_w_stale_detail">%1$d&#160;min ago</string>
+    <string name="confirm_w_no_bg">NO BG</string>
+    <string name="confirm_w_no_bg_detail">no current reading</string>
+    <string name="confirm_w_recent_bolus">RECENT BOLUS</string>
+    <string name="confirm_w_near_max">NEAR MAX BOLUS</string>
+    <string name="confirm_w_near_max_detail">max&#160;%1$s&#160;U</string>
+    <string name="confirm_w_constraint">LIMITED</string>
+    <string name="confirm_w_constraint_detail">requested %1$s</string>
+    <string name="confirm_w_other">NOTE</string>
+</resources>
