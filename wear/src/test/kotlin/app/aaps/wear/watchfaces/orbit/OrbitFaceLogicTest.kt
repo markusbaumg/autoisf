@@ -338,7 +338,8 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.cobBall("0g", en).label).isEqualTo("COB")
         // spec v2: COB > 0 is neutral, not amber
         assertThat(OrbitFaceLogic.cobBall("12g", de).ring).isEqualTo(Ring.NEUTRAL)
-        assertThat(OrbitFaceLogic.cobBall("20(30)g", de)).isEqualTo(OrbitFaceLogic.Ball("20g", "KH", Ring.NEUTRAL))
+        assertThat(OrbitFaceLogic.cobBall("20(30)g", de)).isEqualTo(OrbitFaceLogic.Ball("20g", "KH", Ring.NEUTRAL, arc = 0.25f))
+        assertThat(OrbitFaceLogic.cobBall("120g", de).arc).isEqualTo(1f)
         assertThat(OrbitFaceLogic.cobBall("--g", de)).isEqualTo(OrbitFaceLogic.Ball("--", "KH", Ring.DIM))
         assertThat(OrbitFaceLogic.ttBall("8,0", 2)).isEqualTo(OrbitFaceLogic.Ball("8,0", "TT", Ring.VIOLET))
         assertThat(OrbitFaceLogic.ttBall("4,4 - 5,0", 2)!!.value).isEqualTo("4,4-5,0")
@@ -446,20 +447,17 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.DEG_LOOP + OrbitFaceLogic.DEG_IOB).isEqualTo(360f)
         assertThat(OrbitFaceLogic.DEG_COB + OrbitFaceLogic.DEG_BASAL).isEqualTo(360f)
         assertThat(OrbitFaceLogic.DEG_TT + OrbitFaceLogic.DEG_BOLUS).isEqualTo(360f)
-        // the pill row has its own line 8 px or more below the delta baseline (never over the delta)
-        val deltaBaseline = OrbitFaceLogic.DELTA_ROW_Y + OrbitFaceLogic.DELTA_SIZE * 0.36f
-        assertThat(OrbitFaceLogic.SLOT_Y - OrbitFaceLogic.SLOT_H / 2f - deltaBaseline).isAtLeast(8f)
-        // UX round 4: 8 px or more also under the TIEF/HOCH pill of the delta row, and 8 px from the pill to the moved sparkline
-        assertThat(OrbitFaceLogic.SLOT_Y - OrbitFaceLogic.SLOT_H / 2f - (OrbitFaceLogic.DELTA_ROW_Y + OrbitFaceLogic.CAPTION_H / 2f)).isAtLeast(8f)
-        assertThat(OrbitFaceLogic.SPARK_Y_TOP_PILL - (OrbitFaceLogic.SLOT_Y + OrbitFaceLogic.SLOT_H / 2f)).isAtLeast(8f)
-        // the moved sparkline (pill row shown) stays below the pills and above the date line
+        // Glass/Orbit UX round 2: the W4-W9 pill row takes the date's place at 6 o'clock, 16 px or more under the
+        // (fixed) chart, and its rounded ends keep 12 px or more to the bezel
         val dateY = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f)
-        assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM_PILL).isLessThan(dateY - 12f - 11f)
-        assertThat(OrbitFaceLogic.SLOT_Y + OrbitFaceLogic.SLOT_H / 2f).isLessThan(OrbitFaceLogic.SPARK_Y_TOP_PILL)
-        // UX round 3: a W1-W3 pill in the delta row sits lower (clear of a struck comma) and the sparkline moves under it
+        assertThat(OrbitFaceLogic.SLOT_Y).isEqualTo(dateY)
+        assertThat(OrbitFaceLogic.SLOT_Y - OrbitFaceLogic.SLOT_H / 2f - OrbitFaceLogic.SPARK_Y_BOTTOM).isAtLeast(16f)
+        val endCx = OrbitFaceLogic.CX - OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f + OrbitFaceLogic.SLOT_H / 2f
+        assertThat(225f - kotlin.math.hypot(endCx - 225f, OrbitFaceLogic.SLOT_Y - 225f) - OrbitFaceLogic.SLOT_H / 2f).isAtLeast(12f)
+        // one chart box for every state: a W1-W3 pill in the delta row stays above it (no reflow)
         assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y - OrbitFaceLogic.SLOT_H / 2f).isAtLeast(OrbitFaceLogic.DELTA_ROW_Y - 12f)
-        assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y + OrbitFaceLogic.SLOT_H / 2f).isLessThan(OrbitFaceLogic.SPARK_Y_TOP_SLOT)
-        assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM_SLOT).isLessThan(dateY - 12f - 11f)
+        assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y + OrbitFaceLogic.SLOT_H / 2f).isLessThan(OrbitFaceLogic.SPARK_Y_TOP)
+        assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM).isLessThan(dateY - 12f - 11f)
         // ... and its widest text plus the warning icon keeps clear of the 4 and 8 o'clock satellites
         val half = (OrbitFaceLogic.SLOT_IN_DELTA_MAX_WIDTH + 20f) / 2f + 14f
         val endX = OrbitFaceLogic.CX - half + OrbitFaceLogic.SLOT_H / 2f
@@ -471,8 +469,9 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.TIME_Y - 0.36f * OrbitFaceLogic.TIME_SIZE).isAtLeast(58f)
         // the 180 px sparkline stays clear of the lower satellites
         val cobRight = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB) + OrbitFaceLogic.BALL_R
-        assertThat(OrbitFaceLogic.SPARK_X0 - cobRight).isAtLeast(8f)
-        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(200f)
+        // Glass/Orbit UX round 2: 16 px or more clearance to the 4 and 8 o'clock satellites (no plate around the plot)
+        assertThat(OrbitFaceLogic.SPARK_X0 - cobRight).isAtLeast(16f)
+        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(180f)
         // UX round 2: the pill row (TIEF/HOCH + status) stays 4 px or more clear of the 4 o'clock satellite's shell
         val basalLeft = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL) - OrbitFaceLogic.BALL_R
         assertThat(OrbitFaceLogic.CX + OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f).isAtMost(basalLeft - 4f)
@@ -591,12 +590,14 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.dateLine("", "5,5", 24f, 20f, 196f, m)).isEqualTo("" to "TT 5,5")
     }
 
-    @Test fun loopPillFoldsIntoTheSatelliteNextToACaption() {
+    @Test fun loopPillFoldsIntoTheLoopSatellite() {
         val loop = OrbitFaceLogic.Slot(6, "Loop 23′", OrbitFaceLogic.Tone.ALERT)
-        assertThat(OrbitFaceLogic.foldLoopPill(loop, captionInDelta = true, loopBallShown = true)).isTrue()
-        assertThat(OrbitFaceLogic.foldLoopPill(loop, captionInDelta = false, loopBallShown = true)).isFalse()
-        assertThat(OrbitFaceLogic.foldLoopPill(loop, captionInDelta = true, loopBallShown = false)).isFalse()
-        assertThat(OrbitFaceLogic.foldLoopPill(OrbitFaceLogic.Slot(8, "Reservoir 5 U", OrbitFaceLogic.Tone.ALERT), true, true)).isFalse()
+        assertThat(OrbitFaceLogic.foldLoopPill(loop, loopBallShown = true)).isTrue()
+        assertThat(OrbitFaceLogic.foldLoopPill(OrbitFaceLogic.Slot(5, "Loop aus", OrbitFaceLogic.Tone.WARN), loopBallShown = true)).isTrue()
+        assertThat(OrbitFaceLogic.foldLoopPill(loop, loopBallShown = false)).isFalse()
+        assertThat(OrbitFaceLogic.foldLoopPill(loop, loopBallShown = true, ambient = true)).isFalse() // no ring in ambient
+        assertThat(OrbitFaceLogic.foldLoopPill(OrbitFaceLogic.Slot(8, "Reservoir 5 U", OrbitFaceLogic.Tone.ALERT), true)).isFalse()
+        assertThat(OrbitFaceLogic.foldLoopPill(OrbitFaceLogic.Slot(4, "Kein Profil", OrbitFaceLogic.Tone.WARN), true)).isFalse()
     }
 
     @Test fun angleDiffWraps() {
@@ -614,7 +615,6 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.sparkY(500.0)).isEqualTo(OrbitFaceLogic.SPARK_Y_TOP)
         assertThat(OrbitFaceLogic.sparkY(20.0)).isEqualTo(OrbitFaceLogic.SPARK_Y_BOTTOM)
         assertThat(OrbitFaceLogic.sparkY(54.0)).isLessThan(OrbitFaceLogic.SPARK_Y_BOTTOM - 5f)
-        assertThat(OrbitFaceLogic.sparkY(400.0, OrbitFaceLogic.SPARK_Y_TOP_PILL, OrbitFaceLogic.SPARK_Y_BOTTOM_PILL)).isEqualTo(OrbitFaceLogic.SPARK_Y_TOP_PILL)
         // the 10 mmol/L (180 mg/dL) high line sits at about 35 % from the top
         val f = (OrbitFaceLogic.sparkY(180.0) - OrbitFaceLogic.SPARK_Y_TOP) / (OrbitFaceLogic.SPARK_Y_BOTTOM - OrbitFaceLogic.SPARK_Y_TOP)
         assertThat(f).isWithin(0.02f).of(0.35f)

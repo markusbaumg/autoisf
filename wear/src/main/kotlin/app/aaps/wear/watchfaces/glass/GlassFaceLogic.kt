@@ -165,13 +165,19 @@ object GlassFaceLogic {
 
     const val SEPARATOR_KERN = 0.07f
 
-    /** Hue of the BG digits (spec §4.1, F1): low and urgent low are red, never white; stale grey; else white. */
-    enum class DigitTone { WHITE, LOW, STALE }
+    /**
+     * Hue of the BG digits (spec §4.1, F1): low and urgent low are red, never white; stale grey.
+     * Glass/Orbit UX round 2 (sunlight): high and very high are amber digits (the glow alone washed out outdoors, so 6,4
+     * and 12,4 looked alike); in range is a pale mint (the family maps hue to state the same way on all three faces,
+     * Glass keeps its calmer, lighter tint).
+     */
+    enum class DigitTone { IN, HIGH, LOW, STALE }
 
     fun digitTone(range: Range, stale: Boolean): DigitTone = when {
-        stale                                          -> DigitTone.STALE
-        range == Range.LOW || range == Range.URGENT_LOW -> DigitTone.LOW
-        else                                           -> DigitTone.WHITE
+        stale                                              -> DigitTone.STALE
+        range == Range.LOW || range == Range.URGENT_LOW    -> DigitTone.LOW
+        range == Range.HIGH || range == Range.VERY_HIGH    -> DigitTone.HIGH
+        else                                               -> DigitTone.IN
     }
 
     /**
@@ -504,7 +510,7 @@ object GlassFaceLogic {
      * fill is gone, values are drawn inside a [SPARK_INSET] px inset so the line never touches the card or the pills.
      */
     const val SPARK_X0 = 70f
-    const val SPARK_X0_BALL = 140f
+    const val SPARK_X0_BALL = 128f // Glass/Orbit UX round 2: 140 -> 128, the ball sits tighter to the chart
     const val SPARK_Y0 = 294f
     const val SPARK_X1 = 380f
     const val SPARK_Y1 = 342f
@@ -516,9 +522,23 @@ object GlassFaceLogic {
     /** A gap longer than this breaks the line (graph.gaps). */
     const val GAP_MS = 15 * MINUTE_MS
 
-    /** Y range: 3,3-12,2 mmol/L (60-220 mg/dL), clamped flat at the edge; the 70-180 band takes about 70 % of the plot. */
+    /**
+     * Y range. Glass/Orbit UX round 2 (safety): a log scale whose range adapts to the visible values, so a very high or
+     * urgent low trace is never clamped flat at the edge (you could not tell whether it was still falling): at least
+     * 60-220 mg/dL (the 70-180 band then takes about 70 % of the plot), widened to (visible min - 5, visible max + 20)
+     * within 40-400 mg/dL (band about 50 % at 400).
+     */
     const val SPARK_MIN_MGDL = 60.0
     const val SPARK_MAX_MGDL = 220.0
+    const val SPARK_FLOOR_MGDL = 40.0
+    const val SPARK_CEIL_MGDL = 400.0
+
+    /** (lo, hi) of the plot for the visible values [minMgdl]..[maxMgdl] (NaN when there are none). */
+    fun sparkRange(minMgdl: Double, maxMgdl: Double): Pair<Double, Double> {
+        val lo = if (minMgdl.isNaN()) SPARK_MIN_MGDL else min(SPARK_MIN_MGDL, minMgdl - 5.0).coerceAtLeast(SPARK_FLOOR_MGDL)
+        val hi = if (maxMgdl.isNaN()) SPARK_MAX_MGDL else max(SPARK_MAX_MGDL, maxMgdl + 20.0).coerceAtMost(SPARK_CEIL_MGDL)
+        return lo to hi
+    }
 
     /** x of slot [slot] (fractional), "now" is slot 35; with [forecast] the 12 future slots follow, else now is the right edge. */
     fun sparkX(slot: Float, x0: Float = SPARK_X0, forecast: Boolean = true): Float {
@@ -529,12 +549,13 @@ object GlassFaceLogic {
     /** x of the now line (about 297 with a forecast, the right edge without). */
     fun nowX(x0: Float = SPARK_X0, forecast: Boolean = true): Float = sparkX((SPARK_HISTORY - 1).toFloat(), x0, forecast)
 
-    /** y for a value in mg/dL, clamped to the plot less [SPARK_INSET] at the top and bottom. */
-    fun sparkY(mgdl: Double): Float {
-        val v = mgdl.coerceIn(SPARK_MIN_MGDL, SPARK_MAX_MGDL)
+    /** y for a value in mg/dL on a log scale over [lo]..[hi], clamped to the plot less [SPARK_INSET] at the top and bottom. */
+    fun sparkY(mgdl: Double, lo: Double = SPARK_MIN_MGDL, hi: Double = SPARK_MAX_MGDL): Float {
+        val v = mgdl.coerceIn(lo, hi)
         val top = SPARK_Y0 + SPARK_INSET
         val bottom = SPARK_Y1 - SPARK_INSET
-        return (bottom - (v - SPARK_MIN_MGDL) / (SPARK_MAX_MGDL - SPARK_MIN_MGDL) * (bottom - top)).toFloat()
+        val f = kotlin.math.ln(v / lo) / kotlin.math.ln(hi / lo)
+        return (bottom - f * (bottom - top)).toFloat()
     }
 
     /**
@@ -610,16 +631,16 @@ object GlassFaceLogic {
      * UX round 4: (90, 322); Glass rework (92, 324), 10 px under the card, 30 px or more from the bezel; its hit area reaches 78 px down from
      * the card to the bezel and 88 px across, the pill row moves right of it.
      */
-    const val BALL_X = 92f
-    const val BALL_Y = 324f
+    const val BALL_X = 88f // Glass/Orbit UX round 2: (92, 324) -> (88, 318): 12 px to the graph at 128, 31 px to the bezel
+    const val BALL_Y = 318f
     const val BALL_R = 28f
 
     /** Pill row band (UX round 4: borderless; Glass/Orbit UX round 1: text centred at y 360). */
     const val PILL_Y0 = 350f
 
     /** Hit-area clips: 2 px under the card, 8 px left of the graph (which starts at [SPARK_X0_BALL]). */
-    const val BALL_HIT_TOP = 288f
-    const val BALL_HIT_RIGHT = 132f
+    const val BALL_HIT_TOP = 284f // HERO_Y1 + 2
+    const val BALL_HIT_RIGHT = SPARK_X0_BALL - 8f
 
     /** Hit radius on the 450 grid at xhdpi: 48 px = 24 dp, the family's 48 dp target (the face scales it to stay 24 dp). */
     const val BALL_HIT_R = 48f
@@ -640,20 +661,25 @@ object GlassFaceLogic {
      * Glass rework: y 120..286 (14 px under the date); 134 px digits with the cap from y 133 to the baseline at 228,
      * the chip centred on the cap (y 180), the delta line at y 268: 10 px between the comma's tail and the delta.
      */
+    /**
+     * Glass/Orbit UX round 2: the card is 4 px shorter (y 120..282, the digits 2 px up) and the date 1 px up, so the date
+     * keeps 15 px of air above the card's highlight and the lower stack gets room; the digits stay 134 px (measured on
+     * the renders: the "6" is 98 px tall, Halo's 101 px).
+     */
     const val HERO_X0 = 63f
     const val HERO_X1 = 387f
     const val HERO_Y0 = 120f
-    const val HERO_Y1 = 286f
-    const val META_Y = 268f
+    const val HERO_Y1 = 282f
+    const val META_Y = 264f
 
     /** Trend chip column (UX round 4: r 18 -> 24). */
     const val CHIP_X = 352f
     const val CHIP_R = 24f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
-        showChip  -> if (metaEmpty) HeroLayout(198f, 205f, BG_MAX_WIDTH, 203f, 225f, META_Y) else HeroLayout(198f, 182f, BG_MAX_WIDTH, 180f, 225f, META_Y)
-        metaEmpty -> HeroLayout(225f, 205f, BG_MAX_WIDTH_NO_CHIP, 203f, 225f, META_Y)
-        else      -> HeroLayout(225f, 182f, BG_MAX_WIDTH_NO_CHIP, 180f, 225f, META_Y)
+        showChip  -> if (metaEmpty) HeroLayout(198f, 201f, BG_MAX_WIDTH, 199f, 225f, META_Y) else HeroLayout(198f, 180f, BG_MAX_WIDTH, 178f, 225f, META_Y)
+        metaEmpty -> HeroLayout(225f, 201f, BG_MAX_WIDTH_NO_CHIP, 199f, 225f, META_Y)
+        else      -> HeroLayout(225f, 180f, BG_MAX_WIDTH_NO_CHIP, 178f, 225f, META_Y)
     }
 
     /**
@@ -681,14 +707,23 @@ object GlassFaceLogic {
         else (!isStale(age) && prefShowDelta) to showAge(prefShowAgo, age)
 
     /**
-     * Loop dot fill (spec §4.6): OK and WARN are filled, except that a filled warn dot turns into a hollow ring
-     * while W2/W3 own the status slot (red budget, the footer already names the connection problem).
+     * Glass/Orbit UX round 2 (one owner per fact, as Halo): when W2/W3 own the slot ("Keine Daten · 17′", "Telefon
+     * getrennt · 14′") that text goes to the card's META row under the struck digits, and the footer keeps its normal
+     * line (TT, basal). Returns the warning for the META row, or null.
      */
-    fun loopDotFilled(health: LoopHealth, owner: Warning?): Boolean = when (health) {
-        LoopHealth.OK   -> true
-        LoopHealth.WARN -> owner != Warning.PHONE_LOST && owner != Warning.NO_DATA
-        else            -> false
-    }
+    fun metaWarning(owner: Warning?): Warning? = owner?.takeIf { it.dataOld }
+
+    /** Warnings for the footer: none while a W2/W3 owner sits in the META row ([metaWarning]). */
+    fun footerWarnings(warnings: List<Warning>): List<Warning> = if (metaWarning(warnings.firstOrNull()) != null) emptyList() else warnings
+
+    /** Text of a W2/W3 [owner] for the META row, as the footer would have shown it. */
+    fun warningText(owner: Warning, i: FooterInput, words: SlotWords): Run? = warningRun(owner, i, words)
+
+    /**
+     * The loop glyph is greyed (and the age dimmed) while W2/W3 own the slot: the loop age then only repeats that the
+     * phone or the data is gone (UX round 2; the hollow-dot rule of the earlier dot).
+     */
+    fun loopGlyphMuted(owner: Warning?): Boolean = metaWarning(owner) != null
 
     /** The LOOP/LGS label is hidden only for an open loop ("Offen" fills the pill); never dropped for width (spec F14). */
     fun loopLabelAllowed(health: LoopHealth): Boolean = health != LoopHealth.OPEN

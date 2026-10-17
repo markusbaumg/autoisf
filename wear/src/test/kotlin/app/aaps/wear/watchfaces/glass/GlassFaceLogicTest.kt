@@ -535,13 +535,25 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkX(47f)).isEqualTo(380f)
         // without a forecast the plot ends at now (no empty quarter); with the ball it starts right of it
         assertThat(GlassFaceLogic.nowX(forecast = false)).isEqualTo(380f)
-        assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(140f)
+        assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(128f)
         assertThat(GlassFaceLogic.SPARK_X0_BALL).isGreaterThan(GlassFaceLogic.BALL_X + GlassFaceLogic.BALL_R + 8f)
         // UX round 4: values stay 4 px inside the plot (the line never meets the card or the pills)
         assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(338f)
         assertThat(GlassFaceLogic.sparkY(220.0)).isEqualTo(298f)
         assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(338f)
         assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(298f)
+        // Glass/Orbit UX round 2: the log range adapts to the visible values, a very high or urgent low trace is never
+        // clamped flat at the edge; the default 60-220 keeps the 70-180 band at about 70 % of the plot
+        assertThat(GlassFaceLogic.sparkRange(Double.NaN, Double.NaN)).isEqualTo(60.0 to 220.0)
+        assertThat(GlassFaceLogic.sparkRange(90.0, 160.0)).isEqualTo(60.0 to 220.0)
+        assertThat(GlassFaceLogic.sparkRange(39.0, 420.0)).isEqualTo(40.0 to 400.0)
+        assertThat(GlassFaceLogic.sparkRange(50.0, 300.0)).isEqualTo(45.0 to 320.0)
+        val (lo, hi) = GlassFaceLogic.sparkRange(100.0, 400.0)
+        assertThat(GlassFaceLogic.sparkY(399.0, lo, hi)).isGreaterThan(GlassFaceLogic.sparkY(400.0, lo, hi))
+        assertThat(GlassFaceLogic.sparkY(400.0, lo, hi)).isEqualTo(298f)
+        val band = (GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)) / (338f - 298f)
+        assertThat(band).isWithin(0.03f).of(0.73f)
+        assertThat((GlassFaceLogic.sparkY(70.0, lo, hi) - GlassFaceLogic.sparkY(180.0, lo, hi)) / (338f - 298f)).isAtLeast(0.45f)
         assertThat(GlassFaceLogic.SPARK_Y1 - GlassFaceLogic.SPARK_Y0).isAtLeast(48f)
         assertThat(GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)).isAtLeast(27f)
         assertThat(GlassFaceLogic.SPARK_Y0 - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
@@ -602,9 +614,9 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.ballHit(bx, GlassFaceLogic.HERO_Y1)).isFalse()
         assertThat(GlassFaceLogic.ballHit(bx, GlassFaceLogic.BALL_HIT_TOP)).isTrue()
         // no pill is ever under the hit area (the row starts right of it), so the circle reaches down to the bezel:
-        // 84 px of vertical target
+        // 82 px of vertical target (Glass/Orbit UX round 2: the ball moved 6 px up)
         assertThat(GlassFaceLogic.ballHit(bx, by + 48f)).isTrue()
-        assertThat(by + 48f - GlassFaceLogic.BALL_HIT_TOP).isAtLeast(84f)
+        assertThat(by + 48f - GlassFaceLogic.BALL_HIT_TOP).isAtLeast(80f)
         // the drawn ball keeps 30 px or more to the bezel
         val d = kotlin.math.hypot(bx - 225f, by - 225f) + GlassFaceLogic.BALL_R
         assertThat(225f - d).isAtLeast(30f)
@@ -627,31 +639,41 @@ class GlassFaceLogicTest {
     @Test fun heroReflowsWithoutTheChip() {
         val chip = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = false)
         assertThat(chip.bgX).isEqualTo(198f)
-        assertThat(chip.bgY).isEqualTo(182f)
-        assertThat(chip.chipY).isEqualTo(180f)
+        assertThat(chip.bgY).isEqualTo(180f)
+        assertThat(chip.chipY).isEqualTo(178f)
         // the delta line sits under the digits at full card width
         assertThat(chip.metaCentreX).isEqualTo(225f)
         assertThat(chip.metaY).isEqualTo(GlassFaceLogic.META_Y)
         assertThat(chip.bgMaxWidth).isEqualTo(GlassFaceLogic.BG_MAX_WIDTH)
         // empty meta line: digits and chip centre vertically
         val chipNoMeta = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = true)
-        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(205f to 203f)
+        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(201f to 199f)
         // the digits' left and right edges (half the budget) keep 12 px card padding and 8 px to the r 24 chip
         assertThat(chip.bgX - GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtLeast(GlassFaceLogic.HERO_X0 + 12f)
         assertThat(chip.bgX + GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtMost(GlassFaceLogic.CHIP_X - GlassFaceLogic.CHIP_R - 8f)
         assertThat(GlassFaceLogic.CHIP_X + GlassFaceLogic.CHIP_R).isAtMost(GlassFaceLogic.HERO_X1 - 8f)
-        // trend.hidden_pref: BG (225,182), meta under it, 300 px for the digits
+        // trend.hidden_pref: BG (225,180), meta under it, 300 px for the digits
         val noChip = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = false)
         assertThat(listOf(noChip.bgX, noChip.bgY, noChip.metaCentreX, noChip.metaY, noChip.bgMaxWidth))
-            .containsExactly(225f, 182f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
+            .containsExactly(225f, 180f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
         assertThat(GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).isAtMost(GlassFaceLogic.HERO_X1 - GlassFaceLogic.HERO_X0 - 24f)
         val noChipNoMeta = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = true)
-        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 205f)
+        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 201f)
         // the card stays inside the round screen at its corners (r 28)
         for ((x, y) in listOf(GlassFaceLogic.HERO_X0 + 8f to GlassFaceLogic.HERO_Y0 + 8f, GlassFaceLogic.HERO_X1 - 8f to GlassFaceLogic.HERO_Y1 - 8f))
             assertThat(kotlin.math.hypot(x - 225f, y - 225f)).isLessThan(215f)
         // the delta line stays inside the card (28 px text, 8 px padding)
         assertThat(GlassFaceLogic.META_Y + 14f).isAtMost(GlassFaceLogic.HERO_Y1 - 4f)
+    }
+
+    @Test fun dataOldWarningMovesIntoTheMetaRow() {
+        // Glass/Orbit UX round 2 (as Halo): "Keine Daten · 17′" is said once, in the card; the footer keeps its line
+        assertThat(GlassFaceLogic.metaWarning(Warning.NO_DATA)).isEqualTo(Warning.NO_DATA)
+        assertThat(GlassFaceLogic.metaWarning(Warning.PHONE_LOST)).isEqualTo(Warning.PHONE_LOST)
+        assertThat(GlassFaceLogic.metaWarning(Warning.LOOP_BAD)).isNull()
+        assertThat(GlassFaceLogic.metaWarning(null)).isNull()
+        assertThat(GlassFaceLogic.footerWarnings(listOf(Warning.NO_DATA, Warning.LOOP_BAD))).isEmpty()
+        assertThat(GlassFaceLogic.footerWarnings(listOf(Warning.LOOP_BAD, Warning.RES_LOW))).containsExactly(Warning.LOOP_BAD, Warning.RES_LOW).inOrder()
     }
 
     @Test fun chipOnlyForACurrentReading() {
@@ -663,12 +685,13 @@ class GlassFaceLogicTest {
     }
 
     @Test fun lowDigitsAreRedNeverWhite() {
-        // spec F1 / UX round 3: a fresh low reading (3,4) draws red digits like urgent low; only in range and high are white
+        // spec F1 / UX round 3: a fresh low reading (3,4) draws red digits like urgent low
         assertThat(GlassFaceLogic.digitTone(Range.LOW, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.LOW)
         assertThat(GlassFaceLogic.digitTone(Range.URGENT_LOW, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.LOW)
-        assertThat(GlassFaceLogic.digitTone(Range.IN, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.WHITE)
-        assertThat(GlassFaceLogic.digitTone(Range.HIGH, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.WHITE)
-        assertThat(GlassFaceLogic.digitTone(Range.VERY_HIGH, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.WHITE)
+        // Glass/Orbit UX round 2 (sunlight): high and very high are amber digits, in range its own (mint) tone
+        assertThat(GlassFaceLogic.digitTone(Range.IN, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.IN)
+        assertThat(GlassFaceLogic.digitTone(Range.HIGH, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.HIGH)
+        assertThat(GlassFaceLogic.digitTone(Range.VERY_HIGH, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.HIGH)
         assertThat(GlassFaceLogic.digitTone(Range.STALE, stale = true)).isEqualTo(GlassFaceLogic.DigitTone.STALE)
         assertThat(GlassFaceLogic.digitTone(Range.LOW, stale = true)).isEqualTo(GlassFaceLogic.DigitTone.STALE)
     }
@@ -727,14 +750,13 @@ class GlassFaceLogicTest {
         assertThat(p(pc = true)).isFalse()
     }
 
-    @Test fun loopDotAndLabel() {
-        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.OK, null)).isTrue()
-        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.WARN, null)).isTrue()
-        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.WARN, Warning.RES_LOW)).isTrue()
-        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.WARN, Warning.PHONE_LOST)).isFalse() // W2 owns the slot
-        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.WARN, Warning.NO_DATA)).isFalse()    // W3 owns the slot
-        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.BAD, null)).isFalse()
-        assertThat(GlassFaceLogic.loopDotFilled(LoopHealth.OFF, null)).isFalse()
+    @Test fun loopGlyphAndLabel() {
+        // Glass/Orbit UX round 2: the loop glyph greys while W2/W3 own the slot (the age only repeats the lost link)
+        assertThat(GlassFaceLogic.loopGlyphMuted(null)).isFalse()
+        assertThat(GlassFaceLogic.loopGlyphMuted(Warning.RES_LOW)).isFalse()
+        assertThat(GlassFaceLogic.loopGlyphMuted(Warning.LOOP_BAD)).isFalse()
+        assertThat(GlassFaceLogic.loopGlyphMuted(Warning.PHONE_LOST)).isTrue()
+        assertThat(GlassFaceLogic.loopGlyphMuted(Warning.NO_DATA)).isTrue()
         assertThat(GlassFaceLogic.loopLabelAllowed(LoopHealth.OFF)).isTrue() // loop.off keeps "LOOP"
         assertThat(GlassFaceLogic.loopLabelAllowed(LoopHealth.OPEN)).isFalse()
     }
