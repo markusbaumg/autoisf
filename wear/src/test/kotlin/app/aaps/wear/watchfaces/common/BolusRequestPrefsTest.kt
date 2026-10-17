@@ -158,15 +158,23 @@ class BolusRequestPrefsTest {
         assertThat(xml).contains("<item>${BolusRequestPrefs.MODE_PICKER}</item>")
     }
 
-    @Test fun orbitOffersTheModeAndTheSwitchWithSafeDefaults() {
-        val xml = File("src/main/res/xml/watch_face_configuration_orbit.xml").readText()
+    @Test fun orbitOffersTheModeAndTheSwitchWithSafeDefaults() = assertPickerSettings("orbit")
+
+    @Test fun glassOffersTheModeAndTheSwitchWithSafeDefaults() = assertPickerSettings("glass")
+
+    private fun assertPickerSettings(face: String) {
+        val xml = File("src/main/res/xml/watch_face_configuration_$face.xml").readText()
+        // the shared master switch stays first
+        assertThat(xml.indexOf("key_face_bolus_request_enabled\"")).isLessThan(xml.indexOf("key_face_bolus_request_mode\""))
         val mode = xml.substringBefore("android:key=\"@string/key_face_bolus_request_mode\"").substringAfterLast("<ListPreference")
         assertThat(mode).contains("android:defaultValue=\"fixed\"")
         assertThat(mode).contains("android:dependency=\"@string/key_face_bolus_request_enabled\"")
         val allow = xml.substringBefore("android:key=\"@string/key_face_bolus_request_allow_1_5\"").substringAfterLast("<CheckBoxPreference")
         assertThat(allow).contains("android:defaultValue=\"false\"")
-        // Orbit only in this build
-        for (face in listOf("halo", "glass")) {
+    }
+
+    @Test fun haloHasNoPickerSettingsYet() {
+        for (face in listOf("halo")) {
             val other = File("src/main/res/xml/watch_face_configuration_$face.xml").readText()
             assertThat(other).doesNotContain("key_face_bolus_request_mode")
             assertThat(other).doesNotContain("key_face_bolus_request_allow_1_5")

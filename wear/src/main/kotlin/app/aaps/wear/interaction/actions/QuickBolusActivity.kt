@@ -34,7 +34,7 @@ import java.util.Locale
 import javax.inject.Inject
 
 /**
- * Quick-bolus picker ("Schnell-Bolus"), opened only by Orbit's "+ U" ball in "Auswahl" mode (double tap, never in
+ * Quick-bolus picker ("Schnell-Bolus"), opened only by the "+ U" ball of Orbit or Glass in "Auswahl" mode (double tap, never in
  * ambient). Every decision lives in [QuickBolusPicker]; this activity draws it ([QuickBolusView]), re-asks the phone's
  * reachability on open and every few seconds, and sends the ONE request ([EventData.ActionBolusPreCheck]) exactly as
  * the face ball and BolusActivity do: the phone checks it again and the watch shows the unchanged confirm screen

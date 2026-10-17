@@ -40,6 +40,7 @@ import app.aaps.wear.R
 import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
+import app.aaps.wear.interaction.actions.QuickBolusActivity
 import app.aaps.wear.interaction.menus.MainMenuActivity
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.BallState
 import app.aaps.wear.watchfaces.common.FaceState.BgAge
@@ -135,6 +136,12 @@ class GlassWatchface : WatchFace() {
     private val guard = BolusRequestGuard(clock = { System.currentTimeMillis() }, store = BolusRequestPrefs.lastSentStore { sp })
     private val gesture get() = guard.gesture
     private var flashUntil = 0L
+    /** "Feste Menge" (the double tap sends the amount) or "Auswahl" (the same double tap opens QuickBolusActivity), as Orbit. */
+    private var bolusMode = BolusRequestPrefs.Mode.FIXED
+    /** Time the face last became interactive; a ball tap within [WAKE_IGNORE_MS] after it is ignored (sleeve, palm), as Halo/Orbit. */
+    private var interactiveSince = 0L
+    /** The shared pending lock as the ball was last checked (the picker may set it while the face is hidden). */
+    private var builtPending = false
     private var bgTapTime = 0L
     private var lastMenuOpenTime = 0L
     private val armedTick = object : Runnable {
@@ -361,6 +368,7 @@ class GlassWatchface : WatchFace() {
 
     override fun onWatchModeChanged(watchMode: WatchMode) {
         // mode.transition: ball hidden, armed cleared; ages recomputed before the next frame
+        if (watchMode == WatchMode.INTERACTIVE) interactiveSince = System.currentTimeMillis()
         disarm()
         burnX = 0f
         burnY = 0f
@@ -392,17 +400,23 @@ class GlassWatchface : WatchFace() {
 
     private fun bolusAmount(): Double = BolusRequestPrefs.amount(sp)
 
-    private fun bolusInput() = BolusRequestGuard.Input(
-        prefOn = BolusRequestPrefs.enabled(sp),
-        ambient = isAmbient,
-        wearControl = preferences.get(BooleanKey.WearControl),
-        amount = bolusAmount(),
-        maxBolus = BolusRequestPrefs.maxBolus(sp, getString(R.string.key_treatments_safety_max_bolus)),
-        lastPhoneMessage = data.lastUpdateTimestamp,
-        bgTimeStamp = data.bgData.timeStamp,
-        headless = isHeadless || !isLiveRender,
-        firstStart = firstStart
-    )
+    private fun bolusInput(): BolusRequestGuard.Input {
+        val picker = BolusRequestPrefs.mode(sp) == BolusRequestPrefs.Mode.PICKER
+        // picker (as Orbit): the ball is usable when the smallest amount is (each amount is checked again in the picker)
+        val pickerAmounts = if (picker) BolusRequestPrefs.pickerAmounts(sp) else BolusTapGesture.ALLOWED_AMOUNTS
+        return BolusRequestGuard.Input(
+            prefOn = BolusRequestPrefs.enabled(sp),
+            ambient = isAmbient,
+            wearControl = preferences.get(BooleanKey.WearControl),
+            amount = if (picker) pickerAmounts.min() else bolusAmount(),
+            maxBolus = BolusRequestPrefs.maxBolus(sp, getString(R.string.key_treatments_safety_max_bolus)),
+            lastPhoneMessage = data.lastUpdateTimestamp,
+            bgTimeStamp = data.bgData.timeStamp,
+            headless = isHeadless || !isLiveRender,
+            firstStart = firstStart,
+            allowedAmounts = pickerAmounts
+        )
+    }
 
     private fun disarm() {
         gesture.reset()
@@ -649,7 +663,9 @@ class GlassWatchface : WatchFace() {
         // ball (before the sparkline: the plot starts right of a drawn ball)
         val amount = bolusAmount()
         updateBall()
-        if (!amount.isNaN()) amountText = GlassFaceLogic.bolusAmountText(amount, locale)
+        bolusMode = BolusRequestPrefs.mode(sp)
+        if (bolusMode == BolusRequestPrefs.Mode.PICKER) amountText = PICKER_BALL_TEXT // "+ U": the amount is chosen in the picker
+        else if (!amount.isNaN()) amountText = GlassFaceLogic.bolusAmountText(amount, locale)
         ttText = rowRuns.firstOrNull { it.kind == GlassFaceLogic.RunKind.TT }?.text
         timeY = if (showDate || ttText != null) TIME_Y else TIME_Y_NO_DATE
         layoutRow(rowRuns.filter { it.kind != GlassFaceLogic.RunKind.TT })
@@ -679,6 +695,7 @@ class GlassWatchface : WatchFace() {
     }
 
     private fun updateBall() {
+        builtPending = guard.isPending
         bolusCheck = guard.check(bolusInput())
         ball = GlassFaceLogic.ballState(bolusCheck, gesture.isArmed)
         if (ball != BallState.ARMED && gesture.isArmed) disarm()
@@ -965,7 +982,7 @@ class GlassWatchface : WatchFace() {
         }
         val now = System.currentTimeMillis()
         if (dirty || now / GlassFaceLogic.MINUTE_MS != stateMinute) updateState(now)
-        else if (ball == BallState.SENT && !guard.isPending) updateBall()
+        else if ((ball == BallState.SENT && !guard.isPending) || guard.isPending != builtPending) updateBall()
         ensureBackgrounds()
 
         canvas.drawColor(Color.BLACK)
@@ -1613,11 +1630,23 @@ class GlassWatchface : WatchFace() {
         }
         val textColour = if (disabled) LABEL_COL else if (ball == BallState.SENT) withAlpha(Color.WHITE, 191) else Color.WHITE
         // Glass/Orbit UX round 6 (sunlight): a 1 px dark shadow under the amount on the sphere
-        setText(tf700, BALL_AMOUNT_SIZE, true, Paint.Align.CENTER)
-        text.color = textColour
-        if (!armed) text.setShadowLayer(1.5f, 0f, 1f, BALL_TEXT_SHADOW)
-        canvas.drawText(amountText, bx, baseline(by - 4f), text)
-        text.clearShadowLayer()
+        if (amountText == PICKER_BALL_TEXT) {
+            // "Auswahl" (as Orbit): a drawn plus where the amount sits (a text "+" is thin and small at 19 px)
+            stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = PICKER_PLUS_W
+            stroke.strokeCap = Paint.Cap.ROUND; stroke.color = textColour
+            if (!armed) stroke.setShadowLayer(1.5f, 0f, 1f, BALL_TEXT_SHADOW)
+            val k = PICKER_PLUS_HALF
+            val py = by - PICKER_PLUS_LIFT
+            canvas.drawLine(bx - k, py, bx + k, py, stroke)
+            canvas.drawLine(bx, py - k, bx, py + k, stroke)
+            stroke.clearShadowLayer()
+        } else {
+            setText(tf700, BALL_AMOUNT_SIZE, true, Paint.Align.CENTER)
+            text.color = textColour
+            if (!armed) text.setShadowLayer(1.5f, 0f, 1f, BALL_TEXT_SHADOW)
+            canvas.drawText(amountText, bx, baseline(by - 4f), text)
+            text.clearShadowLayer()
+        }
         when {
             armed                   -> {
                 // Glass/Orbit UX round 1: a confirm tick ("tap again to send") instead of "nochmal", which did not fit
@@ -1877,7 +1906,11 @@ class GlassWatchface : WatchFace() {
         // 24 dp radius whatever the screen (the family's 48 dp target), never less than the drawn ball's hit ring
         val hitR = maxOf(GlassFaceLogic.BALL_HIT_R, 24f * resources.displayMetrics.density / s)
         val inside = ball != BallState.HIDDEN && GlassFaceLogic.ballHit(dx, dy, r = hitR)
-        val outcome = guard.onTap(eventTime, inside, bolusInput())
+        // A tap on the ball right after the face woke up is most likely a sleeve or palm: ignore it (as Halo and Orbit).
+        if (inside && now - interactiveSince in 0 until WAKE_IGNORE_MS) return
+        // In picker mode the double tap only opens the picker: no request yet, so the 30 s pending lock does not start.
+        val pickerMode = bolusMode == BolusRequestPrefs.Mode.PICKER
+        val outcome = guard.onTap(eventTime, inside, bolusInput(), commitSend = !pickerMode)
         when (outcome.result) {
             TapResult.DUPLICATE -> return
             TapResult.ARM       -> {
@@ -1889,7 +1922,13 @@ class GlassWatchface : WatchFace() {
                 return
             }
 
-            TapResult.SEND      -> {
+            TapResult.SEND      -> if (pickerMode) {
+                handler.removeCallbacks(armedTick)
+                openQuickBolus()
+                dirty = true
+                invalidate()
+                return
+            } else {
                 handler.removeCallbacks(armedTick)
                 val amount = bolusAmount()
                 aapsLogger.info(LTag.WEAR, "GlassWatchface: double-tap bolus request $amount U")
@@ -1945,6 +1984,20 @@ class GlassWatchface : WatchFace() {
         }
     }
 
+    /** "Auswahl" mode: the double tap opens the quick-bolus picker (never in ambient: taps are dropped there). As Orbit. */
+    private fun openQuickBolus() {
+        if (isAmbient || isHeadless) return
+        aapsLogger.info(LTag.WEAR, "GlassWatchface: double tap opens the quick-bolus picker")
+        try {
+            // own task (taskAffinity ""), cleared: never stacked on a menu or wizard left in the app's task
+            startActivity(Intent(this, QuickBolusActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            })
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.WEAR, "GlassWatchface: quick-bolus picker failed to open", e)
+        }
+    }
+
     private fun toast(res: Int) {
         try {
             Toast.makeText(this, getString(res), Toast.LENGTH_SHORT).show()
@@ -1964,6 +2017,15 @@ class GlassWatchface : WatchFace() {
     companion object {
 
         private const val TAP_UP = 2
+
+        /** Ball text in "Auswahl" mode ("+" over "U"), drawn as a plus. */
+        private const val PICKER_BALL_TEXT = "+"
+        private const val PICKER_PLUS_HALF = 7.5f
+        private const val PICKER_PLUS_W = 3.4f
+        /** The plus sits where the amount's glyphs sit (19 px digits centred about 4 px above the ball's centre). */
+        private const val PICKER_PLUS_LIFT = 4f
+        /** As Halo and Orbit: ball taps in the first second after the screen woke are ignored. */
+        private const val WAKE_IGNORE_MS = 1000L
 
         private const val FRAME_MS = 33L
         private const val FLASH_MS = 150L

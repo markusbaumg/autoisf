@@ -22,6 +22,27 @@
         android:summary="%s"
         android:title="@string/pref_face_bolus_request_amount" />
 
+    <!-- Shared with Orbit, watch-only keys (strings_face_bolus.xml, BolusRequestPrefs): "fixed" keeps today's double tap
+         that sends the amount above; "picker" makes the same double tap open the quick-bolus picker. The shared switch
+         above stays the master switch. -->
+    <ListPreference
+        android:defaultValue="fixed"
+        android:dependency="@string/key_face_bolus_request_enabled"
+        android:entries="@array/face_bolus_request_mode_names"
+        android:entryValues="@array/face_bolus_request_mode_values"
+        android:key="@string/key_face_bolus_request_mode"
+        android:summary="%s"
+        android:title="@string/pref_face_bolus_request_mode" />
+
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:dependency="@string/key_face_bolus_request_enabled"
+        android:key="@string/key_face_bolus_request_allow_1_5"
+        android:summary="@string/pref_face_bolus_request_allow_1_5_summary"
+        android:title="@string/pref_face_bolus_request_allow_1_5"
+        app:wear_iconOff="@drawable/settings_off"
+        app:wear_iconOn="@drawable/settings_on" />
+
     <CheckBoxPreference
         android:defaultValue="true"
         android:key="@string/key_show_date"

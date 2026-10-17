@@ -91,6 +91,9 @@ class WatchfaceRenderHarness {
 
     enum class Face(val id: String) { HALO("halo"), GLASS("glass"), ORBIT("orbit") }
 
+    /** Faces whose bolus ball has the "Auswahl" (quick-bolus picker) mode. */
+    private val PICKER_FACES = setOf(Face.ORBIT, Face.GLASS)
+
     enum class Ball { OFF, IDLE, ARMED, SENT, DISABLED }
 
     enum class Mode { INTERACTIVE, AMBIENT, LOW_BIT, BURN_IN }
@@ -112,7 +115,7 @@ class WatchfaceRenderHarness {
         val haloLook: HaloAod.Look? = null,
         /** Glass only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
         val glassLook: GlassAod.Look? = null,
-        /** Orbit only: the bolus ball in "Auswahl" mode ("+ U", the double tap opens the picker); other faces skip it. */
+        /** Faces with the picker ([PICKER_FACES]): the bolus ball in "Auswahl" mode ("+ U", the double tap opens the picker); other faces skip it. */
         val picker: Boolean = false,
         /** A request sent this long ago (ms) by the picker or the ball: the shared 30 s pending lock. */
         val pendingAgoMs: Long? = null,
@@ -277,7 +280,7 @@ class WatchfaceRenderHarness {
         RenderState("ball_armed", ball = Ball.ARMED, data = inRange),
         RenderState("ball_sent", ball = Ball.SENT, data = inRange),
         RenderState("ball_disabled", ball = Ball.DISABLED, data = inRange),
-        // quick-bolus picker ("Auswahl" mode, Orbit only): "+ U", armed, and the shared lock after a picker request
+        // quick-bolus picker ("Auswahl" mode, [PICKER_FACES]): "+ U", armed, and the shared lock after a picker request
         RenderState("ball_picker", ball = Ball.IDLE, picker = true, data = inRange),
         RenderState("ball_picker_armed", ball = Ball.ARMED, picker = true, data = inRange),
         RenderState("ball_picker_pending", ball = Ball.IDLE, picker = true, pendingAgoMs = 5_000L, data = inRange),
@@ -399,7 +402,8 @@ class WatchfaceRenderHarness {
             val rendered = ArrayList<Pair<String, Bitmap>>()
             val lit = StringBuilder("state\tlit_pct\n")
             for (s in states) {
-                if ((s.orbitLook != null || s.picker) && face != Face.ORBIT) continue
+                if (s.orbitLook != null && face != Face.ORBIT) continue
+                if (s.picker && face !in PICKER_FACES) continue
                 if (s.haloLook != null && face != Face.HALO) continue
                 if (s.glassLook != null && face != Face.GLASS) continue
                 if (only?.containsMatchIn("${face.id}/${s.id}") == false) continue
