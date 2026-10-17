@@ -67,7 +67,7 @@ object GlassFaceLogic {
      * [basalInFooter]); it moves 8 px down to y 402 so the stats row above can drop 12 px and the chart gets air. Its
      * width is the chord at the new cap bottom (about y 411) less the 16 px margin.
      */
-    const val FOOTER_Y = 402f
+    // Glass AOD round 1: no footer row any more, its runs join the status row ([PILL_Y], [rowWarnings])
     const val EDGE_MARGIN = 16f
     const val FOOTER_MAX_WIDTH = 188f
 
@@ -398,7 +398,8 @@ object GlassFaceLogic {
     enum class RunKind { WARNING, TT, COB, BASAL, BGI, RESERVOIR, PHONE_BATTERY }
 
     /** One run of the footer line; [keep] orders what is dropped first when the line is too wide (low first). */
-    data class Run(val text: String, val kind: RunKind, val tone: Tone, val keep: Int)
+    /** [short]: a shorter wording of a warning ("Res. 5U"), used by the status row before it drops IOB; null = none. */
+    data class Run(val text: String, val kind: RunKind, val tone: Tone, val keep: Int, val short: String? = null)
 
     /** Localised words used in the status slot. */
     data class SlotWords(
@@ -412,7 +413,11 @@ object GlassFaceLogic {
         val phoneBattery: (Int) -> String,
         val cob: (String) -> String,
         val bgi: (String) -> String,
-        val age: AgeWords
+        val age: AgeWords,
+        /** Short wordings for the status row (panel round 2: a long warning shortens before IOB is dropped). */
+        val phoneLostShort: ((String) -> String)? = null,
+        val reservoirShort: ((String) -> String)? = null,
+        val phoneBatteryShort: ((Int) -> String)? = null
     )
 
     data class FooterInput(
@@ -440,14 +445,14 @@ object GlassFaceLogic {
 
     private fun warningRun(w: Warning, i: FooterInput, words: SlotWords): Run? = when (w) {
         Warning.WAITING          -> Run(words.waiting, RunKind.WARNING, Tone.TXT2, 100)
-        Warning.PHONE_LOST       -> Run(words.phoneLost(ageText(i.dataAgeMinutes, words.age)), RunKind.WARNING, Tone.ALERT, 100)
+        Warning.PHONE_LOST       -> ageText(i.dataAgeMinutes, words.age).let { a -> Run(words.phoneLost(a), RunKind.WARNING, Tone.ALERT, 100, words.phoneLostShort?.invoke(a)) }
         Warning.NO_DATA          -> Run(words.noData(ageText(maxOf(i.dataAgeMinutes ?: 0, i.bgAgeMinutes ?: 0).takeIf { i.dataAgeMinutes != null || i.bgAgeMinutes != null }, words.age)), RunKind.WARNING, Tone.ALERT, 100)
         Warning.NO_PROFILE       -> Run(words.noProfile, RunKind.WARNING, Tone.WARN, 100)
         Warning.LOOP_OFF         -> Run(words.loopOff, RunKind.WARNING, Tone.WARN, 100)
         Warning.LOOP_BAD         -> Run(words.loopAge(ageText(i.loopAgeMinutes, words.age)), RunKind.WARNING, Tone.ALERT, 100)
-        Warning.RES_CRITICAL     -> Run(words.reservoir(i.reservoirString.trim()), RunKind.WARNING, Tone.ALERT, 100)
-        Warning.PHONE_BATTERY    -> phoneBatteryPercent(i.phoneBattery)?.let { Run(words.phoneBattery(it), RunKind.WARNING, if (it < 10) Tone.ALERT else Tone.WARN, 100) }
-        Warning.RES_LOW          -> Run(words.reservoir(i.reservoirString.trim()), RunKind.WARNING, Tone.WARN, 100)
+        Warning.RES_CRITICAL     -> i.reservoirString.trim().let { r -> Run(words.reservoir(r), RunKind.WARNING, Tone.ALERT, 100, words.reservoirShort?.invoke(r)) }
+        Warning.PHONE_BATTERY    -> phoneBatteryPercent(i.phoneBattery)?.let { Run(words.phoneBattery(it), RunKind.WARNING, if (it < 10) Tone.ALERT else Tone.WARN, 100, words.phoneBatteryShort?.invoke(it)) }
+        Warning.RES_LOW          -> i.reservoirString.trim().let { r -> Run(words.reservoir(r), RunKind.WARNING, Tone.WARN, 100, words.reservoirShort?.invoke(r)) }
         Warning.PHONE_LOST_FRESH -> null // glyph only
     }
 
@@ -850,9 +855,17 @@ object GlassFaceLogic {
     const val BALL_Y = 325f
     const val BALL_R = 31f
 
-    /** Pill row band (UX round 4: borderless; Glass/Orbit UX round 3: text centred at y 372, 12 px lower). */
-    const val PILL_Y0 = 362f
-    const val PILL_Y = 372f
+    /**
+     * Status row band (UX round 4: borderless; Glass/Orbit UX round 3: text centred at y 372, 12 px lower).
+     * Glass AOD round 1 (live: Samsung's media chip, "SONOS", covers the bottom centre from about y 405 and cut the
+     * footer's "0.00 U/h"): the footer is gone, its runs join this row, which moves 12 px down to y 384 and under the
+     * ball: its glyphs (y 374..394) stay clear of the ball's 48 px hit circle (to y 373) and of the chip.
+     */
+    const val PILL_Y0 = 374f
+    const val PILL_Y = 384f
+
+    /** Top of Samsung's bottom-centre media chip zone (450 grid): nothing essential below it. */
+    const val MEDIA_CHIP_TOP = 405f
 
     /**
      * Hit-area clips (fixed values: the target of a dosing control must not move as a side effect of a layout change).
@@ -1001,19 +1014,39 @@ object GlassFaceLogic {
     /** The LOOP/LGS label is hidden only for an open loop ("Offen" fills the pill); never dropped for width (spec F14). */
     fun loopLabelAllowed(health: LoopHealth): Boolean = health != LoopHealth.OPEN
 
-    /** Pill row width budget on the 450 grid (the chord at the pill row's lower edge less the rounded ends). */
-    const val PILL_ROW_MAX_WIDTH = 270f // Glass/Orbit UX round 3: the row is 12 px lower: x 90..360 (16 px from the edge at y 384)
+    /**
+     * Status row width on the 450 grid (Glass AOD round 1): one frame, centred, with or without the ball (the row is
+     * under it): the chord at the glyphs' lower edge (y 394) less 16 px to the round edge on each side, about 246 px.
+     */
+    const val ROW_MAX_WIDTH = 244f
+
+    /** Keep order of the row's items: the lowest goes first when the row is too wide; [ROW_KEEP_FIXED] never goes. */
+    const val ROW_KEEP_FIXED = 100
+    const val ROW_KEEP_IOB = 90
+    const val ROW_KEEP_BASAL = 70
+    const val ROW_KEEP_KH = 40
+
+    /** Index of the item to drop first (the lowest keep below [ROW_KEEP_FIXED]; the later one on a tie), or null. */
+    fun rowDrop(keeps: IntArray): Int? {
+        var best: Int? = null
+        for (i in keeps.indices) if (keeps[i] < ROW_KEEP_FIXED && (best == null || keeps[i] <= keeps[best])) best = i
+        return best
+    }
 
     /**
-     * UX round 4: with the ball shown the pill row moves right of its hit area: x 140..392 (the chord at the row's
-     * lower edge), centred at 266.
+     * Warnings for the status row: as the interactive footer had them ([footerWarnings]), less "Loop aus": the loop
+     * item itself says it (pause sign + "Loop aus").
      */
-    const val PILL_ROW_BALL_X0 = SPARK_X0_BALL
-    const val PILL_ROW_BALL_X1 = 360f // Glass/Orbit UX round 3: 372 -> 360 with the lower row, 16 px from the round edge
+    fun rowWarnings(warnings: List<Warning>): List<Warning> = footerWarnings(warnings, ambient = false).filter { it != Warning.LOOP_OFF }
 
-    /** (centre, max width) of the pill row with or without the ball. */
-    fun pillRowFrame(ballShown: Boolean): Pair<Float, Float> =
-        if (ballShown) (PILL_ROW_BALL_X0 + PILL_ROW_BALL_X1) / 2f to (PILL_ROW_BALL_X1 - PILL_ROW_BALL_X0) else 225f to PILL_ROW_MAX_WIDTH
+    /** "0,00 U/h" -> ("0,00", "U/h"), "120%" -> ("120", "%"), anything else whole as the value. */
+    fun splitValueUnit(s: String): Pair<String, String> {
+        val t = s.trim()
+        val sp = t.indexOf(' ')
+        if (sp > 0) return t.substring(0, sp) to t.substring(sp + 1).trim()
+        if (t.endsWith("%") && t.length > 1) return t.dropLast(1).trim() to "%"
+        return t to ""
+    }
 
     /**
      * Left edges of the pills of the given [widths], centred on [centre] with [gap] between them. Zero widths are
@@ -1026,45 +1059,6 @@ object GlassFaceLogic {
         return FloatArray(widths.size) { i ->
             if (widths[i] <= 0f) Float.NaN else x.also { x += widths[i] + gap }
         }
-    }
-
-    // ------------------------------------------------------------------------------------------- ambient range shape
-
-    enum class OutlineStyle { NONE, SOLID, DASHED, DOUBLE }
-
-    /** Ambient grey of an outline: ambLine (24 %), amb3 (43 %), amb2, amb1 (white in low-bit). */
-    enum class AmbTone { LINE, A3, A2, A1 }
-
-    /**
-     * Hero card outline in ambient (spec §9: the range as a shape, colour is never the only carrier).
-     * [innerWidth] is the inner line of a double outline (5 px inside). [boldBg]: BG digits weight 600.
-     */
-    data class AmbientOutline(val style: OutlineStyle, val width: Float, val innerWidth: Float, val tone: AmbTone, val boldBg: Boolean)
-
-    const val DOUBLE_OUTLINE_GAP = 5f
-
-    /**
-     * UX round 1: the outline stays a quiet 1 px line (never the brightest thing on the screen); the shape (dashed,
-     * double) carries the range, the BG digits and the TIEF/HOCH word carry the weight.
-     * UX round 3: urgent low is ONE 2 px line (the double 1+1 px line plus the boxed TIEF read heavy), so low (double
-     * thin line, plain TIEF word) and urgent low (single heavy line, double-outlined TIEF badge) differ by shape, not
-     * only by grey level; in low-bit both are white.
-     */
-    /**
-     * Glass/Orbit UX round 6: urgent low is a 3 px line (2 px read too close to low's double line), and with burn-in
-     * protection the static card outline is dropped for in range, high and stale (only the temporary lows keep it).
-     */
-    fun ambientOutline(range: Range, lowBit: Boolean, burnIn: Boolean = false): AmbientOutline =
-        if (burnIn && range != Range.LOW && range != Range.URGENT_LOW) AmbientOutline(OutlineStyle.NONE, 0f, 0f, AmbTone.LINE, false)
-        else ambientOutlineByRange(range, lowBit)
-
-    private fun ambientOutlineByRange(range: Range, lowBit: Boolean): AmbientOutline = when (range) {
-        Range.IN, Range.STALE -> if (lowBit) AmbientOutline(OutlineStyle.NONE, 0f, 0f, AmbTone.LINE, false)
-                                 else AmbientOutline(OutlineStyle.SOLID, 1f, 0f, AmbTone.LINE, false)
-        Range.HIGH            -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.LINE, false)
-        Range.VERY_HIGH       -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A3, false)
-        Range.LOW             -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.LINE, false)
-        Range.URGENT_LOW      -> AmbientOutline(OutlineStyle.SOLID, 3f, 0f, AmbTone.A3, true)
     }
 
     /** Random burn-in offset in [-4, +4] px from a 0..1 source. */

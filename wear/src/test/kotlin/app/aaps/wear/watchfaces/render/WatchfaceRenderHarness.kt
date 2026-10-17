@@ -27,6 +27,7 @@ import app.aaps.wear.watchfaces.common.AodStyle
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.BolusRequestPrefs
 import app.aaps.wear.watchfaces.common.PhoneReachability
+import app.aaps.wear.watchfaces.glass.GlassAod
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic
 import app.aaps.wear.watchfaces.glass.GlassWatchface
 import app.aaps.wear.watchfaces.halo.HaloAod
@@ -106,6 +107,8 @@ class WatchfaceRenderHarness {
         val orbitLook: OrbitAod.Look? = null,
         /** Halo only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
         val haloLook: HaloAod.Look? = null,
+        /** Glass only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
+        val glassLook: GlassAod.Look? = null,
         val data: (now: Long) -> ComplicationData
     )
 
@@ -255,6 +258,10 @@ class WatchfaceRenderHarness {
         RenderState("no_profile") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, iob = "", cob = "", basal = "", external = "Kein Profil")) },
         RenderState("loop_never_pump") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = null)) },
         RenderState("reservoir_critical") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, reservoir = "5U", reservoirLevel = 2)) },
+        RenderState("reservoir_critical_zero_basal_kh") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, basal = "0.00 U/h", reservoir = "5U", reservoirLevel = 2)) },
+        RenderState("phone_lost_zero_basal_kh", phoneReachable = false) { now ->
+            data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14, basal = "0.00 U/h"))
+        },
         RenderState("phone_battery_low") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, battery = "8", batteryLevel = 0)) },
         RenderState("tt_active") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, tt = "8.0", ttLevel = 2, basal = "120%")) },
         RenderState("phone_lost_fresh", phoneReachable = false, data = inRange),
@@ -293,7 +300,13 @@ class WatchfaceRenderHarness {
         RenderState("cob_tt_low_zero_temp") { now ->
             data(now, 3.6, "↘", "-0.2", -1, st = status(now, iob = "0.20", cob = "24g", basal = "0.00 U/h", tt = "7.0", ttLevel = 2))
         },
-        RenderState("tbr_percent") { now -> data(now, 11.2, "↗", "+0.3", 1, st = status(now, iob = "2.10", cob = "0g", basal = "150%")) }
+        RenderState("tbr_percent") { now -> data(now, 11.2, "↗", "+0.3", 1, st = status(now, iob = "2.10", cob = "0g", basal = "150%")) },
+        // Glass AOD round 1 (media chip): a zero basal joins the loop / IOB row; with the ball and a TT the row drops runs
+        RenderState("live_zero_basal_ball", ball = Ball.IDLE, clock = ZonedDateTime.of(2026, 10, 17, 14, 25, 0, 0, ZONE)) { now ->
+            traced(now, flatAt(9.0), List(12) { 9.9 + 0.02 * it }, "→", "+0.1", 0, st = status(now, loopAgeMin = 0, iob = "3.68", cob = "0g", basal = "0.00 U/h"))
+        },
+        RenderState("tbr_tt_ball", ball = Ball.IDLE) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, tt = "8.0", ttLevel = 2, basal = "120%")) },
+        RenderState("zero_basal_kh_tt") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, cob = "24g", tt = "8.0", ttLevel = 2, basal = "0.00 U/h")) }
     ) + aodStates() + exploreStates()
 
     /** AOD round 2: the cases every always-on style must handle, as (id, mode, ball-free data). */
@@ -325,23 +338,33 @@ class WatchfaceRenderHarness {
         Triple("stale_9_8", Mode.AMBIENT) { now -> data(now, 9.8, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
         Triple("stale_mgdl_180", Mode.AMBIENT) { now -> data(now, 10.0, "→", "+0.1", 0, ageMin = 17, mgdl = true, st = status(now, loopAgeMin = 17)) },
         Triple("lowbit_stale_8_0", Mode.LOW_BIT) { now -> data(now, 8.0, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
-        Triple("burnin_no_phone_14", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14)) }
+        Triple("burnin_no_phone_14", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14)) },
+        // Glass AOD round 1: the remaining W-level words and the sentinels
+        Triple("no_profile", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, iob = "", cob = "", basal = "", external = "Kein Profil")) },
+        Triple("sentinel_high_400", Mode.AMBIENT) { now -> data(now, 22.3, "↗", "+0.4", 1) },
+        Triple("very_stale_45", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 45, st = status(now, loopAgeMin = 45)) },
+        Triple("en_in_range", Mode.AMBIENT, inRange)
     )
 
-    /** aod_<style>_<case> for each value of the shared always-on setting. */
+    /** aod_<style>_<case> for each value of the shared always-on setting (the ball enabled: it never shows in ambient). */
     private fun aodStates(): List<RenderState> = AodStyle.entries.flatMap { style ->
         aodCases().map { (id, mode, d) ->
-            RenderState("aod_${style.prefValue}_$id", mode = mode, aod = style, phoneReachable = !id.endsWith("no_phone_14"), data = d)
+            RenderState(
+                "aod_${style.prefValue}_$id", lang = if (id.startsWith("en_")) "en" else "de", mode = mode, aod = style, ball = Ball.IDLE,
+                phoneReachable = !id.endsWith("no_phone_14"), data = d
+            )
         }
     }
 
-    /** AOD exploration: Orbit's and Halo's looks in in_range, urgent_low and stale (each face renders only its own). */
+    /** AOD exploration: Orbit's, Halo's and Glass's looks in in_range, urgent_low and stale (each face renders only its own). */
     private fun exploreStates(): List<RenderState> {
         val cases = aodCases().filter { it.first in setOf("in_range", "urgent_low", "stale") }
         return OrbitAod.Look.entries.flatMap { look ->
             cases.map { (id, mode, d) -> RenderState("explore_${look.name.lowercase()}_$id", mode = mode, orbitLook = look, data = d) }
         } + HaloAod.Look.entries.flatMap { look ->
             cases.map { (id, mode, d) -> RenderState("explore_${look.name.lowercase()}_$id", mode = mode, haloLook = look, data = d) }
+        } + GlassAod.Look.entries.flatMap { look ->
+            cases.map { (id, mode, d) -> RenderState("explore_${look.name.lowercase()}_$id", mode = mode, glassLook = look, data = d) }
         }
     }
 
@@ -366,6 +389,7 @@ class WatchfaceRenderHarness {
             for (s in states) {
                 if (s.orbitLook != null && face != Face.ORBIT) continue
                 if (s.haloLook != null && face != Face.HALO) continue
+                if (s.glassLook != null && face != Face.GLASS) continue
                 if (only?.containsMatchIn("${face.id}/${s.id}") == false) continue
                 val bmp = render(face, s)
                 FileOutputStream(File(dir, "${s.id}.png")).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -438,7 +462,7 @@ class WatchfaceRenderHarness {
         val d = s.data(now)
         val guard: BolusRequestGuard = when (wf) {
             is HaloWatchface  -> { wf.aodLookOverride = s.haloLook; wf.prepareOffline(d) }
-            is GlassWatchface -> wf.prepareOffline(d)
+            is GlassWatchface -> { wf.aodLookOverride = s.glassLook; wf.prepareOffline(d) }
             is OrbitWatchface -> { wf.aodLookOverride = s.orbitLook; wf.prepareOffline(d) }
             else              -> error("unknown face")
         }

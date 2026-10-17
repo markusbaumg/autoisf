@@ -2,6 +2,6 @@
 <resources>
     <string name="face_aod_style_orbit_time">BZ + Uhrzeit</string>
     <string name="face_aod_style_orbit_bg">Nur BZ</string>
-    <string name="face_aod_style_orbit_delta">BZ + Uhrzeit + Delta</string>
+    <string name="face_aod_style_orbit_delta">Übersicht</string>
     <string name="orbit_aod_age_ago">vor %1$s</string>
 </resources>

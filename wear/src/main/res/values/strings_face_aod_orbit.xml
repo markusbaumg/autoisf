@@ -4,7 +4,7 @@
 <resources>
     <string name="face_aod_style_orbit_time">BG + time</string>
     <string name="face_aod_style_orbit_bg">BG only</string>
-    <string name="face_aod_style_orbit_delta">BG + time + delta</string>
+    <string name="face_aod_style_orbit_delta">Overview</string>
     <!-- always-on "BG only": the amber data age on its own, so it cannot pass for a number -->
     <string name="orbit_aod_age_ago">%1$s ago</string>
     <string-array name="face_aod_style_names_orbit" translatable="false">
