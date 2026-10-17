@@ -29,6 +29,7 @@ import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.wear.R
+import app.aaps.wear.complications.ActiveComplications
 import app.aaps.wear.complications.BrCobIobComplication
 import app.aaps.wear.complications.BrCobIobComplicationExt1
 import app.aaps.wear.complications.BrCobIobComplicationExt2
@@ -487,7 +488,9 @@ class DataHandlerWear @Inject constructor(
             // Note: WallpaperComplication is abstract, subclasses will auto-update
         )
 
-        for (complicationClass in modernComplications) {
+        // Only data sources with a complication on a face: each request is a WearServices broadcast,
+        // and the native faces bind none (see ActiveComplications).
+        for (complicationClass in ActiveComplications.boundOnly(modernComplications, ActiveComplications.keys(context))) {
             try {
                 val componentName = ComponentName(context, complicationClass)
 
