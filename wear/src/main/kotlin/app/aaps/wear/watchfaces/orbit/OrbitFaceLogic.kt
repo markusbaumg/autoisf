@@ -93,7 +93,8 @@ object OrbitFaceLogic {
     const val SPARK_X0 = 119f
     const val SPARK_X_NOW = 301f
     const val SPARK_X1 = 331f
-    const val SPARK_Y_TOP = 292f // UX round 3: 4 px lower, a top-clamp chevron keeps clear of a delta row with TIEF/HOCH
+    // UX round 3: 4 px lower; rework: 296, the top-clamp chevron of a very high line kept only 4 px to the HOCH pill
+    const val SPARK_Y_TOP = 296f
     const val SPARK_Y_BOTTOM = 340f
 
     /**
@@ -114,8 +115,14 @@ object OrbitFaceLogic {
      * UX round 3: a W1-W3 pill that replaces the delta row sits 6 px lower, so the comma tail of a struck "6,4" never
      * touches it; the sparkline then moves down into [SPARK_Y_TOP_SLOT]..[SPARK_Y_BOTTOM_SLOT].
      */
-    const val SLOT_IN_DELTA_Y = DELTA_ROW_Y + 6f
-    const val SPARK_Y_TOP_SLOT = 296f
+    const val SLOT_IN_DELTA_Y = DELTA_ROW_Y + 8f
+    const val SPARK_Y_TOP_SLOT = 300f
+
+    /**
+     * Rework: text budget of a W1-W3 pill in the delta row. At [SLOT_MAX_WIDTH] its rounded ends touched the 4 and 8
+     * o'clock satellites (0.7 px); 180 px keeps 8 px or more (the text shrinks to fit, the age is never cut).
+     */
+    const val SLOT_IN_DELTA_MAX_WIDTH = 180f
     const val SPARK_Y_BOTTOM_SLOT = 344f
 
     /** Width of the pill row between the 4 and 8 o'clock satellites (their shells end at x 111 / 339). */

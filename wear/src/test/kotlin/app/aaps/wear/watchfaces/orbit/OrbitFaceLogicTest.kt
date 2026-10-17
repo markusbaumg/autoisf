@@ -458,12 +458,12 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y + OrbitFaceLogic.SLOT_H / 2f).isLessThan(OrbitFaceLogic.SPARK_Y_TOP_SLOT)
         assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM_SLOT).isLessThan(dateY - 12f - 11f)
         // ... and its widest text plus the warning icon keeps clear of the 4 and 8 o'clock satellites
-        val half = (OrbitFaceLogic.SLOT_MAX_WIDTH + 20f) / 2f + 14f
+        val half = (OrbitFaceLogic.SLOT_IN_DELTA_MAX_WIDTH + 20f) / 2f + 14f
         val endX = OrbitFaceLogic.CX - half + OrbitFaceLogic.SLOT_H / 2f
         val cobX = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB)
         val cobY = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB)
         assertThat(kotlin.math.hypot(endX - cobX, OrbitFaceLogic.SLOT_IN_DELTA_Y - cobY))
-            .isAtLeast(OrbitFaceLogic.SLOT_H / 2f + OrbitFaceLogic.BALL_R)
+            .isAtLeast(OrbitFaceLogic.SLOT_H / 2f + OrbitFaceLogic.BALL_R + 8f)
         // the time sits below the Watch5 Pro status icon (y 23-49): its cap top is below y 58
         assertThat(OrbitFaceLogic.TIME_Y - 0.36f * OrbitFaceLogic.TIME_SIZE).isAtLeast(58f)
         // the 180 px sparkline stays clear of the lower satellites

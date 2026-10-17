@@ -950,7 +950,7 @@ class OrbitWatchface : WatchFace() {
 
         // 5. delta row; the pill row under it (TIEF/HOCH, status slot) has its own line, never over the delta
         val s = slot
-        if (slotInDeltaRow && s != null) drawPill(canvas, s, OrbitFaceLogic.CX, OrbitFaceLogic.SLOT_IN_DELTA_Y, OrbitFaceLogic.SLOT_H, SLOT_TEXT, ambient = false)
+        if (slotInDeltaRow && s != null) drawPill(canvas, s, OrbitFaceLogic.CX, OrbitFaceLogic.SLOT_IN_DELTA_Y, OrbitFaceLogic.SLOT_H, SLOT_TEXT, ambient = false, OrbitFaceLogic.SLOT_IN_DELTA_MAX_WIDTH)
         else if (!firstStart) drawDeltaRow(canvas, DELTA_C, if (deltaRow.ageAmber) AMBER else DELTA_C, true, ambient = false)
         drawPillRow(canvas, if (s != null && !slotInDeltaRow) s else null, ambient = false)
 
@@ -1017,7 +1017,7 @@ class OrbitWatchface : WatchFace() {
         val s = slot
         when {
             // W1..W3 (incl. the stale "Keine Daten · 17′") own slot A as an outline pill
-            s != null && slotInDeltaRow -> drawPill(canvas, s, OrbitFaceLogic.CX, OrbitFaceLogic.SLOT_IN_DELTA_Y, OrbitFaceLogic.SLOT_H, SLOT_TEXT, ambient = true)
+            s != null && slotInDeltaRow -> drawPill(canvas, s, OrbitFaceLogic.CX, OrbitFaceLogic.SLOT_IN_DELTA_Y, OrbitFaceLogic.SLOT_H, SLOT_TEXT, ambient = true, OrbitFaceLogic.SLOT_IN_DELTA_MAX_WIDTH)
             !firstStart                 -> drawDeltaRow(canvas, amb(AMB2), amb(if (deltaRow.ageAmber) AMB1 else AMB2), aa, ambient = true)
         }
         drawPillRow(canvas, if (s != null && !slotInDeltaRow) s else null, ambient = true)
