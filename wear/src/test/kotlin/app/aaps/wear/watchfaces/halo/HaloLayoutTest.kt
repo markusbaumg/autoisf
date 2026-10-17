@@ -188,12 +188,24 @@ class HaloLayoutTest {
         assertWithMessage("knob top").that(l.knobTop).isAtLeast(60f)
     }
 
-    /** Declutter round: the hero BG (size M) keeps ~24 px of clear space to the time above and the delta line below. */
+    /** Owner (live, 17 Oct): the time sat too close to the top arc. Its cap top keeps >= 24 px below the ring's inner edge. */
+    @Test fun timeKeepsClearOfTheTopArc() {
+        for (d in diameters) {
+            val l = HaloLayout(d)
+            val ringInnerTop = l.c - l.ringR + l.ringW / 2f
+            assertWithMessage("arc / time at d=$d").that(l.timeBox().top - ringInnerTop).isAtLeast(24f * l.u)
+        }
+    }
+
+    /**
+     * Declutter round: the hero BG (size M) keeps clear space to the time above (~20 px; the owner wanted the time
+     * further from the top arc, the BG unchanged) and to the delta line below (~22 px).
+     */
     @Test fun heroHasClearSpaceAboveAndBelow() {
         for (d in diameters) {
             val l = HaloLayout(d)
             val hero = l.boxes().first { it.name == "hero" }
-            assertWithMessage("time / hero at d=$d").that(hero.top - l.timeBox().bottom).isAtLeast(24f * l.u)
+            assertWithMessage("time / hero at d=$d").that(hero.top - l.timeBox().bottom).isAtLeast(20f * l.u)
             assertWithMessage("hero / delta at d=$d").that(l.deltaBox(11).top - hero.bottom).isAtLeast(22f * l.u)
         }
     }

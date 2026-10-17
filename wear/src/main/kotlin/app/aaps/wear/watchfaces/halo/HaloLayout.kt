@@ -55,8 +55,8 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val knobTop = c - ringR - knobR - knobSeparation
 
     // Time (the date line is gone: declutter round).
-    val timeY = g(108f)
-    val timeSize = font(36f)
+    val timeY = g(118f)              // owner: not so close to the top edge (was 108)
+    val timeSize = font(32f)
 
     // Hero BG: cap height centred on heroY, ~29 px clear above (to the time) and ~24 px below (to the delta line).
     val heroY = g(200f)
