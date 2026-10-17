@@ -56,9 +56,9 @@ object GlassFaceLogic {
     /** Status slot / footer: widest line (spec §4.8: the chord at 0.93 R, 257 px on the 450 grid). */
     const val FOOTER_MAX_WIDTH = 257f
 
-    /** Footer text size and the floor a W1-W6 owner text may shrink to before it is ellipsised (UX round 1: 18/16 -> 20/17). */
-    const val FOOTER_SIZE = 20f
-    const val FOOTER_MIN_SIZE = 17f
+    /** Footer text size and the floor a W1-W6 owner text may shrink to before it is ellipsised (UX round 2: 20/17 -> 22/18). */
+    const val FOOTER_SIZE = 22f
+    const val FOOTER_MIN_SIZE = 18f
 
     /** Fallback low/high marks when the phone did not send them. */
     const val DEFAULT_LOW_MGDL = FaceState.DEFAULT_LOW_MGDL
@@ -133,13 +133,14 @@ object GlassFaceLogic {
 
     /**
      * BG digits: start size, step, floor and the widest allowed text with and without the trend chip (spec §4.1).
-     * UX round 1: 84 -> 116 px (about 6.3 mm cap height, close to Halo); the card is wider and the delta moved under the digits.
+     * UX round 2: 116 -> 128 px (about 91 px cap height, Halo's size): the trend chip shrinks to r 18 and the TIEF/HOCH
+     * word moved to the delta line, so the digits get 216 px; without the chip the full inner card width (12 px padding).
      */
-    const val BG_SIZE = 116f
+    const val BG_SIZE = 128f
     const val BG_SIZE_STEP = 2f
     const val BG_MIN_SIZE = 80f
-    const val BG_MAX_WIDTH = 196f
-    const val BG_MAX_WIDTH_NO_CHIP = 270f
+    const val BG_MAX_WIDTH = 216f
+    const val BG_MAX_WIDTH_NO_CHIP = 276f
 
     /**
      * BG text size on the 450 grid: [BG_SIZE], stepping down 2 px until the text measured at that size is at most
@@ -436,10 +437,10 @@ object GlassFaceLogic {
      * forecast is drawn (no empty quarter). With the bolus ball the plot starts right of the ball ([SPARK_X0_BALL]).
      */
     const val SPARK_X0 = 80f
-    const val SPARK_X0_BALL = 132f
-    const val SPARK_Y0 = 270f
+    const val SPARK_X0_BALL = 124f
+    const val SPARK_Y0 = 282f
     const val SPARK_X1 = 370f
-    const val SPARK_Y1 = 330f
+    const val SPARK_Y1 = 326f
     const val SPARK_HISTORY = 36
     const val SPARK_TOTAL = 48
     const val SLOT_MS = 5 * MINUTE_MS
@@ -527,10 +528,13 @@ object GlassFaceLogic {
     fun armProgress(armedAt: Long, now: Long, windowMs: Long): Float =
         if (windowMs <= 0) 0f else (1f - (now - armedAt).toFloat() / windowMs).coerceIn(0f, 1f)
 
-    /** UX round 1: lower left, between the card, the sparkline and the LOOP pill (38 px from the bezel, 11 px or more from content). */
-    const val BALL_X = 86f
-    const val BALL_Y = 300f
-    const val BALL_R = 30f
+    /**
+     * UX round 2: docked at the left end of the sparkline band (the plot starts right of it), 12 px under the card and
+     * 8 px above the pill row, about 40 px from the bezel.
+     */
+    const val BALL_X = 82f
+    const val BALL_Y = 304f
+    const val BALL_R = 28f
 
     /** Hit radius on the 450 grid at xhdpi: 48 px = 24 dp, the family's 48 dp target (the face scales it to stay 24 dp). */
     const val BALL_HIT_R = 48f
@@ -538,18 +542,19 @@ object GlassFaceLogic {
     // ------------------------------------------------------------------------------------------- layout variants
 
     /**
-     * Hero card positions (spec §3, §4.3; UX round 1): the BG digits left, the trend chip in the right column with the
-     * TIEF/HOCH pill under it, and the delta · age line at full width under the digits. Without the chip
-     * (key_show_direction off) the digits centre. An empty meta line centres the digits vertically.
+     * Hero card positions (spec §3, §4.3; UX round 2): the BG digits left, the small trend chip in the right column
+     * level with the digits, and the delta · age line (with the TIEF/HOCH pill after it) at full width under the
+     * digits, 8 px or more below the comma. Without the chip (key_show_direction off) the digits centre. An empty
+     * meta line (no delta, no age, no caption) centres the digits vertically.
      */
     data class HeroLayout(val bgX: Float, val bgY: Float, val bgMaxWidth: Float, val chipY: Float, val metaCentreX: Float, val metaY: Float)
 
-    const val META_Y = 238f
+    const val META_Y = 244f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
-        showChip  -> if (metaEmpty) HeroLayout(186f, 182f, BG_MAX_WIDTH, 164f, 225f, META_Y) else HeroLayout(186f, 162f, BG_MAX_WIDTH, 150f, 225f, META_Y)
-        metaEmpty -> HeroLayout(225f, 182f, BG_MAX_WIDTH_NO_CHIP, 150f, 225f, META_Y)
-        else      -> HeroLayout(225f, 162f, BG_MAX_WIDTH_NO_CHIP, 150f, 225f, META_Y)
+        showChip  -> if (metaEmpty) HeroLayout(200f, 180f, BG_MAX_WIDTH, 177f, 225f, META_Y) else HeroLayout(200f, 163f, BG_MAX_WIDTH, 160f, 225f, META_Y)
+        metaEmpty -> HeroLayout(225f, 180f, BG_MAX_WIDTH_NO_CHIP, 177f, 225f, META_Y)
+        else      -> HeroLayout(225f, 163f, BG_MAX_WIDTH_NO_CHIP, 160f, 225f, META_Y)
     }
 
     /** Which pills are drawn: both; LOOP alone, centred (key_show_iob off); IOB alone, centred (pumpcontrol: no APS). */
@@ -582,6 +587,30 @@ object GlassFaceLogic {
 
     /** The LOOP/LGS label is hidden only for an open loop ("Offen" fills the pill); never dropped for width (spec F14). */
     fun loopLabelAllowed(health: LoopHealth): Boolean = health != LoopHealth.OPEN
+
+    /**
+     * UX round 2: with a struck (stale) reading the loop pill drops its age when the loop has been silent at least as
+     * long as the BG: the chip and the footer already show that age, and the loop cannot run without data. The dot
+     * (hollow, red) still carries the loop state. A loop that ran more recently than the BG keeps its age.
+     */
+    fun loopAgeRedundant(struck: Boolean, loopAgeMinutes: Long?, bgAgeMinutes: Long?): Boolean =
+        struck && loopAgeMinutes != null && bgAgeMinutes != null && loopAgeMinutes >= bgAgeMinutes
+
+    /** Pill row width budget on the 450 grid (the chord at the pill row's lower edge less the rounded ends). */
+    const val PILL_ROW_MAX_WIDTH = 320f
+
+    /**
+     * Left edges of the pills of the given [widths], centred on [centre] with [gap] between them. Zero widths are
+     * skipped (their left edge is NaN).
+     */
+    fun pillRow(widths: FloatArray, gap: Float, centre: Float = 225f): FloatArray {
+        val shown = widths.filter { it > 0f }
+        val total = shown.sum() + gap * (shown.size - 1).coerceAtLeast(0)
+        var x = centre - total / 2f
+        return FloatArray(widths.size) { i ->
+            if (widths[i] <= 0f) Float.NaN else x.also { x += widths[i] + gap }
+        }
+    }
 
     // ------------------------------------------------------------------------------------------- ambient range shape
 

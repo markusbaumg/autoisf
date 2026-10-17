@@ -162,21 +162,21 @@ class GlassFaceLogicTest {
     private fun bgFit(s: String, max: Float = GlassFaceLogic.BG_MAX_WIDTH) = GlassFaceLogic.bgFitSize({ heroWidth(s, it) }, max)
 
     @Test fun bgSizeForMmolAndMgdlByMeasuredWidth() {
-        // UX round 1: 116 px start (Halo-like scale), 196 px next to the chip, floor 80
-        assertThat(bgFit("9,4")).isEqualTo(116f)
-        assertThat(bgFit("11,8")).isEqualTo(92f)
-        assertThat(bgFit("400+")).isEqualTo(80f)
+        // UX round 2: 128 px start (Halo's scale), 216 px next to the small chip, floor 80
+        assertThat(bgFit("9,4")).isEqualTo(128f)
+        assertThat(bgFit("11,8")).isEqualTo(102f)
+        assertThat(bgFit("400+")).isEqualTo(88f)
         assertThat(bgFit("22,2+")).isEqualTo(GlassFaceLogic.BG_MIN_SIZE)
-        assertThat(bgFit("254")).isEqualTo(112f) // three mg/dL digits step down slightly next to the chip
-        assertThat(bgFit("---")).isEqualTo(116f)
+        assertThat(bgFit("254")).isEqualTo(124f) // three mg/dL digits step down slightly next to the chip
+        assertThat(bgFit("---")).isEqualTo(128f)
         // the result fits, in 2 px steps from the start size
         for (v in listOf("9,4", "11,8", "400+", "254", "39")) {
             val size = bgFit(v)
             assertThat(heroWidth(v, size)).isAtMost(GlassFaceLogic.BG_MAX_WIDTH)
             assertThat((GlassFaceLogic.BG_SIZE - size) % 2f).isEqualTo(0f)
         }
-        // chip off: 270 px, "22,2+" keeps a larger size
-        assertThat(bgFit("22,2+", GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP)).isEqualTo(96f)
+        // chip off: 276 px (the card less 12 px padding each side), "22,2+" keeps a larger size
+        assertThat(bgFit("22,2+", GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP)).isEqualTo(98f)
         // floor, even when it still does not fit
         assertThat(bgFit("888888888")).isEqualTo(GlassFaceLogic.BG_MIN_SIZE)
     }
@@ -491,14 +491,17 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.sparkX(47f)).isEqualTo(370f)
         // without a forecast the plot ends at now (no empty quarter); with the ball it starts right of it
         assertThat(GlassFaceLogic.nowX(forecast = false)).isEqualTo(370f)
-        assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(132f)
+        assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(124f)
         assertThat(GlassFaceLogic.SPARK_X0_BALL).isGreaterThan(GlassFaceLogic.BALL_X + GlassFaceLogic.BALL_R + 8f)
-        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(330f)
-        assertThat(GlassFaceLogic.sparkY(220.0)).isEqualTo(270f)
-        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(330f)
-        assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(270f)
-        // the 70-180 target band is about 1.5x the height of round 0 (28 px)
-        assertThat(GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)).isAtLeast(41f)
+        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(326f)
+        assertThat(GlassFaceLogic.sparkY(220.0)).isEqualTo(282f)
+        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(326f)
+        assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(282f)
+        // UX round 2: the band gave its height to the hero; the 70-180 target band keeps 30 px or more
+        assertThat(GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)).isAtLeast(30f)
+        // the docked ball sits in the band's rows: 8 px or more under the card (y 266) and above the pills (y 340)
+        assertThat(GlassFaceLogic.BALL_Y - GlassFaceLogic.BALL_R - 266f).isAtLeast(8f)
+        assertThat(340f - (GlassFaceLogic.BALL_Y + GlassFaceLogic.BALL_R)).isAtLeast(6f)
         assertThat(GlassFaceLogic.lowLine(0.0)).isEqualTo(70.0)
         assertThat(GlassFaceLogic.highLine(0.0, 0.0)).isEqualTo(180.0)
         assertThat(GlassFaceLogic.highLine(80.0, 160.0)).isEqualTo(160.0)
@@ -567,24 +570,25 @@ class GlassFaceLogicTest {
 
     @Test fun heroReflowsWithoutTheChip() {
         val chip = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = false)
-        assertThat(chip.bgX).isEqualTo(186f)
-        assertThat(chip.bgY).isEqualTo(162f)
-        assertThat(chip.chipY).isEqualTo(150f)
+        assertThat(chip.bgX).isEqualTo(200f)
+        assertThat(chip.bgY).isEqualTo(163f)
+        assertThat(chip.chipY).isEqualTo(160f)
         // the delta line sits under the digits at full card width
         assertThat(chip.metaCentreX).isEqualTo(225f)
         assertThat(chip.metaY).isEqualTo(GlassFaceLogic.META_Y)
         assertThat(chip.bgMaxWidth).isEqualTo(GlassFaceLogic.BG_MAX_WIDTH)
         // empty meta line: digits and chip centre vertically
         val chipNoMeta = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = true)
-        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(182f to 164f)
-        // the digits' right edge (half the budget) stays clear of the TIEF/HOCH pill under the chip (left edge ~297)
-        assertThat(chip.bgX + GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtMost(290f)
-        // trend.hidden_pref: BG (225,162), meta under it, 270 px for the digits
+        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(180f to 177f)
+        // the digits' left and right edges (half the budget) keep 12 px card padding and 8 px to the r 18 chip at x 345
+        assertThat(chip.bgX - GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtLeast(75f + 12f)
+        assertThat(chip.bgX + GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtMost(345f - 18f - 8f)
+        // trend.hidden_pref: BG (225,163), meta under it, 276 px for the digits
         val noChip = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = false)
         assertThat(listOf(noChip.bgX, noChip.bgY, noChip.metaCentreX, noChip.metaY, noChip.bgMaxWidth))
-            .containsExactly(225f, 162f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
+            .containsExactly(225f, 163f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
         val noChipNoMeta = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = true)
-        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 182f)
+        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 180f)
     }
 
     @Test fun metaLineEmptyWithoutAReading() {
@@ -600,6 +604,23 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.pills(showIob = false, pumpControl = false)).isEqualTo(Pills.LOOP_ONLY)
         assertThat(GlassFaceLogic.pills(showIob = true, pumpControl = true)).isEqualTo(Pills.IOB_ONLY)
         assertThat(GlassFaceLogic.pills(showIob = false, pumpControl = true)).isEqualTo(Pills.IOB_ONLY)
+        // UX round 2: content-sized pills centred as a group; a hidden pill (width 0) takes no gap
+        val x = GlassFaceLogic.pillRow(floatArrayOf(100f, 90f, 60f), 8f)
+        assertThat(x[0]).isEqualTo(225f - 133f)
+        assertThat(x[1]).isEqualTo(225f - 133f + 108f)
+        assertThat(x[2]).isEqualTo(225f - 133f + 206f)
+        val two = GlassFaceLogic.pillRow(floatArrayOf(100f, 0f, 60f), 8f)
+        assertThat(two[1].isNaN()).isTrue()
+        assertThat(two[2] + 60f - 225f).isEqualTo(225f - two[0])
+    }
+
+    @Test fun staleLoopPillDropsTheRepeatedAge() {
+        assertThat(GlassFaceLogic.loopAgeRedundant(struck = true, loopAgeMinutes = 17, bgAgeMinutes = 17)).isTrue()
+        assertThat(GlassFaceLogic.loopAgeRedundant(struck = true, loopAgeMinutes = 40, bgAgeMinutes = 17)).isTrue()
+        // the loop ran after the last BG: its age is news, keep it
+        assertThat(GlassFaceLogic.loopAgeRedundant(struck = true, loopAgeMinutes = 3, bgAgeMinutes = 17)).isFalse()
+        assertThat(GlassFaceLogic.loopAgeRedundant(struck = false, loopAgeMinutes = 23, bgAgeMinutes = 2)).isFalse()
+        assertThat(GlassFaceLogic.loopAgeRedundant(struck = true, loopAgeMinutes = null, bgAgeMinutes = 17)).isFalse()
     }
 
     @Test fun predictionsSuppressed() {

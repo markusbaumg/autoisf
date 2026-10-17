@@ -82,24 +82,30 @@ object OrbitFaceLogic {
     /** IOB arc is full at this many units. */
     const val IOB_ARC_FULL_U = 6.0
 
-    /** Sparkline: fixed range 2.5..14.0 mmol/L (45..252 mg/dL), box x 135..315 (UX round 1: 180 px wide), now at x 285. */
+    /** Sparkline: fixed range 2.5..14.0 mmol/L (45..252 mg/dL), box x 125..325 (UX round 2: 200 px, centred), now at x 295. */
     const val SPARK_MIN_MGDL = 45.0
     const val SPARK_MAX_MGDL = 252.0
-    const val SPARK_X0 = 135f
-    const val SPARK_X_NOW = 285f
-    const val SPARK_X1 = 315f
+    const val SPARK_X0 = 125f
+    const val SPARK_X_NOW = 295f
+    const val SPARK_X1 = 325f
     const val SPARK_Y_TOP = 288f
     const val SPARK_Y_BOTTOM = 338f
 
-    /** Delta row centre and the pill row under it (its own row, 8 px or more below the delta baseline: never over the delta). */
-    const val DELTA_ROW_Y = 262f
-    const val DELTA_SIZE = 22f
-    const val SLOT_Y = 295f
-    const val SLOT_H = 28f
+    /**
+     * Delta row centre and the pill row under it (its own row, 8 px or more below the delta baseline: never over the
+     * delta). UX round 2: delta 22 -> 26 px, pills 28 -> 32 px tall with 22 px text, the row 12 px below the delta.
+     */
+    const val DELTA_ROW_Y = 266f
+    const val DELTA_SIZE = 26f
+    const val SLOT_Y = 306f
+    const val SLOT_H = 32f
+
+    /** Width of the pill row between the 4 and 8 o'clock satellites (their shells end at x 111 / 339). */
+    const val PILL_ROW_MAX_WIDTH = 208f
 
     /** With a pill row (status slot or TIEF/HOCH) under the delta row the sparkline moves down into this box. */
-    const val SPARK_Y_TOP_PILL = 318f
-    const val SPARK_Y_BOTTOM_PILL = 360f
+    const val SPARK_Y_TOP_PILL = 332f
+    const val SPARK_Y_BOTTOM_PILL = 372f
     /** Default sparkline window (key_chart_time_frame, hours). */
     const val DEFAULT_TIME_FRAME_H = 3
     const val SPARK_HISTORY_MS = DEFAULT_TIME_FRAME_H * 60 * 60_000L
@@ -111,7 +117,7 @@ object OrbitFaceLogic {
     const val BALL_VALUE_HARD_MAX = 66f
     const val HERO_MAX_WIDTH = 200f
     const val DATE_LINE_MAX_WIDTH = 196f
-    const val DELTA_ROW_MAX_WIDTH = 190f
+    const val DELTA_ROW_MAX_WIDTH = 200f
     const val SLOT_MAX_WIDTH = 230f
 
     // ------------------------------------------------------------------ localised words
@@ -416,14 +422,14 @@ object OrbitFaceLogic {
      */
     fun basalBall(currentBasal: String, tbrHint: Boolean): Ball {
         val value = basalValue(currentBasal)
-        if (value == "--") return Ball(value, "BASAL", Ring.DIM)
+        if (value == "--") return Ball(value, "U/h", Ring.DIM)
         val rate = leadingNumber(value)
         val zero = rate != null && abs(rate) < 1e-6
         val tbr = tbrHint || value.endsWith("%")
         return when {
             tbr  -> Ball(value, "TBR", if (zero) Ring.AMBER else Ring.TEAL)
-            zero -> Ball(value, "BASAL", Ring.AMBER)
-            else -> Ball(value, "BASAL", Ring.NEUTRAL)
+            zero -> Ball(value, "U/h", Ring.AMBER)
+            else -> Ball(value, "U/h", Ring.NEUTRAL)
         }
     }
 
@@ -447,10 +453,10 @@ object OrbitFaceLogic {
     /** Skeleton ball for first start / no profile: "--" in dim. */
     fun placeholderBall(label: String): Ball = Ball("--", label, Ring.DIM, dimValue = true)
 
-    /** Ball value size (UX round 1: 22 -> 24) and the step-down size for wide values. */
+    /** Ball value size (UX round 1: 22 -> 24) and the step-down size for wide values; labels 15 -> 18 (UX round 2, short words). */
     const val BALL_VALUE_SIZE = 24f
     const val BALL_VALUE_SMALL = 19f
-    const val BALL_LABEL_SIZE = 15f
+    const val BALL_LABEL_SIZE = 18f
 
     /** Value text size: 24 px; wider than 60 px at 24 -> 19 px bold; still too wide -> shrink to fit 66 px. */
     fun ballValueSize(widthAt24: Float): Float {
@@ -485,8 +491,8 @@ object OrbitFaceLogic {
 
     // ------------------------------------------------------------------ bolus amount
 
-    /** Watch-generated number in the watch locale: "0,5 U" in German, "0.5 U" in English. */
-    fun bolusAmountText(amount: Double, locale: Locale): String = String.format(locale, "%.1f U", amount)
+    /** Watch-generated number in the watch locale, the family's "+0,5" ("+0.5" in English); the unit is drawn under it. */
+    fun bolusAmountText(amount: Double, locale: Locale): String = FaceState.bolusAmountText(amount, locale)
 
     // ------------------------------------------------------------------ time and date
 

@@ -288,16 +288,16 @@ class OrbitFaceLogicTest {
     }
 
     @Test fun basalBall() {
-        assertThat(OrbitFaceLogic.basalBall("0,85 U/h", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("0,85", "BASAL", Ring.NEUTRAL))
+        assertThat(OrbitFaceLogic.basalBall("0,85 U/h", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("0,85", "U/h", Ring.NEUTRAL))
         assertThat(OrbitFaceLogic.basalBall("0.85 U/h", tbrHint = false).value).isEqualTo("0.85")
         assertThat(OrbitFaceLogic.basalBall("0,00 U/h", tbrHint = true)).isEqualTo(OrbitFaceLogic.Ball("0,00", "TBR", Ring.AMBER))
         // basal.zero_abs without a known TBR still deserves attention
-        assertThat(OrbitFaceLogic.basalBall("0,00 U/h", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("0,00", "BASAL", Ring.AMBER))
+        assertThat(OrbitFaceLogic.basalBall("0,00 U/h", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("0,00", "U/h", Ring.AMBER))
         assertThat(OrbitFaceLogic.basalBall("1,20 U/h", tbrHint = true)).isEqualTo(OrbitFaceLogic.Ball("1,20", "TBR", Ring.TEAL))
         // basal.tbr_percent: a "%" rate is a TBR even without the treatment hint
         assertThat(OrbitFaceLogic.basalBall("120%", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("120%", "TBR", Ring.TEAL))
         assertThat(OrbitFaceLogic.basalBall("0%", tbrHint = false).ring).isEqualTo(Ring.AMBER)
-        assertThat(OrbitFaceLogic.basalBall("", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("--", "BASAL", Ring.DIM))
+        assertThat(OrbitFaceLogic.basalBall("", tbrHint = false)).isEqualTo(OrbitFaceLogic.Ball("--", "U/h", Ring.DIM))
         assertThat(OrbitFaceLogic.basalBall("-.--U/h", tbrHint = false).value).isEqualTo("--")
     }
 
@@ -354,8 +354,8 @@ class OrbitFaceLogicTest {
     }
 
     @Test fun bolusAmountUsesWatchLocale() {
-        assertThat(OrbitFaceLogic.bolusAmountText(0.5, Locale.GERMANY)).isEqualTo("0,5 U")
-        assertThat(OrbitFaceLogic.bolusAmountText(1.0, Locale.US)).isEqualTo("1.0 U")
+        assertThat(OrbitFaceLogic.bolusAmountText(0.5, Locale.GERMANY)).isEqualTo("+0,5")
+        assertThat(OrbitFaceLogic.bolusAmountText(1.0, Locale.US)).isEqualTo("+1.0")
     }
 
     // ------------------------------------------------------------ time and date
@@ -453,7 +453,12 @@ class OrbitFaceLogicTest {
         // the 180 px sparkline stays clear of the lower satellites
         val cobRight = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB) + OrbitFaceLogic.BALL_R
         assertThat(OrbitFaceLogic.SPARK_X0 - cobRight).isAtLeast(8f)
-        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(180f)
+        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(200f)
+        // UX round 2: the pill row (TIEF/HOCH + status) stays 4 px or more clear of the 4 o'clock satellite's shell
+        val basalLeft = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL) - OrbitFaceLogic.BALL_R
+        assertThat(OrbitFaceLogic.CX + OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f).isAtMost(basalLeft - 4f)
+        // satellites keep 10 px or more of black margin to the 225 px display edge
+        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R).isAtMost(215f)
     }
 
     @Test fun gapWidths() {
