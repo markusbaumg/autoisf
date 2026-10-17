@@ -22,4 +22,13 @@
         android:summary="%s"
         android:title="@string/pref_face_bolus_request_amount" />
 
+    <!-- Always-on style, shared with the Halo, Glass and Orbit faces (strings_face_aod.xml, AodStyle). -->
+    <ListPreference
+        android:defaultValue="outline"
+        android:entries="@array/face_aod_style_names"
+        android:entryValues="@array/face_aod_style_values"
+        android:key="@string/key_face_aod_style"
+        android:summary="%s"
+        android:title="@string/pref_face_aod_style" />
+
 </PreferenceScreen>

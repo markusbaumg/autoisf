@@ -23,6 +23,7 @@ import app.aaps.wear.AAPSLoggerTest
 import app.aaps.wear.R
 import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.watchfaces.HaloWatchface
+import app.aaps.wear.watchfaces.common.AodStyle
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.BolusRequestPrefs
 import app.aaps.wear.watchfaces.common.PhoneReachability
@@ -95,6 +96,8 @@ class WatchfaceRenderHarness {
         val ball: Ball = Ball.OFF,
         val phoneReachable: Boolean = true,
         val clock: ZonedDateTime = SHOWN_TIME,
+        /** The shared always-on style (face_aod_style), written to the prefs before the face is built. */
+        val aod: AodStyle = AodStyle.DEFAULT,
         val data: (now: Long) -> ComplicationData
     )
 
@@ -422,6 +425,7 @@ class WatchfaceRenderHarness {
     private fun prefs(context: Context, sp: SP, s: RenderState) {
         val maxBolusKey = context.getString(R.string.key_treatments_safety_max_bolus)
         sp.putDouble(maxBolusKey, 3.0)
+        sp.putString(AodStyle.KEY, s.aod.prefValue)
         when (s.ball) {
             Ball.OFF      -> sp.putBoolean(BolusRequestPrefs.KEY_ENABLED, false)
             Ball.DISABLED -> {
