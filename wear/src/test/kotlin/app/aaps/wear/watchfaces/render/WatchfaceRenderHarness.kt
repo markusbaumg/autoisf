@@ -49,6 +49,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
 import java.io.File
+import kotlin.math.roundToLong
 import java.io.FileOutputStream
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -151,13 +152,44 @@ class WatchfaceRenderHarness {
 
     private fun data(
         now: Long, mmol: Double, arrow: String, delta: String, level: Long, ageMin: Int = 2, phoneAgeMin: Int = 0,
-        mgdl: Boolean = false, st: EventData.Status = status(now)
+        mgdl: Boolean = false, st: EventData.Status = status(now), history: List<Double> = emptyList()
     ): ComplicationData {
-        val (b, g) = bg(now, mmol, arrow, delta, level, ageMin, mgdl)
+        val (b, g) = bg(now, mmol, arrow, delta, level, ageMin, mgdl, history)
         return ComplicationData(bgData = b, graphData = g, statusData = st, lastUpdateTimestamp = now - phoneAgeMin * 60_000L)
     }
 
     private val inRange: (Long) -> ComplicationData = { now -> data(now, 6.4, "→", "+0.1", 0) }
+
+    /**
+     * Glass polish round 1: a realistic trace with a forecast (the phone's main prediction series), as on the watch:
+     * [history] in mmol/l (oldest first, 5' apart, ending at the current value), [forecast] for the next hour.
+     */
+    private fun traced(now: Long, history: List<Double>, forecast: List<Double>, arrow: String, delta: String, level: Long, st: EventData.Status = status(now)): ComplicationData {
+        val (b, g) = bg(now, history.last(), arrow, delta, level, ageMin = 0, history = history)
+        val preds = ArrayList(forecast.mapIndexed { k, v -> b.copy(timeStamp = b.timeStamp + (k + 1) * 5 * 60_000L, sgv = v * 18.0, color = 0xFFAA82FF.toInt()) })
+        return ComplicationData(
+            bgData = b, graphData = g, statusData = st, lastUpdateTimestamp = now,
+            treatmentData = EventData.TreatmentData(ArrayList(), ArrayList(), ArrayList(), preds)
+        )
+    }
+
+    /**
+     * 3 h of a calm BG around 5,8 as in the owner's live screenshot. Glass polish round 2: an irregular CGM-like walk
+     * (0,1 mmol/l steps, a slow drift), not a regular sine that read as an artificial wave.
+     */
+    private val flatHistory = listOf(
+        6.0, 6.0, 6.1, 6.1, 6.0, 5.9, 5.9, 6.0, 6.0, 5.9, 5.8, 5.8, 5.9, 5.9, 5.9, 5.8, 5.7, 5.7,
+        5.8, 5.8, 5.9, 5.9, 5.8, 5.8, 5.7, 5.7, 5.7, 5.8, 5.8, 5.9, 5.8, 5.8, 5.7, 5.8, 5.8, 5.8
+    )
+
+    /** The same calm walk shifted to [level] mmol/l (near the low or the high edge of the band). */
+    private fun flatAt(level: Double) = flatHistory.map { ((it - 5.8 + level) * 10).roundToLong() / 10.0 }
+
+    /** A meal: 5,6 rising to 10,2 and back down to 6,4. */
+    private val mealHistory = List(36) { k ->
+        val t = k / 35.0
+        5.6 + 4.6 * kotlin.math.exp(-((t - 0.45) * (t - 0.45)) / 0.03) + 1.0 * t
+    }
 
     private fun states(): List<RenderState> = listOf(
         RenderState("reference_final4", clock = ZonedDateTime.of(2026, 10, 17, 2, 28, 0, 0, ZONE)) { now ->
@@ -168,10 +200,20 @@ class WatchfaceRenderHarness {
             )
         },
         RenderState("in_range", data = inRange),
+        RenderState("live_flat_pred", ball = Ball.IDLE, clock = ZonedDateTime.of(2026, 10, 17, 9, 40, 0, 0, ZONE)) { now ->
+            traced(now, flatHistory, List(12) { 5.8 - 0.03 * it }, "→", "-0.0", 0,
+                st = status(now, loopAgeMin = 0, iob = "0.40", cob = "0g", basal = "0.00 U/h"))
+        },
+        RenderState("flat_4_3_pred", ball = Ball.IDLE) { now -> traced(now, flatAt(4.3), List(12) { 4.3 - 0.02 * it }, "→", "+0.0", 0) },
+        RenderState("flat_9_5_pred", ball = Ball.IDLE) { now -> traced(now, flatAt(9.5), List(12) { 9.5 + 0.03 * it }, "→", "+0.1", 0) },
+        RenderState("meal_pred") { now -> traced(now, mealHistory, List(12) { 6.4 - 0.06 * it }, "↘", "-0.2", 0) },
+        RenderState("high_pred", ball = Ball.IDLE) { now -> traced(now, List(36) { k -> 8.0 + 4.4 * k / 35.0 }, List(12) { 12.4 + 0.1 * it - 0.02 * it * it }, "↗", "+0.4", 1) },
         RenderState("high") { now -> data(now, 12.4, "↗", "+0.4", 1) },
-        RenderState("very_high") { now -> data(now, 22.2, "\u21c8", "+1.2", 1) },
+        // Glass polish round 2: bounded ramps (the default history ran below 2,2 and lay flat on the plot floor)
+        RenderState("very_high") { now -> data(now, 22.2, "\u21c8", "+1.2", 1, history = List(36) { k -> 12.0 + 10.2 * (k / 35.0) * (k / 35.0) }) },
         RenderState("low") { now -> data(now, 3.4, "↓", "-0.3", -1) },
-        RenderState("urgent_low") { now -> data(now, 2.6, "\u21ca", "-0.6", -1) },
+        RenderState("low_3_5_fall") { now -> data(now, 3.5, "↘", "-0.2", -1, history = List(36) { k -> 6.0 - 2.5 * (k / 35.0) }) },
+        RenderState("urgent_low") { now -> data(now, 2.6, "\u21ca", "-0.6", -1, history = List(36) { k -> 7.0 - 4.4 * (k / 35.0) * (k / 35.0) }) },
         RenderState("mgdl_224") { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true) },
         RenderState("stale_17") { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
         RenderState("very_stale_45") { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 45, st = status(now, loopAgeMin = 45)) },

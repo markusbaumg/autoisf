@@ -198,11 +198,14 @@ object GlassFaceLogic {
      * the chip, 300 px without it (the card widened to x 63..387).
      * Glass rework: 150 -> 134 px (about 95 px cap height, Halo's scale; 107 px read "too big"), with 16 px of glass
      * above the cap so the digits no longer touch the card's top edge or its rim glow.
+     * Glass polish round 1 (owner on the watch: "stuffed into the card, too big"): 134 -> 112 px, an 80 px cap, about
+     * 52 % of the 154 px card, with about 19 px of glass above the cap and 17 px under the delta row.
      */
-    const val BG_SIZE = 134f
+    const val BG_SIZE = 112f
     const val BG_SIZE_STEP = 2f
     const val BG_MIN_SIZE = 80f
-    const val BG_MAX_WIDTH = 228f // Glass/Orbit UX round 6: 232 -> 228 for the larger chip (r 28 at x 348). Glass/Orbit UX round 4: 240 -> 232 (centred at 200): wide values (22,2) kept only ~20 px to the card's left edge
+    /** Glass polish round 1: the card's inner width (300) less the chip (r 25) and its 18 px gap. */
+    const val BG_MAX_WIDTH = 230f // Glass polish round 1: 230, the widest group (digits, gap, chip) centred on the card
     const val BG_MAX_WIDTH_NO_CHIP = 300f
 
     /**
@@ -528,66 +531,126 @@ object GlassFaceLogic {
     // ------------------------------------------------------------------------------------------- sparkline
 
     /**
-     * Plot rect on the 450 grid, 36 history slots (5') + 12 prediction slots. The plot ends at "now" when no
-     * forecast is drawn (no empty quarter). With the bolus ball the plot starts right of the ball ([SPARK_X0_BALL]).
+     * Plot rect on the 450 grid: 36 history slots (5', 3 h) and, when a forecast is drawn, [SPARK_FORECAST] future
+     * slots at the SAME time scale. With the bolus ball the plot starts right of it ([SPARK_X0_BALL]).
+     *
+     * History: UX round 3 dropped the plot plate (plate + band + hairlines read as an empty progress bar); values sit
+     * [SPARK_INSET] px inside the plot so the line and the now dot's glow never touch the card or the pills.
+     * Glass polish round 1 (owner: "the line doesn't look correct"): linear scale, smooth trace, no dashed now line.
+     * Glass polish round 2: the y range always contains the target band (both edges inside the plot, the line's height
+     * says "near low / near high" at a glance), the forecast is 30 min at the history's time scale (it took a third of
+     * the plot for one faint line), and without a forecast now sits at [SPARK_X1_NOW], clear of the card's corner.
+     * Glass polish round 3: the forecast is 45 min (9 slots; the 30 min stub read as an ellipsis after the now dot).
+     * Geometry with the ball and a forecast: history x 144..328 (184 px), forecast 328..376; without the ball now is
+     * at about x 314.
      */
-    /**
-     * UX round 4: the plot is wider (70..380) and starts 8 px right of the ball's hit area ([BALL_HIT_RIGHT]); the band
-     * fill is gone, values are drawn inside a [SPARK_INSET] px inset so the line never touches the card or the pills.
-     */
-    /**
-     * Glass/Orbit UX round 3: no plot plate any more (plate + band + hairlines read as an empty progress bar); the
-     * values sit [SPARK_INSET] = 9 px (the now dot's 5 px glow radius plus 4) inside the plot, so a very high or urgent
-     * low trace never touches its edge. The plot is y 294..350 (Glass/Orbit UX round 4) so the 70-180 band keeps about 28 px.
-     */
-    const val SPARK_X0 = 70f
-    const val SPARK_X0_BALL = 140f // Glass/Orbit UX round 6: 128 -> 140, a clear gap after the larger ball (read as a chart marker). Glass/Orbit UX round 2: 140 -> 128
-    const val SPARK_Y0 = 294f // Glass/Orbit UX round 4: y 294..350, 8 px under the taller card
-    const val SPARK_X1 = 380f
-    const val SPARK_Y1 = 350f
-    const val SPARK_INSET = 9f
+    const val SPARK_X0 = 72f
+    const val SPARK_X0_BALL = 144f // Glass polish round 1: 140 -> 144, 17 px clear of the ball
+    const val SPARK_Y0 = 294f // 8 px under the card
+    const val SPARK_X1 = 376f // Glass polish round 1: 380 -> 376, the forecast's end keeps 30 px to the bezel
+    const val SPARK_X1_NOW = 368f // Glass polish round 2: now without a forecast, 19 px left of the card's corner
+    const val SPARK_Y1 = 354f
+    const val SPARK_INSET = 8f
     const val SPARK_HISTORY = 36
-    const val SPARK_TOTAL = 48
+    const val SPARK_FORECAST = 9 // Glass polish round 2: 12 -> 6 (30 min); round 3: 9 (45 min), the history's 5' pitch
+    const val SPARK_TOTAL = SPARK_HISTORY + SPARK_FORECAST
     const val SLOT_MS = 5 * MINUTE_MS
 
     /** A gap longer than this breaks the line (graph.gaps). */
     const val GAP_MS = 15 * MINUTE_MS
 
     /**
-     * Y range. Glass/Orbit UX round 2 (safety): a log scale whose range adapts to the visible values, so a very high or
-     * urgent low trace is never clamped flat at the edge (you could not tell whether it was still falling): at least
-     * 60-220 mg/dL (the 70-180 band then takes about 70 % of the plot), widened to (visible min - 5, visible max + 20)
-     * within 40-400 mg/dL (band about 50 % at 400).
+     * Y range (linear). Safety (Glass/Orbit UX round 2): the range always covers every visible value (history, current
+     * reading, forecast) within 40-400 mg/dL, so a very high or urgent low trace is never clamped flat at the edge.
+     * Glass polish round 2: it also always contains the target band plus [SPARK_BAND_MARGIN_MGDL], so both band edges
+     * are inside the plot (the reference never runs off it) and a flat BG sits at its true height in the band; with the
+     * default band (70-180) 0,2 mmol/l of noise moves the line about 1,2 px. [SPARK_MIN_SPAN_MGDL] (5 mmol/l) still
+     * holds for a narrow band. Without values the range is the default target band with a margin.
+     * Glass polish round 3: the margin 10 -> 15 mg/dL (both edges about 5 px inside the plot, room for the trace above
+     * and below), and as soon as a visible value is below the low line the range starts at [SPARK_FLOOR_MGDL], so the
+     * depth under the low edge is on a fixed scale (2,6 and 3,5 look clearly different, a hypo is never understated).
      */
-    const val SPARK_MIN_MGDL = 60.0
-    const val SPARK_MAX_MGDL = 220.0
+    const val SPARK_BAND_MARGIN_MGDL = 15.0
+    const val SPARK_MIN_SPAN_MGDL = 90.0
     const val SPARK_FLOOR_MGDL = 40.0
     const val SPARK_CEIL_MGDL = 400.0
+    const val SPARK_EMPTY_LO = 60.0
+    const val SPARK_EMPTY_HI = 190.0
 
-    /** (lo, hi) of the plot for the visible values [minMgdl]..[maxMgdl] (NaN when there are none). */
-    fun sparkRange(minMgdl: Double, maxMgdl: Double): Pair<Double, Double> {
-        val lo = if (minMgdl.isNaN()) SPARK_MIN_MGDL else min(SPARK_MIN_MGDL, minMgdl - 5.0).coerceAtLeast(SPARK_FLOOR_MGDL)
-        val hi = if (maxMgdl.isNaN()) SPARK_MAX_MGDL else max(SPARK_MAX_MGDL, maxMgdl + 20.0).coerceAtMost(SPARK_CEIL_MGDL)
+    /**
+     * (lo, hi) of the plot for the visible values [minMgdl]..[maxMgdl] (NaN when there are none) and the target band
+     * [lowMgdl]..[highMgdl].
+     */
+    fun sparkRange(
+        minMgdl: Double, maxMgdl: Double, lowMgdl: Double = DEFAULT_LOW_MGDL, highMgdl: Double = DEFAULT_HIGH_MGDL
+    ): Pair<Double, Double> {
+        if (minMgdl.isNaN() || maxMgdl.isNaN()) return SPARK_EMPTY_LO to SPARK_EMPTY_HI
+        var lo = if (minMgdl < lowMgdl) SPARK_FLOOR_MGDL
+        else min(minMgdl, lowMgdl - SPARK_BAND_MARGIN_MGDL).coerceAtLeast(SPARK_FLOOR_MGDL)
+        var hi = max(maxMgdl, highMgdl + SPARK_BAND_MARGIN_MGDL).coerceAtMost(SPARK_CEIL_MGDL).coerceAtLeast(lo)
+        if (hi - lo < SPARK_MIN_SPAN_MGDL) {
+            val mid = (lo + hi) / 2.0
+            lo = mid - SPARK_MIN_SPAN_MGDL / 2.0
+            hi = mid + SPARK_MIN_SPAN_MGDL / 2.0
+            if (lo < SPARK_FLOOR_MGDL) { hi += SPARK_FLOOR_MGDL - lo; lo = SPARK_FLOOR_MGDL }
+            if (hi > SPARK_CEIL_MGDL) { lo -= hi - SPARK_CEIL_MGDL; hi = SPARK_CEIL_MGDL }
+        }
         return lo to hi
     }
 
-    /** x of slot [slot] (fractional), "now" is slot 35; with [forecast] the 12 future slots follow, else now is the right edge. */
+    /**
+     * x of slot [slot] (fractional), "now" is slot 35; with [forecast] the [SPARK_FORECAST] future slots follow up to
+     * [SPARK_X1], else now is the plot's right end at [SPARK_X1_NOW].
+     */
     fun sparkX(slot: Float, x0: Float = SPARK_X0, forecast: Boolean = true): Float {
         val last = if (forecast) SPARK_TOTAL - 1 else SPARK_HISTORY - 1
-        return x0 + slot / last * (SPARK_X1 - x0)
+        val x1 = if (forecast) SPARK_X1 else SPARK_X1_NOW
+        return x0 + slot / last * (x1 - x0)
     }
 
-    /** x of the now line (about 297 with a forecast, the right edge without). */
+    /** x of the now dot (about 314 with a forecast, 328 with the ball too, [SPARK_X1_NOW] without a forecast). */
     fun nowX(x0: Float = SPARK_X0, forecast: Boolean = true): Float = sparkX((SPARK_HISTORY - 1).toFloat(), x0, forecast)
 
-    /** y for a value in mg/dL on a log scale over [lo]..[hi], clamped to the plot less [SPARK_INSET] at the top and bottom. */
-    fun sparkY(mgdl: Double, lo: Double = SPARK_MIN_MGDL, hi: Double = SPARK_MAX_MGDL): Float {
-        val v = mgdl.coerceIn(lo, hi)
+    /** y for a value in mg/dL, linear over [lo]..[hi] inside the plot less [SPARK_INSET], NOT clamped (band edges). */
+    fun sparkYRaw(mgdl: Double, lo: Double, hi: Double): Float {
         val top = SPARK_Y0 + SPARK_INSET
         val bottom = SPARK_Y1 - SPARK_INSET
-        val f = kotlin.math.ln(v / lo) / kotlin.math.ln(hi / lo)
+        val f = if (hi > lo) (mgdl - lo) / (hi - lo) else 0.5
         return (bottom - f * (bottom - top)).toFloat()
     }
+
+    /** y for a value in mg/dL, clamped to the plot less [SPARK_INSET] at the top and bottom. */
+    fun sparkY(mgdl: Double, lo: Double = SPARK_EMPTY_LO, hi: Double = SPARK_EMPTY_HI): Float =
+        sparkYRaw(mgdl.coerceIn(lo, hi), lo, hi)
+
+    /**
+     * Forecast dots (Glass polish round 3): dot centres along the polyline [xy] (n points, x/y pairs, the first is the
+     * now dot), the first [start] px from it (clear of the now dot's ring and glow), then one every [step] px of path
+     * length. Written to [out] as x/y pairs; returns the number of dots (at most out.size / 2).
+     */
+    fun forecastDots(xy: FloatArray, n: Int, start: Float, step: Float, out: FloatArray): Int {
+        var count = 0
+        var next = start
+        var walked = 0f
+        for (i in 1 until n) {
+            val x0 = xy[2 * i - 2]; val y0 = xy[2 * i - 1]
+            val dx = xy[2 * i] - x0; val dy = xy[2 * i + 1] - y0
+            val len = kotlin.math.sqrt(dx * dx + dy * dy)
+            if (len <= 0f) continue
+            while (next <= walked + len + 0.01f && 2 * count + 1 < out.size) {
+                val f = ((next - walked) / len).coerceIn(0f, 1f)
+                out[2 * count] = x0 + f * dx
+                out[2 * count + 1] = y0 + f * dy
+                count++
+                next += step
+            }
+            walked += len
+        }
+        return count
+    }
+
+    /** A band edge at [y] is drawn only inside the plot (an edge outside the range is not a line at the plot's border). */
+    fun bandEdgeVisible(y: Float): Boolean = y > SPARK_Y0 + 1f && y < SPARK_Y1 - 1f
 
     /**
      * Time at the now line. A fresh reading sits exactly on it; otherwise the axis follows the clock in
@@ -670,9 +733,14 @@ object GlassFaceLogic {
     const val PILL_Y0 = 362f
     const val PILL_Y = 372f
 
-    /** Hit-area clips: 2 px under the card, 8 px left of the graph (which starts at [SPARK_X0_BALL]). */
-    const val BALL_HIT_TOP = 288f // HERO_Y1 + 2
-    const val BALL_HIT_RIGHT = SPARK_X0_BALL - 8f
+    /**
+     * Hit-area clips (fixed values: the target of a dosing control must not move as a side effect of a layout change).
+     * The top was 2 px under the card when the card ended at 286 (it now ends at [HERO_Y1] 280, so 8 px under it);
+     * the right edge is 12 px left of the graph ([SPARK_X0_BALL]). Glass polish round 2: the right edge is a literal
+     * 132 again (round 1 derived it from SPARK_X0_BALL 144 and widened the target by 4 px by accident).
+     */
+    const val BALL_HIT_TOP = 288f
+    const val BALL_HIT_RIGHT = 132f
 
     /** Hit radius on the 450 grid at xhdpi: 48 px = 24 dp, the family's 48 dp target (the face scales it to stay 24 dp). */
     const val BALL_HIT_R = 48f
@@ -685,7 +753,10 @@ object GlassFaceLogic {
      * digits, 8 px or more below the comma. Without the chip (key_show_direction off) the digits centre. An empty
      * meta line (no delta, no age, no caption) centres the digits vertically.
      */
-    data class HeroLayout(val bgX: Float, val bgY: Float, val bgMaxWidth: Float, val chipY: Float, val metaCentreX: Float, val metaY: Float)
+    data class HeroLayout(
+        val bgX: Float, val bgY: Float, val bgMaxWidth: Float, val chipY: Float, val metaCentreX: Float, val metaY: Float,
+        val chipX: Float = CHIP_X
+    )
 
     /**
      * UX round 3: the card is y 120..274 (the time and date moved below the system status icon).
@@ -702,22 +773,44 @@ object GlassFaceLogic {
     const val HERO_X1 = 387f
     // Glass live round 1: the card's top 120 -> 126 (the time and date moved below the Samsung status icon); the
     // digits 5 px and the meta row 3 px down, the bottom (and everything under it) unchanged
-    const val HERO_Y0 = 126f
-    const val HERO_Y1 = 286f // Glass/Orbit UX round 4: 282 -> 286 and the content 2 px up: the meta row (pill) had 4 px to the card's edge, the top 15
-    const val META_Y = 265f
+    // Glass polish round 1: 126 -> 132 with the time block (time 13 px clear of the status icon's disc); the card is
+    // 154 px tall, the 112 px digits (cap y 151..230) and the 26 px delta row (centre 260) with ~19 / ~17 px margins
+    // Glass polish round 2: the bottom 286 -> 280 and the content 4 px up, so the bolus ball (top at 294) keeps 14 px
+    // to the card; margins inside: ~15 px over the cap, ~14 px under the delta row (the comma-to-delta gap unchanged)
+    const val HERO_Y0 = 132f
+    const val HERO_Y1 = 280f
+    // Glass polish round 3: the meta row 256 -> 258, 7 px of air under the comma's tail (margin under the row ~16 px)
+    const val META_Y = 258f
 
     /** Digits' centre next to the chip (Glass/Orbit UX round 4: 198 -> 200, equal optical padding left and right). */
-    const val BG_X_CHIP = 196f // Glass/Orbit UX round 6: 200 -> 196 for the larger chip
+    const val BG_X_CHIP = 191f // Glass polish round 1: the widest group (230 px digits, gap, chip) centred on the card
 
     /** Trend chip column (UX round 4: r 18 -> 24). */
     /** Glass/Orbit UX round 6: r 24 -> 28 at x 348, the arrow about 0.6 of the disc (the main signal after the BG). */
-    const val CHIP_X = 348f
-    const val CHIP_R = 28f
+    /** Glass polish round 1: r 28 -> 25 with the smaller digits; [CHIP_X] is the widest group's chip (see [heroGroup]). */
+    const val CHIP_X = 349f
+    const val CHIP_R = 25f
+    const val CHIP_GAP = 18f
+
+    /** Digits' vertical centre with the delta row, and centred in the card without it (Glass polish round 2: 4 px / 3 px up). */
+    const val BG_Y = 188f
+    const val BG_Y_NO_META = 208f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
-        showChip  -> if (metaEmpty) HeroLayout(BG_X_CHIP, 206f, BG_MAX_WIDTH, 204f, 225f, META_Y) else HeroLayout(BG_X_CHIP, 183f, BG_MAX_WIDTH, 181f, 225f, META_Y)
-        metaEmpty -> HeroLayout(225f, 206f, BG_MAX_WIDTH_NO_CHIP, 204f, 225f, META_Y)
-        else      -> HeroLayout(225f, 183f, BG_MAX_WIDTH_NO_CHIP, 181f, 225f, META_Y)
+        showChip  -> if (metaEmpty) HeroLayout(BG_X_CHIP, BG_Y_NO_META, BG_MAX_WIDTH, BG_Y_NO_META - 2f, 225f, META_Y) else HeroLayout(BG_X_CHIP, BG_Y, BG_MAX_WIDTH, BG_Y - 2f, 225f, META_Y)
+        metaEmpty -> HeroLayout(225f, BG_Y_NO_META, BG_MAX_WIDTH_NO_CHIP, BG_Y_NO_META - 2f, 225f, META_Y)
+        else      -> HeroLayout(225f, BG_Y, BG_MAX_WIDTH_NO_CHIP, BG_Y - 2f, 225f, META_Y)
+    }
+
+    /**
+     * Glass polish round 1: digits and chip are ONE group centred on the card (with the chip pinned right, "6,4" sat
+     * left of centre with a wide hole before the chip). [bgWidth] is the measured width of the fitted digits.
+     */
+    fun heroGroup(l: HeroLayout, showChip: Boolean, bgWidth: Float): HeroLayout {
+        if (!showChip) return l
+        val w = bgWidth.coerceAtMost(l.bgMaxWidth) + CHIP_GAP + 2f * CHIP_R
+        val left = 225f - w / 2f
+        return l.copy(bgX = left + bgWidth.coerceAtMost(l.bgMaxWidth) / 2f, chipX = left + w - CHIP_R)
     }
 
     /**

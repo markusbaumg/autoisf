@@ -163,12 +163,12 @@ class GlassFaceLogicTest {
 
     @Test fun bgSizeForMmolAndMgdlByMeasuredWidth() {
         // Glass rework: 134 px start (Halo's ~95 px cap), floor 80; Glass/Orbit UX round 4: 232 px next to the chip
-        assertThat(bgFit("9,4")).isEqualTo(134f)
-        assertThat(bgFit("11,8")).isEqualTo(108f) // Glass/Orbit UX round 6: 228 px next to the larger chip
-        assertThat(bgFit("400+")).isEqualTo(92f)
-        assertThat(bgFit("22,2+")).isEqualTo(80f)
-        assertThat(bgFit("254")).isEqualTo(130f) // three mg/dL digits keep (nearly) the full size next to the chip
-        assertThat(bgFit("---")).isEqualTo(134f)
+        // Glass polish round 1: 112 px start (an 80 px cap, about 52 % of the card), 230 px next to the chip
+        assertThat(bgFit("9,4")).isEqualTo(112f)
+        assertThat(bgFit("11,8")).isEqualTo(108f)
+        assertThat(bgFit("254")).isEqualTo(112f) // three mg/dL digits keep the full size next to the chip
+        assertThat(bgFit("---")).isEqualTo(112f)
+        assertThat(bgFit("22,2+")).isAtLeast(GlassFaceLogic.BG_MIN_SIZE)
         // the result fits, in 2 px steps from the start size
         for (v in listOf("9,4", "11,8", "400+", "254", "39")) {
             val size = bgFit(v)
@@ -176,7 +176,7 @@ class GlassFaceLogicTest {
             assertThat((GlassFaceLogic.BG_SIZE - size) % 2f).isEqualTo(0f)
         }
         // chip off: 300 px (the card less 12 px padding each side), "22,2+" keeps a larger size
-        assertThat(bgFit("22,2+", GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP)).isEqualTo(106f)
+        assertThat(bgFit("22,2+", GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP)).isAtLeast(bgFit("22,2+"))
         // floor, even when it still does not fit
         assertThat(bgFit("888888888")).isEqualTo(GlassFaceLogic.BG_MIN_SIZE)
     }
@@ -545,39 +545,95 @@ class GlassFaceLogicTest {
 
     // ------------------------------------------------------------------ sparkline
 
+    @Test fun forecastDotsStartClearOfTheNowDotAndFollowThePath() {
+        // a straight 45 px forecast from the now dot: dots at 9, 15,5, 22, ... px, never on the dot itself
+        val xy = floatArrayOf(100f, 50f, 145f, 50f)
+        val out = FloatArray(48)
+        val n = GlassFaceLogic.forecastDots(xy, 2, 9f, 6.5f, out)
+        assertThat(n).isEqualTo(6)
+        assertThat(out[0]).isWithin(0.01f).of(109f)
+        assertThat(out[2]).isWithin(0.01f).of(115.5f)
+        assertThat(out[2 * (n - 1)]).isAtMost(145.01f)
+        for (i in 0 until n) assertThat(out[2 * i + 1]).isEqualTo(50f)
+        // a bend: the spacing is measured along the path
+        val bent = floatArrayOf(0f, 0f, 10f, 0f, 10f, 10f)
+        val m = GlassFaceLogic.forecastDots(bent, 3, 5f, 10f, out)
+        assertThat(m).isEqualTo(2)
+        assertThat(out[2]).isWithin(0.01f).of(10f)
+        assertThat(out[3]).isWithin(0.01f).of(5f)
+        // the output buffer bounds the count
+        assertThat(GlassFaceLogic.forecastDots(xy, 2, 0f, 1f, FloatArray(6))).isEqualTo(3)
+    }
+
     @Test fun sparklineGeometry() {
-        assertThat(GlassFaceLogic.nowX()).isWithin(0.5f).of(300.9f)
-        assertThat(GlassFaceLogic.sparkX(0f)).isEqualTo(70f)
-        assertThat(GlassFaceLogic.sparkX(47f)).isEqualTo(380f)
-        // without a forecast the plot ends at now (no empty quarter); with the ball it starts right of it
-        assertThat(GlassFaceLogic.nowX(forecast = false)).isEqualTo(380f)
-        assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(140f)
-        assertThat(GlassFaceLogic.SPARK_X0_BALL).isGreaterThan(GlassFaceLogic.BALL_X + GlassFaceLogic.BALL_R + 8f)
-        // UX round 4: values stay 4 px inside the plot (the line never meets the card or the pills)
-        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(341f)
-        assertThat(GlassFaceLogic.sparkY(220.0)).isEqualTo(303f)
-        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(341f)
-        assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(303f)
-        // Glass/Orbit UX round 2: the log range adapts to the visible values, a very high or urgent low trace is never
-        // clamped flat at the edge; the default 60-220 keeps the 70-180 band at about 70 % of the plot
-        assertThat(GlassFaceLogic.sparkRange(Double.NaN, Double.NaN)).isEqualTo(60.0 to 220.0)
-        assertThat(GlassFaceLogic.sparkRange(90.0, 160.0)).isEqualTo(60.0 to 220.0)
+        // Glass polish round 3: a 45 min forecast at the history's time scale
+        assertThat(GlassFaceLogic.nowX()).isWithin(0.5f).of(313.8f)
+        assertThat(GlassFaceLogic.sparkX(0f)).isEqualTo(72f)
+        assertThat(GlassFaceLogic.sparkX(44f)).isEqualTo(376f)
+        val pitchHistory = GlassFaceLogic.sparkX(1f) - GlassFaceLogic.sparkX(0f)
+        assertThat(GlassFaceLogic.sparkX(36f) - GlassFaceLogic.sparkX(35f)).isWithin(0.01f).of(pitchHistory)
+        // with the ball: at least 180 px of history, at most 50 px of forecast
+        val nowBall = GlassFaceLogic.nowX(GlassFaceLogic.SPARK_X0_BALL)
+        assertThat(nowBall - GlassFaceLogic.SPARK_X0_BALL).isAtLeast(180f)
+        assertThat(GlassFaceLogic.SPARK_X1 - nowBall).isAtMost(50f)
+        // without a forecast the plot ends at now (no empty quarter), 19 px left of the card's corner
+        assertThat(GlassFaceLogic.nowX(forecast = false)).isEqualTo(368f)
+        assertThat(GlassFaceLogic.HERO_X1 - GlassFaceLogic.nowX(forecast = false)).isAtLeast(16f)
+        assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(144f)
+        assertThat(GlassFaceLogic.SPARK_X0_BALL).isGreaterThan(GlassFaceLogic.BALL_X + GlassFaceLogic.BALL_R + 12f)
+        // values stay 8 px inside the plot (the line and the now dot's glow never meet the card or the pills)
+        val top = GlassFaceLogic.SPARK_Y0 + GlassFaceLogic.SPARK_INSET
+        val bottom = GlassFaceLogic.SPARK_Y1 - GlassFaceLogic.SPARK_INSET
+        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(bottom)
+        assertThat(GlassFaceLogic.sparkY(190.0)).isEqualTo(top)
+        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(bottom)
+        assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(top)
+        // Glass polish round 2/3: a linear range over the visible values AND the target band (+-15 mg/dL)
+        assertThat(GlassFaceLogic.sparkRange(Double.NaN, Double.NaN)).isEqualTo(60.0 to 190.0)
+        assertThat(GlassFaceLogic.sparkRange(100.0, 110.0)).isEqualTo(55.0 to 195.0)
+        assertThat(GlassFaceLogic.sparkRange(90.0, 200.0)).isEqualTo(55.0 to 200.0)
         assertThat(GlassFaceLogic.sparkRange(39.0, 420.0)).isEqualTo(40.0 to 400.0)
-        assertThat(GlassFaceLogic.sparkRange(50.0, 300.0)).isEqualTo(45.0 to 320.0)
-        val (lo, hi) = GlassFaceLogic.sparkRange(100.0, 400.0)
-        assertThat(GlassFaceLogic.sparkY(399.0, lo, hi)).isGreaterThan(GlassFaceLogic.sparkY(400.0, lo, hi))
-        assertThat(GlassFaceLogic.sparkY(400.0, lo, hi)).isEqualTo(303f)
-        val band = (GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)) / (341f - 303f)
-        assertThat(band).isWithin(0.03f).of(0.73f)
-        assertThat((GlassFaceLogic.sparkY(70.0, lo, hi) - GlassFaceLogic.sparkY(180.0, lo, hi)) / (341f - 303f)).isAtLeast(0.45f)
+        assertThat(GlassFaceLogic.sparkRange(395.0, 400.0)).isEqualTo(55.0 to 400.0)
+        // round 3: anything below the low line puts the floor at 40 mg/dL, so hypo depth is on a fixed scale
+        assertThat(GlassFaceLogic.sparkRange(45.0, 50.0)).isEqualTo(40.0 to 195.0)
+        assertThat(GlassFaceLogic.sparkRange(63.0, 120.0)).isEqualTo(40.0 to 195.0)
+        assertThat(GlassFaceLogic.sparkRange(70.0, 120.0)).isEqualTo(55.0 to 195.0)
+        val (llo, lhi) = GlassFaceLogic.sparkRange(47.0, 126.0)
+        assertThat(GlassFaceLogic.sparkY(47.0, llo, lhi) - GlassFaceLogic.sparkY(63.0, llo, lhi)).isAtLeast(4f)
+        // a narrow band still gets the 5 mmol/l minimum span
+        assertThat(GlassFaceLogic.sparkRange(100.0, 110.0, 90.0, 120.0)).isEqualTo(60.0 to 150.0)
+        // calm: 0,2 mmol/l (3.6 mg/dL) of noise on a flat BG moves the line by about 1 px
+        val (flo, fhi) = GlassFaceLogic.sparkRange(104.0, 104.0)
+        assertThat(GlassFaceLogic.sparkY(107.6, flo, fhi) - GlassFaceLogic.sparkY(104.0, flo, fhi)).isWithin(0.2f).of(-1.0f)
+        // both default edges sit about 5 px inside the values' area, so the trace has room above and below the band
+        assertThat(GlassFaceLogic.sparkYRaw(180.0, flo, fhi) - (GlassFaceLogic.SPARK_Y0 + GlassFaceLogic.SPARK_INSET)).isWithin(0.5f).of(4.7f)
+        // a flat 5,8 is well clear of the low edge (readable as "in range, not near low")
+        assertThat(GlassFaceLogic.sparkYRaw(70.0, flo, fhi) - GlassFaceLogic.sparkY(104.0, flo, fhi)).isAtLeast(8f)
+        // safety: every visible value is inside the range, so a trace is never clamped flat at the edge
+        for ((a, b) in listOf(40.0 to 60.0, 50.0 to 300.0, 100.0 to 400.0, 180.0 to 181.0, 41.0 to 41.0, 400.0 to 400.0)) {
+            val (lo, hi) = GlassFaceLogic.sparkRange(a, b)
+            assertThat(lo).isAtMost(a.coerceAtLeast(40.0))
+            assertThat(hi).isAtLeast(b.coerceAtMost(400.0))
+            // not clamped: the drawn y of the extremes equals the unclamped y
+            assertThat(GlassFaceLogic.sparkY(a, lo, hi)).isEqualTo(GlassFaceLogic.sparkYRaw(a, lo, hi))
+            assertThat(GlassFaceLogic.sparkY(b, lo, hi)).isEqualTo(GlassFaceLogic.sparkYRaw(b, lo, hi))
+        }
+        // both band edges are always inside the plot (the reference never runs off it), for any values and bands
+        for ((a, b) in listOf(40.0 to 40.0, 100.0 to 110.0, 104.0 to 104.0, 171.0 to 171.0, 40.0 to 400.0, 400.0 to 400.0))
+            for ((l, h) in listOf(70.0 to 180.0, 80.0 to 140.0, 63.0 to 250.0)) {
+                val (lo, hi) = GlassFaceLogic.sparkRange(a, b, l, h)
+                assertThat(GlassFaceLogic.bandEdgeVisible(GlassFaceLogic.sparkYRaw(l, lo, hi))).isTrue()
+                assertThat(GlassFaceLogic.bandEdgeVisible(GlassFaceLogic.sparkYRaw(h, lo, hi))).isTrue()
+            }
         assertThat(GlassFaceLogic.SPARK_Y1 - GlassFaceLogic.SPARK_Y0).isAtLeast(48f)
-        assertThat(GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)).isAtLeast(27f)
         assertThat(GlassFaceLogic.SPARK_Y0 - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
         assertThat(GlassFaceLogic.PILL_Y0 - GlassFaceLogic.SPARK_Y1).isAtLeast(8f)
         // the docked ball: 8 px or more under the card; the pill row and the graph start right of its hit area
         assertThat(GlassFaceLogic.BALL_Y - GlassFaceLogic.BALL_R - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
         assertThat(GlassFaceLogic.PILL_ROW_BALL_X0 - GlassFaceLogic.BALL_HIT_RIGHT).isAtLeast(8f)
         assertThat(GlassFaceLogic.SPARK_X0_BALL - GlassFaceLogic.BALL_HIT_RIGHT).isAtLeast(8f)
+        // Glass polish round 2: the card ends 14 px or more above the drawn ball
+        assertThat(GlassFaceLogic.BALL_Y - GlassFaceLogic.BALL_R - GlassFaceLogic.HERO_Y1).isAtLeast(14f)
         assertThat(GlassFaceLogic.lowLine(0.0)).isEqualTo(70.0)
         assertThat(GlassFaceLogic.highLine(0.0, 0.0)).isEqualTo(180.0)
         assertThat(GlassFaceLogic.highLine(80.0, 160.0)).isEqualTo(160.0)
@@ -594,7 +650,8 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.slotOf(bgTs, bgTs)).isEqualTo(35f)
         assertThat(GlassFaceLogic.slotOf(bgTs - 35 * slot, bgTs)).isEqualTo(0f)
         assertThat(GlassFaceLogic.slotOf(bgTs - 36 * slot, bgTs)).isNull()
-        assertThat(GlassFaceLogic.slotOf(bgTs + 12 * slot, bgTs)).isEqualTo(47f)
+        assertThat(GlassFaceLogic.slotOf(bgTs + 9 * slot, bgTs)).isEqualTo(44f)
+        assertThat(GlassFaceLogic.slotOf(bgTs + 10 * slot, bgTs)).isNull()
     }
 
     // ------------------------------------------------------------------ bolus ball states
@@ -624,6 +681,9 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.ballHit(200f, 170f)).isFalse()    // hero card, BG digits
         assertThat(GlassFaceLogic.ballHit(250f, 300f)).isFalse()    // graph zone
         // UX round 4: clipped 8 px left of the graph (which starts at SPARK_X0_BALL) and 2 px under the card
+        // the dosing target's clips are fixed values (round 1 moved the right edge 132 -> 136 by accident)
+        assertThat(GlassFaceLogic.BALL_HIT_RIGHT).isEqualTo(132f)
+        assertThat(GlassFaceLogic.BALL_HIT_TOP).isEqualTo(288f)
         assertThat(GlassFaceLogic.ballHit(GlassFaceLogic.BALL_HIT_RIGHT, by)).isTrue()
         assertThat(GlassFaceLogic.ballHit(GlassFaceLogic.BALL_HIT_RIGHT + 1f, by)).isFalse()
         assertThat(GlassFaceLogic.ballHit(GlassFaceLogic.SPARK_X0_BALL - 8f + 0.5f, by)).isFalse()
@@ -655,26 +715,33 @@ class GlassFaceLogicTest {
     @Test fun heroReflowsWithoutTheChip() {
         val chip = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = false)
         assertThat(chip.bgX).isEqualTo(GlassFaceLogic.BG_X_CHIP)
-        assertThat(chip.bgY).isEqualTo(183f)
-        assertThat(chip.chipY).isEqualTo(181f)
+        assertThat(chip.bgY).isEqualTo(188f)
+        assertThat(chip.chipY).isEqualTo(186f)
+        assertThat(chip.chipX).isEqualTo(GlassFaceLogic.CHIP_X)
         // the delta line sits under the digits at full card width
         assertThat(chip.metaCentreX).isEqualTo(225f)
         assertThat(chip.metaY).isEqualTo(GlassFaceLogic.META_Y)
         assertThat(chip.bgMaxWidth).isEqualTo(GlassFaceLogic.BG_MAX_WIDTH)
         // empty meta line: digits and chip centre vertically
         val chipNoMeta = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = true)
-        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(206f to 204f)
-        // the digits' left and right edges (half the budget) keep 12 px card padding and 8 px to the r 24 chip
+        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(208f to 206f)
+        // the digits' left and right edges (the full budget) keep 12 px card padding and 8 px to the chip
         assertThat(chip.bgX - GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtLeast(GlassFaceLogic.HERO_X0 + 12f)
         assertThat(chip.bgX + GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtMost(GlassFaceLogic.CHIP_X - GlassFaceLogic.CHIP_R - 8f)
         assertThat(GlassFaceLogic.CHIP_X + GlassFaceLogic.CHIP_R).isAtMost(GlassFaceLogic.HERO_X1 - 8f)
-        // trend.hidden_pref: BG (225,180), meta under it, 300 px for the digits
+        // Glass polish round 1: digits + chip are one group centred on the card; the widest group is the default
+        assertThat(GlassFaceLogic.heroGroup(chip, true, GlassFaceLogic.BG_MAX_WIDTH)).isEqualTo(chip)
+        val narrow = GlassFaceLogic.heroGroup(chip, true, 140f)
+        assertThat(narrow.bgX - 70f + (narrow.chipX + GlassFaceLogic.CHIP_R)).isWithin(0.01f).of(450f)
+        assertThat(narrow.chipX - GlassFaceLogic.CHIP_R - (narrow.bgX + 70f)).isWithin(0.01f).of(GlassFaceLogic.CHIP_GAP)
+        assertThat(GlassFaceLogic.heroGroup(chip, false, 140f)).isEqualTo(chip)
+        // trend.hidden_pref: BG centred, meta under it, 300 px for the digits
         val noChip = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = false)
         assertThat(listOf(noChip.bgX, noChip.bgY, noChip.metaCentreX, noChip.metaY, noChip.bgMaxWidth))
-            .containsExactly(225f, 183f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
+            .containsExactly(225f, 188f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
         assertThat(GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).isAtMost(GlassFaceLogic.HERO_X1 - GlassFaceLogic.HERO_X0 - 24f)
         val noChipNoMeta = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = true)
-        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 206f)
+        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 208f)
         // the card stays inside the round screen at its corners (r 28)
         for ((x, y) in listOf(GlassFaceLogic.HERO_X0 + 8f to GlassFaceLogic.HERO_Y0 + 8f, GlassFaceLogic.HERO_X1 - 8f to GlassFaceLogic.HERO_Y1 - 8f))
             assertThat(kotlin.math.hypot(x - 225f, y - 225f)).isLessThan(215f)
@@ -754,9 +821,11 @@ class GlassFaceLogicTest {
     }
 
     @Test fun timeAndCardClearTheSystemStatusIcon() {
-        // Glass live round 1: the Samsung status icon spans y 23..49 (plus its dark disc to about 55)
-        assertThat(GlassFaceLogic.HERO_Y0).isAtLeast(124f)
-        assertThat(GlassFaceLogic.HERO_Y1 - GlassFaceLogic.HERO_Y0).isAtLeast(156f)
+        // Glass live round 1: the Samsung status icon spans y 23..49 (plus its dark disc to about 55); polish round 1
+        // moved the time block 5 px further down and the card's top with it
+        assertThat(GlassFaceLogic.HERO_Y0).isAtLeast(130f)
+        // Glass polish round 2: 148 px (the bottom 6 px up for the ball), still room for the 112 px digits and the row
+        assertThat(GlassFaceLogic.HERO_Y1 - GlassFaceLogic.HERO_Y0).isAtLeast(145f)
     }
 
     @Test fun pillLayout() {
