@@ -688,6 +688,14 @@
             android:exported="true"
             android:label="@string/action_confirm"
             android:launchMode="singleInstance" />
+        <!-- Quick-bolus picker, opened only by the Orbit face ("+ U" ball, "Auswahl" mode). Not exported. -->
+        <activity
+            android:name=".interaction.actions.QuickBolusActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="@string/quick_bolus_title"
+            android:launchMode="singleTop"
+            android:noHistory="true" />
         <activity
             android:name=".interaction.actions.FillActivity"
             android:exported="true"

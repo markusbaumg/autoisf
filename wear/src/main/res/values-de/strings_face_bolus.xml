@@ -4,4 +4,34 @@
     <string name="pref_face_bolus_request_enabled">Bolus-Anfrage per Doppeltipp</string>
     <string name="pref_face_bolus_request_enabled_summary">Doppeltipp sendet nur eine Anfrage. Das Telefon prüft, du bestätigst auf der Uhr. Gilt für Halo, Glass und Orbit.</string>
     <string name="pref_face_bolus_request_amount">Menge der Bolus-Anfrage</string>
+
+    <string name="pref_face_bolus_request_mode">Bolus-Ball</string>
+    <string name="pref_face_bolus_mode_fixed">Feste Menge</string>
+    <string name="pref_face_bolus_mode_picker">Auswahl</string>
+    <string name="pref_face_bolus_request_allow_1_5">1,5 U erlauben</string>
+    <string name="pref_face_bolus_request_allow_1_5_summary">Nur bei Auswahl. Das Telefon prüft jede Anfrage weiter gegen seinen Max-Bolus.</string>
+
+    <string name="quick_bolus_title">SCHNELL-BOLUS</string>
+    <string name="quick_bolus_iob">IOB %1$s U</string>
+    <string name="quick_bolus_age">vor %1$d min</string>
+    <string name="quick_bolus_hint">Menge antippen = anfragen</string>
+    <string name="quick_bolus_hint_sub">nichts vorgewählt · schliesst nach 10 s</string>
+    <string name="quick_bolus_max">max %1$s U</string>
+    <string name="quick_bolus_max_unknown">max ? U</string>
+    <string name="quick_bolus_requested">%1$s U angefragt</string>
+    <string name="quick_bolus_phone_checks">Telefon prüft …</string>
+    <string name="quick_bolus_no_more">keine weitere Anfrage möglich</string>
+    <string name="quick_bolus_no_answer">Keine Antwort vom Telefon</string>
+    <string name="quick_bolus_no_answer_sub">Nichts erneut gesendet</string>
+    <string name="quick_bolus_low">TIEF – kein Bolus</string>
+    <string name="quick_bolus_falling">Fällt schnell – kein Bolus</string>
+    <string name="quick_bolus_over_max">%1$s U ist über dem Max-Bolus</string>
+    <string name="quick_bolus_why_no_phone">Telefon nicht verbunden</string>
+    <string name="quick_bolus_why_checking">Telefon wird geprüft …</string>
+    <string name="quick_bolus_why_stale">Kein aktueller BZ</string>
+    <string name="quick_bolus_why_max_unknown">Max-Bolus noch nicht übertragen</string>
+    <string name="quick_bolus_why_pending">Eine Anfrage läuft bereits</string>
+    <string name="quick_bolus_why_no_wear_control">Wear-Steuerung am Telefon aus</string>
+    <string name="quick_bolus_why_off">Bolus-Anfrage ist aus</string>
+    <string name="quick_bolus_close">Schliessen</string>
 </resources>
