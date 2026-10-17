@@ -47,9 +47,6 @@ object GlassFaceLogic {
     const val LOOP_WARN_MIN = FaceState.LOOP_WARN_MIN
     const val LOOP_BAD_MIN = FaceState.LOOP_BAD_MIN
 
-    /** From 10' the "LOOP" label is hidden to make room for the two-digit value. */
-    const val LOOP_LABEL_HIDE_MIN = 10L
-
     /** Loop pill minutes above this are shown as the "old" word, so the pill width stays bounded. */
     const val MAX_SHOWN_MIN = 99L
 
@@ -59,9 +56,9 @@ object GlassFaceLogic {
     /** Status slot / footer: widest line (spec §4.8: the chord at 0.93 R, 257 px on the 450 grid). */
     const val FOOTER_MAX_WIDTH = 257f
 
-    /** Footer text size and the floor a W1-W6 owner text may shrink to before it is ellipsised. */
-    const val FOOTER_SIZE = 18f
-    const val FOOTER_MIN_SIZE = 16f
+    /** Footer text size and the floor a W1-W6 owner text may shrink to before it is ellipsised (UX round 1: 18/16 -> 20/17). */
+    const val FOOTER_SIZE = 20f
+    const val FOOTER_MIN_SIZE = 17f
 
     /** Fallback low/high marks when the phone did not send them. */
     const val DEFAULT_LOW_MGDL = FaceState.DEFAULT_LOW_MGDL
@@ -134,16 +131,19 @@ object GlassFaceLogic {
 
     const val PRIME = "′"
 
-    /** BG digits: start size, step, floor and the widest allowed text with and without the trend chip (spec §4.1). */
-    const val BG_SIZE = 84f
+    /**
+     * BG digits: start size, step, floor and the widest allowed text with and without the trend chip (spec §4.1).
+     * UX round 1: 84 -> 116 px (about 6.3 mm cap height, close to Halo); the card is wider and the delta moved under the digits.
+     */
+    const val BG_SIZE = 116f
     const val BG_SIZE_STEP = 2f
-    const val BG_MIN_SIZE = 56f
-    const val BG_MAX_WIDTH = 170f
-    const val BG_MAX_WIDTH_NO_CHIP = 230f
+    const val BG_MIN_SIZE = 80f
+    const val BG_MAX_WIDTH = 196f
+    const val BG_MAX_WIDTH_NO_CHIP = 270f
 
     /**
-     * BG text size on the 450 grid: 84 px, stepping down 2 px until the text measured at that size is at most
-     * [maxWidth], floor 56 px. Decided by measured width, never by character count. [measureAt] returns the
+     * BG text size on the 450 grid: [BG_SIZE], stepping down 2 px until the text measured at that size is at most
+     * [maxWidth], floor [BG_MIN_SIZE]. Decided by measured width, never by character count. [measureAt] returns the
      * width of the text at a given size.
      */
     fun bgFitSize(measureAt: (Float) -> Float, maxWidth: Float = BG_MAX_WIDTH): Float {
@@ -202,17 +202,14 @@ object GlassFaceLogic {
     fun loopHealth(ageMinutes: Long?, run: LoopRun, mode: LoopMode, realRun: Boolean = true): LoopHealth =
         FaceState.loopHealth(ageMinutes, run, mode, realRun)
 
-    /** The "LOOP" label is hidden once the value has two digits (or is the "old" word). */
-    fun loopLabelVisible(ageMinutes: Long?): Boolean = ageMinutes == null || ageMinutes < LOOP_LABEL_HIDE_MIN
-
-    /** Loop pill value: "2′", "--" when never, [oldWord] above 99'. Low-bit ambient adds "!" from 15'. */
-    fun loopText(ageMinutes: Long?, oldWord: String, lowBit: Boolean): String {
-        val t = when {
-            ageMinutes == null             -> "--"
-            ageMinutes > MAX_SHOWN_MIN     -> oldWord
-            else                           -> "$ageMinutes$PRIME"
-        }
-        return if (lowBit && ageMinutes != null && ageMinutes >= LOOP_BAD_MIN) "$t!" else t
+    /**
+     * Loop pill value: "2′", "--" when never, [oldWord] above 99'. No bare "!" (spec: never a carrier on its own);
+     * a bad loop is carried by the ring of the dot and the status slot text, also in ambient.
+     */
+    fun loopText(ageMinutes: Long?, oldWord: String): String = when {
+        ageMinutes == null             -> "--"
+        ageMinutes > MAX_SHOWN_MIN     -> oldWord
+        else                           -> "$ageMinutes$PRIME"
     }
 
     // ------------------------------------------------------------------------------------------- phone link
@@ -434,11 +431,15 @@ object GlassFaceLogic {
 
     // ------------------------------------------------------------------------------------------- sparkline
 
-    /** Plot rect on the 450 grid, 36 history slots (5') + 12 prediction slots. */
-    const val SPARK_X0 = 84f
-    const val SPARK_Y0 = 256f
-    const val SPARK_X1 = 366f
-    const val SPARK_Y1 = 312f
+    /**
+     * Plot rect on the 450 grid, 36 history slots (5') + 12 prediction slots. The plot ends at "now" when no
+     * forecast is drawn (no empty quarter). With the bolus ball the plot starts right of the ball ([SPARK_X0_BALL]).
+     */
+    const val SPARK_X0 = 80f
+    const val SPARK_X0_BALL = 132f
+    const val SPARK_Y0 = 270f
+    const val SPARK_X1 = 370f
+    const val SPARK_Y1 = 330f
     const val SPARK_HISTORY = 36
     const val SPARK_TOTAL = 48
     const val SLOT_MS = 5 * MINUTE_MS
@@ -446,15 +447,18 @@ object GlassFaceLogic {
     /** A gap longer than this breaks the line (graph.gaps). */
     const val GAP_MS = 15 * MINUTE_MS
 
-    /** Y range: 2,5-14 mmol/L (45-252 mg/dL), clamped. */
-    const val SPARK_MIN_MGDL = 45.0
-    const val SPARK_MAX_MGDL = 252.0
+    /** Y range: 3,3-12,2 mmol/L (60-220 mg/dL), clamped flat at the edge; the 70-180 band takes about 70 % of the plot. */
+    const val SPARK_MIN_MGDL = 60.0
+    const val SPARK_MAX_MGDL = 220.0
 
-    /** x of slot [slot] (fractional), "now" is slot 35. */
-    fun sparkX(slot: Float): Float = SPARK_X0 + slot / (SPARK_TOTAL - 1) * (SPARK_X1 - SPARK_X0)
+    /** x of slot [slot] (fractional), "now" is slot 35; with [forecast] the 12 future slots follow, else now is the right edge. */
+    fun sparkX(slot: Float, x0: Float = SPARK_X0, forecast: Boolean = true): Float {
+        val last = if (forecast) SPARK_TOTAL - 1 else SPARK_HISTORY - 1
+        return x0 + slot / last * (SPARK_X1 - x0)
+    }
 
-    /** x of the now line (about 294). */
-    val nowX: Float get() = sparkX((SPARK_HISTORY - 1).toFloat())
+    /** x of the now line (about 297 with a forecast, the right edge without). */
+    fun nowX(x0: Float = SPARK_X0, forecast: Boolean = true): Float = sparkX((SPARK_HISTORY - 1).toFloat(), x0, forecast)
 
     /** y for a value in mg/dL, clamped to the plot. */
     fun sparkY(mgdl: Double): Float {
@@ -510,7 +514,7 @@ object GlassFaceLogic {
     /** "+0,5" / "+1,0" with the watch locale's decimal separator. */
     fun bolusAmountText(amount: Double, locale: Locale): String = FaceState.bolusAmountText(amount, locale)
 
-    /** Hit test of the ball (r=44 around the centre) clipped to the round screen (r=225). */
+    /** Hit test of the ball (r=[BALL_HIT_R], 24 dp at xhdpi, around the centre) clipped to the round screen (r=225). */
     fun ballHit(x: Float, y: Float, cx: Float = BALL_X, cy: Float = BALL_Y, r: Float = BALL_HIT_R): Boolean {
         val dx = x - cx
         val dy = y - cy
@@ -523,20 +527,29 @@ object GlassFaceLogic {
     fun armProgress(armedAt: Long, now: Long, windowMs: Long): Float =
         if (windowMs <= 0) 0f else (1f - (now - armedAt).toFloat() / windowMs).coerceIn(0f, 1f)
 
-    const val BALL_X = 46f
-    const val BALL_Y = 176f
+    /** UX round 1: lower left, between the card, the sparkline and the LOOP pill (38 px from the bezel, 11 px or more from content). */
+    const val BALL_X = 86f
+    const val BALL_Y = 300f
     const val BALL_R = 30f
-    const val BALL_HIT_R = 44f
+
+    /** Hit radius on the 450 grid at xhdpi: 48 px = 24 dp, the family's 48 dp target (the face scales it to stay 24 dp). */
+    const val BALL_HIT_R = 48f
 
     // ------------------------------------------------------------------------------------------- layout variants
 
-    /** Hero card positions (spec §3, §4.3): chip on the right, or removed (key_show_direction off) with BG and meta centred. */
+    /**
+     * Hero card positions (spec §3, §4.3; UX round 1): the BG digits left, the trend chip in the right column with the
+     * TIEF/HOCH pill under it, and the delta · age line at full width under the digits. Without the chip
+     * (key_show_direction off) the digits centre. An empty meta line centres the digits vertically.
+     */
     data class HeroLayout(val bgX: Float, val bgY: Float, val bgMaxWidth: Float, val chipY: Float, val metaCentreX: Float, val metaY: Float)
 
+    const val META_Y = 238f
+
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
-        showChip  -> HeroLayout(184f, 176f, BG_MAX_WIDTH, if (metaEmpty) 175f else 152f, 312f, 200f)
-        metaEmpty -> HeroLayout(225f, 175f, BG_MAX_WIDTH_NO_CHIP, 152f, 225f, 220f)
-        else      -> HeroLayout(225f, 166f, BG_MAX_WIDTH_NO_CHIP, 152f, 225f, 220f)
+        showChip  -> if (metaEmpty) HeroLayout(186f, 182f, BG_MAX_WIDTH, 164f, 225f, META_Y) else HeroLayout(186f, 162f, BG_MAX_WIDTH, 150f, 225f, META_Y)
+        metaEmpty -> HeroLayout(225f, 182f, BG_MAX_WIDTH_NO_CHIP, 150f, 225f, META_Y)
+        else      -> HeroLayout(225f, 162f, BG_MAX_WIDTH_NO_CHIP, 150f, 225f, META_Y)
     }
 
     /** Which pills are drawn: both; LOOP alone, centred (key_show_iob off); IOB alone, centred (pumpcontrol: no APS). */
@@ -567,15 +580,15 @@ object GlassFaceLogic {
         else            -> false
     }
 
-    /** The LOOP/LGS label is hidden only for an open loop ("Offen" fills the pill); width decides the rest. */
+    /** The LOOP/LGS label is hidden only for an open loop ("Offen" fills the pill); never dropped for width (spec F14). */
     fun loopLabelAllowed(health: LoopHealth): Boolean = health != LoopHealth.OPEN
 
     // ------------------------------------------------------------------------------------------- ambient range shape
 
     enum class OutlineStyle { NONE, SOLID, DASHED, DOUBLE }
 
-    /** Ambient grey of an outline: ambLine, amb2, amb1 (white in low-bit). */
-    enum class AmbTone { LINE, A2, A1 }
+    /** Ambient grey of an outline: ambLine (24 %), amb3 (43 %), amb2, amb1 (white in low-bit). */
+    enum class AmbTone { LINE, A3, A2, A1 }
 
     /**
      * Hero card outline in ambient (spec §9: the range as a shape, colour is never the only carrier).
@@ -585,13 +598,17 @@ object GlassFaceLogic {
 
     const val DOUBLE_OUTLINE_GAP = 5f
 
+    /**
+     * UX round 1: the outline stays a quiet 1 px line (never the brightest thing on the screen); the shape (dashed,
+     * double) carries the range, the BG digits and the TIEF/HOCH word carry the weight.
+     */
     fun ambientOutline(range: Range, lowBit: Boolean): AmbientOutline = when (range) {
         Range.IN, Range.STALE -> if (lowBit) AmbientOutline(OutlineStyle.NONE, 0f, 0f, AmbTone.LINE, false)
                                  else AmbientOutline(OutlineStyle.SOLID, 1f, 0f, AmbTone.LINE, false)
-        Range.HIGH            -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A2, false)
-        Range.VERY_HIGH       -> AmbientOutline(OutlineStyle.DASHED, 2f, 0f, AmbTone.A1, false)
-        Range.LOW             -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.A2, false)
-        Range.URGENT_LOW      -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 2f, AmbTone.A1, true)
+        Range.HIGH            -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.LINE, false)
+        Range.VERY_HIGH       -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A3, false)
+        Range.LOW             -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.LINE, false)
+        Range.URGENT_LOW      -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.A3, true)
     }
 
     /** Random burn-in offset in [-4, +4] px from a 0..1 source. */

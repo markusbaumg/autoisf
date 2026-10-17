@@ -284,6 +284,8 @@ class WatchfaceRenderHarness {
                 guard.onReachAnswer(s.phoneReachable)
                 Thread.sleep(5)
                 tapBall(face, wf, s.px, eventTime = 2L)
+                // the steady SENT state: after the 150 ms send flash (white rim), as the user sees it for 30 s
+                Thread.sleep(220)
             }
 
             else       -> settle()
@@ -308,8 +310,8 @@ class WatchfaceRenderHarness {
         val (x, y) = when (face) {
             Face.HALO  -> HaloLayout(px.toFloat(), 2f).let { it.ballX to it.ballY }
             Face.GLASS -> GlassFaceLogic.BALL_X * scale to GlassFaceLogic.BALL_Y * scale
-            Face.ORBIT -> OrbitFaceLogic.pointX(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_BOLUS) * scale to
-                OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_BOLUS) * scale
+            Face.ORBIT -> OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS) * scale to
+                OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS) * scale
         }
         wf.tapOffline(TapType.UP, x.toInt(), y.toInt(), eventTime)
         shadowOf(Looper.getMainLooper()).idle()

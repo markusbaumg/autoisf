@@ -10,7 +10,6 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.WeekFields
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.asin
 import kotlin.math.atan
 import kotlin.math.max
 import kotlin.math.min
@@ -27,12 +26,18 @@ object OrbitFaceLogic {
 
     const val CX = 225f
     const val CY = 225f
-    const val ORBIT_R = 168f
-    const val BALL_R = 34f
+
+    /**
+     * UX round 1: the track grows from r 168 to r 192 (no dead black margin), the satellites sit on r 174 (their
+     * shells cover the track, 14 px from the bezel) and grow from r 34 to r 37.
+     */
+    const val ORBIT_R = 192f
+    const val SAT_R = 174f
+    const val BALL_R = 37f
     const val BOLUS_HALF = 33f
 
-    /** Hit circle radius around the bolus button centre (spec §4.12); the rules live in the shared BolusRequestGuard. */
-    const val BOLUS_HIT_R = 44f
+    /** Hit circle radius around the bolus button centre (spec §4.12): 48 px = 24 dp at xhdpi, the family target. */
+    const val BOLUS_HIT_R = 48f
 
     /** Rim flash after a bolus request is sent (spec §4.12). */
     const val BOLUS_SEND_FLASH_MS = 150L
@@ -40,13 +45,17 @@ object OrbitFaceLogic {
     /** Double-tap window of the graph (time-frame change), same as the bolus button. */
     const val GRAPH_DOUBLE_TAP_MS = 800L
 
-    /** Ball positions on the orbit (degrees clockwise from 12). Never change between modes. */
-    const val DEG_LOOP = 45f
-    const val DEG_IOB = 90f
-    const val DEG_BASAL = 135f
+    /**
+     * Ball positions on the orbit (degrees clockwise from 12). Never change between modes. UX round 1: symmetric at
+     * 2 / 4 / 8 / 10 o'clock (LOOP 10, IOB 2); the 3 / 9 o'clock pair holds TT and the bolus button, so neither
+     * adds a lopsided state.
+     */
+    const val DEG_LOOP = 300f
+    const val DEG_IOB = 60f
+    const val DEG_BASAL = 120f
     const val DEG_BOLUS = 270f
-    const val DEG_COB = 225f
-    const val DEG_TT = 315f
+    const val DEG_COB = 240f
+    const val DEG_TT = 90f
     val BALL_DEGS = floatArrayOf(DEG_LOOP, DEG_IOB, DEG_BASAL, DEG_COB, DEG_TT)
     const val IDX_LOOP = 0
     const val IDX_IOB = 1
@@ -73,19 +82,24 @@ object OrbitFaceLogic {
     /** IOB arc is full at this many units. */
     const val IOB_ARC_FULL_U = 6.0
 
-    /** Sparkline: fixed range 2.5..14.0 mmol/L (45..252 mg/dL), box x 151..291, y 280..324, now at x 265. */
+    /** Sparkline: fixed range 2.5..14.0 mmol/L (45..252 mg/dL), box x 135..315 (UX round 1: 180 px wide), now at x 285. */
     const val SPARK_MIN_MGDL = 45.0
     const val SPARK_MAX_MGDL = 252.0
-    const val SPARK_X0 = 151f
-    const val SPARK_X_NOW = 265f
-    const val SPARK_X1 = 291f
-    const val SPARK_Y_TOP = 280f
-    const val SPARK_Y_BOTTOM = 324f
+    const val SPARK_X0 = 135f
+    const val SPARK_X_NOW = 285f
+    const val SPARK_X1 = 315f
+    const val SPARK_Y_TOP = 288f
+    const val SPARK_Y_BOTTOM = 338f
 
-    /** With a status pill under the delta row the sparkline moves down into this box. */
-    const val SPARK_Y_TOP_PILL = 298f
-    const val SPARK_Y_BOTTOM_PILL = 334f
-    const val SLOT_Y = 280f
+    /** Delta row centre and the pill row under it (its own row, 8 px or more below the delta baseline: never over the delta). */
+    const val DELTA_ROW_Y = 262f
+    const val DELTA_SIZE = 22f
+    const val SLOT_Y = 295f
+    const val SLOT_H = 28f
+
+    /** With a pill row (status slot or TIEF/HOCH) under the delta row the sparkline moves down into this box. */
+    const val SPARK_Y_TOP_PILL = 318f
+    const val SPARK_Y_BOTTOM_PILL = 360f
     /** Default sparkline window (key_chart_time_frame, hours). */
     const val DEFAULT_TIME_FRAME_H = 3
     const val SPARK_HISTORY_MS = DEFAULT_TIME_FRAME_H * 60 * 60_000L
@@ -93,8 +107,8 @@ object OrbitFaceLogic {
     const val PREDICTION_STEP_MS = 6 * 60_000L
 
     /** Width budgets (design px) for the worst-case text checks. */
-    const val BALL_VALUE_MAX = 56f
-    const val BALL_VALUE_HARD_MAX = 62f
+    const val BALL_VALUE_MAX = 60f
+    const val BALL_VALUE_HARD_MAX = 66f
     const val HERO_MAX_WIDTH = 200f
     const val DATE_LINE_MAX_WIDTH = 196f
     const val DELTA_ROW_MAX_WIDTH = 190f
@@ -433,25 +447,34 @@ object OrbitFaceLogic {
     /** Skeleton ball for first start / no profile: "--" in dim. */
     fun placeholderBall(label: String): Ball = Ball("--", label, Ring.DIM, dimValue = true)
 
-    /** Value text size: 22 px; wider than 56 px at 22 -> 17 px bold; still too wide -> shrink to fit 62 px. */
-    fun ballValueSize(widthAt22: Float): Float {
-        if (widthAt22 <= BALL_VALUE_MAX) return 22f
-        val at17 = widthAt22 * 17f / 22f
-        return if (at17 <= BALL_VALUE_HARD_MAX) 17f else 17f * BALL_VALUE_HARD_MAX / at17
+    /** Ball value size (UX round 1: 22 -> 24) and the step-down size for wide values. */
+    const val BALL_VALUE_SIZE = 24f
+    const val BALL_VALUE_SMALL = 19f
+    const val BALL_LABEL_SIZE = 15f
+
+    /** Value text size: 24 px; wider than 60 px at 24 -> 19 px bold; still too wide -> shrink to fit 66 px. */
+    fun ballValueSize(widthAt24: Float): Float {
+        if (widthAt24 <= BALL_VALUE_MAX) return BALL_VALUE_SIZE
+        val small = widthAt24 * BALL_VALUE_SMALL / BALL_VALUE_SIZE
+        return if (small <= BALL_VALUE_HARD_MAX) BALL_VALUE_SMALL else BALL_VALUE_SMALL * BALL_VALUE_HARD_MAX / small
     }
 
-    /** Hero group budget (spec §4.2): BG + 14 + a 40 px glyph (both scaled with the BG size) within 252. */
-    const val HERO_GROUP_MAX = 252f
+    /** Hero group budget (spec §4.2): BG + 14 + a 40 px glyph (both scaled with the BG size) within 240 (UX round 1: clear of the 10 and 2 o'clock satellites). */
+    const val HERO_GROUP_MAX = 240f
     const val HERO_GLYPH_GAP = 14f
     const val HERO_GLYPH_W = 40f
     const val HERO_MIN_SIZE = 60f
 
-    fun heroGroupWidth(widthAt108: Float, size: Float, glyph: Boolean): Float =
-        widthAt108 * size / 108f + if (glyph) HERO_GLYPH_GAP + HERO_GLYPH_W * size / 108f else 0f
+    /** Hero start size (UX round 1: 108 -> 120, the family's scale). Widths are measured at [HERO_REF] px. */
+    const val HERO_SIZE = 120f
+    const val HERO_REF = 108f
 
-    /** 108 px, stepped down by 4 until the group fits [HERO_GROUP_MAX] (minimum 60). */
+    fun heroGroupWidth(widthAt108: Float, size: Float, glyph: Boolean): Float =
+        widthAt108 * size / HERO_REF + if (glyph) HERO_GLYPH_GAP + HERO_GLYPH_W * size / HERO_REF else 0f
+
+    /** [HERO_SIZE], stepped down by 4 until the group fits [HERO_GROUP_MAX] (minimum 60). */
     fun heroSize(widthAt108: Float, glyph: Boolean): Float {
-        var size = 108f
+        var size = HERO_SIZE
         while (size > HERO_MIN_SIZE && heroGroupWidth(widthAt108, size, glyph) > HERO_GROUP_MAX) size -= 4f
         return size
     }
@@ -536,19 +559,24 @@ object OrbitFaceLogic {
     fun pointX(r: Float, deg: Float): Float = CX + r * kotlin.math.sin(Math.toRadians(deg.toDouble())).toFloat()
     fun pointY(r: Float, deg: Float): Float = CY - r * kotlin.math.cos(Math.toRadians(deg.toDouble())).toFloat()
 
-    /** Half angle (deg) of the track gap that holds a text of [textWidth]: (w + 20) / 2 / r rad, capped at [maxDeg]. */
+    /** Text margin on each side of a track gap (UX round 1: the cut is the text width ±8 px, centred on it). */
+    const val GAP_MARGIN = 8f
+
+    /** Half angle (deg) of the track gap that holds a text of [textWidth]: (w + 16) / 2 / r rad, capped at [maxDeg]. */
     fun gapHalfDeg(textWidth: Float, maxDeg: Float = MAX_GAP_DEG): Float =
-        min(Math.toDegrees(((textWidth + 20f) / 2f / ORBIT_R).toDouble()).toFloat(), maxDeg)
+        min(Math.toDegrees(((textWidth + 2f * GAP_MARGIN) / 2f / ORBIT_R).toDouble()).toFloat(), maxDeg)
 
-    /** Angular half width of a ball as seen from the centre. */
-    val BALL_HALF_DEG: Float = Math.toDegrees(asin((BALL_R / ORBIT_R).toDouble())).toFloat()
+    /** Angular half width of the part of the track (r [ORBIT_R]) that a ball (r [BALL_R] at [SAT_R]) covers. */
+    val BALL_HALF_DEG: Float = Math.toDegrees(
+        kotlin.math.acos(((ORBIT_R * ORBIT_R + SAT_R * SAT_R - BALL_R * BALL_R) / (2f * ORBIT_R * SAT_R)).toDouble())
+    ).toFloat()
 
-    /** The gaps may grow until they touch the nearest ball (45 deg away from 0 and 180). */
-    val MAX_GAP_DEG: Float = 45f - BALL_HALF_DEG - 0.5f
+    /** The gaps may grow until they touch the nearest ball (60 deg away from 0 and 180). */
+    val MAX_GAP_DEG: Float = 60f - BALL_HALF_DEG - 0.5f
 
     /** Moon occlusion limit for a ball and for the bolus button. */
     val BALL_OCCLUDE_DEG: Float = BALL_HALF_DEG + 1.5f
-    val BOLUS_OCCLUDE_DEG: Float = Math.toDegrees(atan((BOLUS_HALF * 1.1f / ORBIT_R).toDouble())).toFloat() + 1.5f
+    val BOLUS_OCCLUDE_DEG: Float = Math.toDegrees(atan((BOLUS_HALF * 1.1f / SAT_R).toDouble())).toFloat() + 1.5f
 
     /** Signed shortest angular difference a - b in (-180, 180]. */
     fun angleDiff(a: Float, b: Float): Float {
@@ -588,7 +616,10 @@ object OrbitFaceLogic {
         return (bottom - (c - SPARK_MIN_MGDL) / (SPARK_MAX_MGDL - SPARK_MIN_MGDL) * (bottom - top)).toFloat()
     }
 
-    /** -1 below the box (caret ▼ on the bottom edge), +1 above (▲ on the top edge), 0 inside. */
+    /**
+     * -1 below the box, +1 above, 0 inside. The line stays flat at the limit; one small chevron marks the end of each
+     * clamped run (UX round 1: no caret per reading, which read as a sawtooth glitch), see [clampMarks].
+     */
     fun sparkClamp(mgdl: Double): Int = when {
         mgdl < SPARK_MIN_MGDL -> -1
         mgdl > SPARK_MAX_MGDL -> 1
@@ -598,6 +629,21 @@ object OrbitFaceLogic {
     /** x of a reading [t] when the right end of the history (x 265) is [now] and the window is [windowMs]. */
     fun sparkX(t: Long, now: Long, windowMs: Long = SPARK_HISTORY_MS): Float =
         SPARK_X_NOW - (now - t).toFloat() / windowMs * (SPARK_X_NOW - SPARK_X0)
+
+    /**
+     * Indices of the readings that get a clamp chevron: the last reading of each run of readings clamped to the same
+     * edge (a run ends at a different clamp state or at a gap break). [clamps] per reading, [breaks] true where the line
+     * restarts at that reading.
+     */
+    fun clampMarks(clamps: IntArray, breaks: BooleanArray): List<Int> {
+        val out = ArrayList<Int>()
+        for (i in clamps.indices) {
+            if (clamps[i] == 0) continue
+            val last = i == clamps.size - 1 || clamps[i + 1] != clamps[i] || breaks[i + 1]
+            if (last) out += i
+        }
+        return out
+    }
 
     /** Gap rule (graph.gaps): readings more than 15 min apart are not joined. */
     const val SPARK_GAP_MS = 15 * 60_000L

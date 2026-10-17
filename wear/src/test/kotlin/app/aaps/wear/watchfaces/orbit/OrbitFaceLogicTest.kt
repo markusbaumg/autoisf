@@ -434,30 +434,45 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.pointY(168f, 45f)).isWithin(0.1f).of(106.2f)
         assertThat(OrbitFaceLogic.pointX(168f, 270f)).isWithin(0.01f).of(57f)
         assertThat(OrbitFaceLogic.pointY(168f, 180f)).isWithin(0.01f).of(393f)
-        // round-safe: the bolus button corner stays inside r 205
-        val corner = kotlin.math.hypot(225f - (57f - 33f) - 16f * (1 - 0.7071f), 33f - 16f * (1 - 0.7071f))
-        assertThat(corner).isLessThan(205f)
-        // the moved sparkline (status pill shown) stays above the lower balls' tops and the date line
-        assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM_PILL).isLessThan(393f - 12f)
-        assertThat(OrbitFaceLogic.SLOT_Y + 13f).isLessThan(OrbitFaceLogic.SPARK_Y_TOP_PILL)
+        // UX round 1: the track fills the dial (r 192); satellites and the round bolus button keep 14 px to the bezel
+        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R).isAtMost(225f - 14f)
+        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BOLUS_HALF).isAtMost(225f - 14f)
+        // the satellites cover the track (they sit on it)
+        assertThat(OrbitFaceLogic.ORBIT_R).isLessThan(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R)
+        // symmetric layout: LOOP/IOB and COB/BASAL mirror each other, TT and the bolus button are the 3/9 o'clock pair
+        assertThat(OrbitFaceLogic.DEG_LOOP + OrbitFaceLogic.DEG_IOB).isEqualTo(360f)
+        assertThat(OrbitFaceLogic.DEG_COB + OrbitFaceLogic.DEG_BASAL).isEqualTo(360f)
+        assertThat(OrbitFaceLogic.DEG_TT + OrbitFaceLogic.DEG_BOLUS).isEqualTo(360f)
+        // the pill row has its own line 8 px or more below the delta baseline (never over the delta)
+        val deltaBaseline = OrbitFaceLogic.DELTA_ROW_Y + OrbitFaceLogic.DELTA_SIZE * 0.36f
+        assertThat(OrbitFaceLogic.SLOT_Y - OrbitFaceLogic.SLOT_H / 2f - deltaBaseline).isAtLeast(8f)
+        // the moved sparkline (pill row shown) stays below the pills and above the date line
+        val dateY = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f)
+        assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM_PILL).isLessThan(dateY - 12f - 11f)
+        assertThat(OrbitFaceLogic.SLOT_Y + OrbitFaceLogic.SLOT_H / 2f).isLessThan(OrbitFaceLogic.SPARK_Y_TOP_PILL)
+        // the 180 px sparkline stays clear of the lower satellites
+        val cobRight = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB) + OrbitFaceLogic.BALL_R
+        assertThat(OrbitFaceLogic.SPARK_X0 - cobRight).isAtLeast(8f)
+        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(180f)
     }
 
     @Test fun gapWidths() {
-        // "00:40" at 30 px is about 80 px wide -> (80 + 20) / 2 / 168 rad = 17 deg
-        assertThat(OrbitFaceLogic.gapHalfDeg(80f)).isWithin(0.1f).of(17.05f)
+        // "00:40" at 30 px is about 80 px wide -> (80 + 16) / 2 / 192 rad = 14.3 deg (text width ±8 px)
+        assertThat(OrbitFaceLogic.gapHalfDeg(80f)).isWithin(0.1f).of(14.32f)
         assertThat(OrbitFaceLogic.gapHalfDeg(400f)).isEqualTo(OrbitFaceLogic.MAX_GAP_DEG)
         assertThat(180f - OrbitFaceLogic.MAX_GAP_DEG).isGreaterThan(OrbitFaceLogic.DEG_BASAL + OrbitFaceLogic.BALL_HALF_DEG)
     }
 
     @Test fun worstCaseWidths() {
-        // ball value: 22 px up to 56 px, 17 px bold beyond, shrink when even that is too wide
-        assertThat(OrbitFaceLogic.ballValueSize(50f)).isEqualTo(22f)
-        assertThat(OrbitFaceLogic.ballValueSize(70f)).isEqualTo(17f)
+        // ball value: 24 px up to 60 px, 19 px bold beyond, shrink when even that is too wide
+        assertThat(OrbitFaceLogic.ballValueSize(50f)).isEqualTo(24f)
+        assertThat(OrbitFaceLogic.ballValueSize(70f)).isEqualTo(19f)
         val tiny = OrbitFaceLogic.ballValueSize(110f)
-        assertThat(tiny).isLessThan(17f)
-        assertThat(110f * tiny / 22f).isWithin(0.01f).of(OrbitFaceLogic.BALL_VALUE_HARD_MAX)
-        // the hero group (BG + glyph) never reaches the IOB ball (left edge 359)
-        assertThat(OrbitFaceLogic.CX + OrbitFaceLogic.HERO_GROUP_MAX / 2f).isLessThan(OrbitFaceLogic.pointX(168f, 90f) - OrbitFaceLogic.BALL_R)
+        assertThat(tiny).isLessThan(19f)
+        assertThat(110f * tiny / 24f).isWithin(0.01f).of(OrbitFaceLogic.BALL_VALUE_HARD_MAX)
+        // the hero group (BG + glyph) never reaches the 3 o'clock TT ball
+        assertThat(OrbitFaceLogic.CX + OrbitFaceLogic.HERO_GROUP_MAX / 2f)
+            .isLessThan(OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_TT) - OrbitFaceLogic.BALL_R)
     }
 
     /**
@@ -467,7 +482,7 @@ class OrbitFaceLogicTest {
     @Test fun catalogueStringsFitTheirSlots() {
         for (screen in listOf(384f, 450f)) {
             val s = screen / 450f
-            // hero: "22,2+" with a glyph steps down but stays >= 60 and inside 252
+            // hero: "22,2+" with a glyph steps down but stays >= 60 and inside HERO_GROUP_MAX
             for (bg in listOf("22,2+", "400+", "11,8", "115", "6,4", "---")) {
                 val w108 = OrbitFaceLogic.estimateWidth(bg, 108f)
                 for (glyph in listOf(true, false)) {
@@ -476,18 +491,18 @@ class OrbitFaceLogicTest {
                     assertThat(OrbitFaceLogic.heroGroupWidth(w108, size, glyph)).isAtMost(OrbitFaceLogic.HERO_GROUP_MAX)
                 }
             }
-            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("22,2+", 108f), true)).isLessThan(108f)
-            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("6,4", 108f), true)).isEqualTo(108f)
+            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("22,2+", 108f), true)).isLessThan(OrbitFaceLogic.HERO_SIZE)
+            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("6,4", 108f), true)).isEqualTo(OrbitFaceLogic.HERO_SIZE)
             // ball values: "20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "Offen", "Pumpe"
             for (v in listOf("20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "0,85", "Offen", "Pumpe", "2 Std")) {
-                val size = OrbitFaceLogic.ballValueSize(OrbitFaceLogic.estimateWidth(v, 22f))
+                val size = OrbitFaceLogic.ballValueSize(OrbitFaceLogic.estimateWidth(v, 24f))
                 assertThat(OrbitFaceLogic.estimateWidth(v, size)).isAtMost(OrbitFaceLogic.BALL_VALUE_HARD_MAX + 0.01f)
                 assertThat(size * s).isAtLeast(11f)
-                // inside the ball (r 34) with a margin
+                // inside the ball with a margin
                 assertThat(OrbitFaceLogic.estimateWidth(v, size)).isLessThan(2 * OrbitFaceLogic.BALL_R - 4f)
             }
-            // ball labels 14 px stay >= 11 physical px at 384
-            assertThat(14f * s).isAtLeast(11f)
+            // ball labels stay >= 11 physical px at 384 (UX round 1: 15 px)
+            assertThat(OrbitFaceLogic.BALL_LABEL_SIZE * s).isAtLeast(12f)
             // status pill: the longest German texts at 19 px within the slot
             for (t in listOf("Telefon getrennt · 14′", "Keine Daten · 17′", "Warte auf AAPS", "Reservoir 18 U", "Tel 18 %")) {
                 val size = OrbitFaceLogic.fitSize(OrbitFaceLogic.estimateWidth(t, 19f), 19f, OrbitFaceLogic.SLOT_MAX_WIDTH)
@@ -513,24 +528,25 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.moon(0, gapT, gapD, false).kind).isEqualTo(MoonKind.HIDDEN)
         assertThat(OrbitFaceLogic.moon(57, gapT, gapD, false).kind).isEqualTo(MoonKind.HIDDEN)
         assertThat(OrbitFaceLogic.moon(30, gapT, gapD, false).kind).isEqualTo(MoonKind.HIDDEN)
-        val dot = OrbitFaceLogic.moon(40, gapT, gapD, false)
+        val dot = OrbitFaceLogic.moon(35, gapT, gapD, false)
         assertThat(dot.kind).isEqualTo(MoonKind.DOT)
-        assertThat(dot.deg).isEqualTo(240f)
+        assertThat(dot.deg).isEqualTo(210f)
         // 9 o'clock: free without the button, hidden behind it
-        assertThat(OrbitFaceLogic.moon(45, gapT, gapD, false).kind).isEqualTo(MoonKind.DOT)
+        assertThat(OrbitFaceLogic.moon(45, gapT, gapD, false, booleanArrayOf(false, false, false, false, false)).kind).isEqualTo(MoonKind.DOT)
         assertThat(OrbitFaceLogic.moon(45, gapT, gapD, true).kind).isEqualTo(MoonKind.HIDDEN)
-        // behind the TT ball at 315 deg: 00:52 -> 312 deg, rim highlight on the trailing side
-        val rim = OrbitFaceLogic.moon(52, gapT, gapD, true)
+        // behind the TT ball at 90 deg: 00:14 -> 84 deg, rim highlight on the trailing side
+        val rim = OrbitFaceLogic.moon(14, gapT, gapD, true)
         assertThat(rim.kind).isEqualTo(MoonKind.RIM)
         assertThat(rim.ball).isEqualTo(OrbitFaceLogic.IDX_TT)
-        assertThat(rim.rimDeg).isWithin(0.5f).of(315f - 3f / OrbitFaceLogic.BALL_OCCLUDE_DEG * 90f)
+        assertThat(rim.rimDeg).isWithin(0.5f).of(90f - 6f / OrbitFaceLogic.BALL_OCCLUDE_DEG * 90f)
         // without a TT ball the moon is a plain dot there
         val shown = booleanArrayOf(true, true, true, true, false)
-        assertThat(OrbitFaceLogic.moon(52, gapT, gapD, true, shown).kind).isEqualTo(MoonKind.DOT)
-        val loop = OrbitFaceLogic.moon(7, gapT, gapD, false, shown)
+        assertThat(OrbitFaceLogic.moon(14, gapT, gapD, true, shown).kind).isEqualTo(MoonKind.DOT)
+        // LOOP at 10 o'clock: 00:49 -> 294 deg
+        val loop = OrbitFaceLogic.moon(49, gapT, gapD, false, shown)
         assertThat(loop.kind).isEqualTo(MoonKind.RIM)
         assertThat(loop.ball).isEqualTo(OrbitFaceLogic.IDX_LOOP)
-        assertThat(OrbitFaceLogic.BALL_OCCLUDE_DEG).isWithin(0.1f).of(13.2f)
+        assertThat(OrbitFaceLogic.BALL_OCCLUDE_DEG).isWithin(0.1f).of(11.6f)
     }
 
     @Test fun angleDiffWraps() {
@@ -553,6 +569,10 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.sparkClamp(30.0)).isEqualTo(-1)
         assertThat(OrbitFaceLogic.sparkClamp(300.0)).isEqualTo(1)
         assertThat(OrbitFaceLogic.sparkClamp(120.0)).isEqualTo(0)
+        // one chevron per clamped run (no sawtooth): runs end at a different clamp, a gap break or the last reading
+        val clamps = intArrayOf(0, 1, 1, 1, 0, -1, -1, 1, 1)
+        val breaks = BooleanArray(clamps.size).also { it[0] = true; it[3] = true }
+        assertThat(OrbitFaceLogic.clampMarks(clamps, breaks)).containsExactly(2, 3, 6, 8).inOrder()
         assertThat(OrbitFaceLogic.sparkX(now, now)).isEqualTo(OrbitFaceLogic.SPARK_X_NOW)
         assertThat(OrbitFaceLogic.sparkX(now - OrbitFaceLogic.SPARK_HISTORY_MS, now)).isWithin(0.01f).of(OrbitFaceLogic.SPARK_X0)
         assertThat(OrbitFaceLogic.predictionX(5)).isWithin(0.01f).of(OrbitFaceLogic.SPARK_X1)
