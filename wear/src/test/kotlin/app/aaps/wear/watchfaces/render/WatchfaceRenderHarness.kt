@@ -27,6 +27,7 @@ import app.aaps.wear.watchfaces.common.AodStyle
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.BolusRequestPrefs
 import app.aaps.wear.watchfaces.common.PhoneReachability
+import app.aaps.wear.watchfaces.glass.GlassAod
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic
 import app.aaps.wear.watchfaces.glass.GlassWatchface
 import app.aaps.wear.watchfaces.halo.HaloLayout
@@ -80,6 +81,8 @@ import kotlin.math.min
 class WatchfaceRenderHarness {
 
     private val outDir: File? = System.getProperty("watchface.render.out")?.takeIf { it.isNotBlank() }?.let { File(it) }
+    /** Optional filter: only the "<face>/<state>" ids this regex finds are rendered (-PwatchfaceRenderOnly). */
+    private val only: Regex? = System.getProperty("watchface.render.only")?.takeIf { it.isNotBlank() }?.let { Regex(it) }
 
     enum class Face(val id: String) { HALO("halo"), GLASS("glass"), ORBIT("orbit") }
 
@@ -98,6 +101,8 @@ class WatchfaceRenderHarness {
         val clock: ZonedDateTime = SHOWN_TIME,
         /** The shared always-on style (face_aod_style), written to the prefs before the face is built. */
         val aod: AodStyle = AodStyle.DEFAULT,
+        /** Glass only (AOD exploration): draw this look in ambient regardless of [aod]; other faces skip the state. */
+        val glassLook: GlassAod.Look? = null,
         val data: (now: Long) -> ComplicationData
     )
 
@@ -277,8 +282,69 @@ class WatchfaceRenderHarness {
         // Orbit discs round 3: worst cases of the squeezed hero, between the bolus button at 9 and the TT disc at 3
         RenderState("ball_tt_very_high", ball = Ball.IDLE) { now -> data(now, 22.2, "\u21c8", "+1.2", 1, st = status(now, tt = "8.0", ttLevel = 2)) },
         RenderState("ball_tt_10_5", ball = Ball.IDLE) { now -> data(now, 10.5, "↗", "+0.3", 1, st = status(now, tt = "8.0", ttLevel = 2)) },
-        RenderState("ball_tt_mgdl_224", ball = Ball.IDLE) { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true, st = status(now, tt = "144", ttLevel = 2)) }
+        RenderState("ball_tt_mgdl_224", ball = Ball.IDLE) { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true, st = status(now, tt = "144", ttLevel = 2)) },
+        // Glass AOD round 1 (media chip): a zero basal joins the loop / IOB row; with the ball and a TT the row drops runs
+        RenderState("live_zero_basal_ball", ball = Ball.IDLE, clock = ZonedDateTime.of(2026, 10, 17, 14, 25, 0, 0, ZONE)) { now ->
+            traced(now, flatAt(9.0), List(12) { 9.9 + 0.02 * it }, "→", "+0.1", 0, st = status(now, loopAgeMin = 0, iob = "3.68", cob = "0g", basal = "0.00 U/h"))
+        },
+        RenderState("tbr_tt_ball", ball = Ball.IDLE) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, tt = "8.0", ttLevel = 2, basal = "120%")) },
+        RenderState("zero_basal_kh_tt") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, cob = "24g", tt = "8.0", ttLevel = 2, basal = "0.00 U/h")) }
+    ) + aodStates() + exploreStates()
+
+    /** AOD round 2: the cases every always-on style must handle, as (id, mode, ball-free data). */
+    private fun aodCases(): List<Triple<String, Mode, (Long) -> ComplicationData>> = listOf(
+        Triple("in_range", Mode.AMBIENT, inRange),
+        Triple("aging_8", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 8) },
+        Triple("stale", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("urgent_low", Mode.AMBIENT) { now -> data(now, 2.6, "\u21ca", "-0.6", -1, history = List(36) { k -> 7.0 - 4.4 * (k / 35.0) * (k / 35.0) }) },
+        Triple("low", Mode.AMBIENT) { now -> data(now, 3.4, "↓", "-0.3", -1) },
+        Triple("high", Mode.AMBIENT) { now -> data(now, 12.4, "↗", "+0.4", 1) },
+        Triple("very_high", Mode.AMBIENT) { now -> data(now, 22.2, "\u21c8", "+1.2", 1, history = List(36) { k -> 12.0 + 10.2 * (k / 35.0) * (k / 35.0) }) },
+        Triple("loop_off", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 8, external = "Loop disabled\n")) },
+        Triple("loop_23", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 23)) },
+        Triple("urgent_low_loop_23", Mode.AMBIENT) { now -> data(now, 2.6, "\u21ca", "-0.6", -1, st = status(now, loopAgeMin = 23)) },
+        Triple("no_phone_14", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14)) },
+        Triple("mgdl", Mode.AMBIENT) { now -> data(now, 224 / 18.0, "↗", "+0.4", 1, mgdl = true) },
+        Triple("no_data_ever", Mode.AMBIENT) { _ -> ComplicationData() },
+        Triple("lowbit", Mode.LOW_BIT, inRange),
+        Triple("lowbit_urgent_low", Mode.LOW_BIT) { now -> data(now, 2.6, "\u21ca", "-0.6", -1) },
+        Triple("lowbit_stale", Mode.LOW_BIT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("burnin", Mode.BURN_IN, inRange),
+        Triple("burnin_urgent_low", Mode.BURN_IN) { now -> data(now, 2.6, "\u21ca", "-0.6", -1) },
+        Triple("burnin_loop_off", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 8, external = "Loop disabled\n")) },
+        // the Watch5 Pro most likely runs with burn-in protection: these are what the owner sees
+        Triple("burnin_stale", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        // panel round 3: the struck old value must stay readable (8 / 0 / 6 / 9 differ at the digits' waist)
+        Triple("stale_8_0", Mode.AMBIENT) { now -> data(now, 8.0, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("stale_6_8", Mode.AMBIENT) { now -> data(now, 6.8, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("stale_9_8", Mode.AMBIENT) { now -> data(now, 9.8, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("stale_mgdl_180", Mode.AMBIENT) { now -> data(now, 10.0, "→", "+0.1", 0, ageMin = 17, mgdl = true, st = status(now, loopAgeMin = 17)) },
+        Triple("lowbit_stale_8_0", Mode.LOW_BIT) { now -> data(now, 8.0, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        Triple("burnin_no_phone_14", Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 14, phoneAgeMin = 14, st = status(now, loopAgeMin = 14)) },
+        // Glass AOD round 1: the remaining W-level words and the sentinels
+        Triple("no_profile", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, iob = "", cob = "", basal = "", external = "Kein Profil")) },
+        Triple("sentinel_high_400", Mode.AMBIENT) { now -> data(now, 22.3, "↗", "+0.4", 1) },
+        Triple("very_stale_45", Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 45, st = status(now, loopAgeMin = 45)) },
+        Triple("en_in_range", Mode.AMBIENT, inRange)
     )
+
+    /** aod_<style>_<case> for each value of the shared always-on setting (the ball enabled: it never shows in ambient). */
+    private fun aodStates(): List<RenderState> = AodStyle.entries.flatMap { style ->
+        aodCases().map { (id, mode, d) ->
+            RenderState(
+                "aod_${style.prefValue}_$id", lang = if (id.startsWith("en_")) "en" else "de", mode = mode, aod = style, ball = Ball.IDLE,
+                phoneReachable = !id.endsWith("no_phone_14"), data = d
+            )
+        }
+    }
+
+    /** Glass AOD round 1 exploration (Glass only): every look in in_range, urgent_low and stale. */
+    private fun exploreStates(): List<RenderState> {
+        val cases = aodCases().filter { it.first in setOf("in_range", "urgent_low", "stale") }
+        return GlassAod.Look.entries.flatMap { look ->
+            cases.map { (id, mode, d) -> RenderState("explore_${look.name.lowercase()}_$id", mode = mode, glassLook = look, data = d) }
+        }
+    }
 
     // ------------------------------------------------------------------ test
 
@@ -297,12 +363,18 @@ class WatchfaceRenderHarness {
         for (face in Face.entries) {
             val dir = File(out, face.id).apply { mkdirs() }
             val rendered = ArrayList<Pair<String, Bitmap>>()
+            val lit = StringBuilder("state\tlit_pct\n")
             for (s in states) {
+                if (s.glassLook != null && face != Face.GLASS) continue
+                if (only?.containsMatchIn("${face.id}/${s.id}") == false) continue
                 val bmp = render(face, s)
                 FileOutputStream(File(dir, "${s.id}.png")).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 rendered += s.id to bmp
                 edgeHit(bmp)?.let { edgeHits += "${face.id}/${s.id}: $it" }
+                lit.append(s.id).append('\t').append("%.2f".format(Locale.US, 100.0 * litRatio(bmp))).append('\n')
             }
+            if (rendered.isEmpty()) continue
+            File(dir, "lit.tsv").writeText(lit.toString())
             writeSheet(face, rendered, File(out, "${face.id}_sheet.png"))
         }
         // Glass/Orbit UX round 1: no drawn content (text, glyphs) within 14 px of the round edge (450 grid), where the
@@ -329,6 +401,20 @@ class WatchfaceRenderHarness {
         return null
     }
 
+    /** AOD round 2: share of the round dial's pixels with a luminance above 20 (0..255), the AMOLED lit share. */
+    private fun litRatio(bmp: Bitmap): Double {
+        val r = bmp.width / 2.0
+        var inside = 0
+        var lit = 0
+        for (y in 0 until bmp.height) for (x in 0 until bmp.width) {
+            if (kotlin.math.hypot(x + 0.5 - r, y + 0.5 - r) > r) continue
+            inside++
+            val c = bmp.getPixel(x, y)
+            if (0.2126 * Color.red(c) + 0.7152 * Color.green(c) + 0.0722 * Color.blue(c) > 20.0) lit++
+        }
+        return if (inside == 0) 0.0 else lit.toDouble() / inside
+    }
+
     // ------------------------------------------------------------------ rendering
 
     private fun render(face: Face, s: RenderState): Bitmap {
@@ -352,7 +438,7 @@ class WatchfaceRenderHarness {
         val d = s.data(now)
         val guard: BolusRequestGuard = when (wf) {
             is HaloWatchface  -> wf.prepareOffline(d)
-            is GlassWatchface -> wf.prepareOffline(d)
+            is GlassWatchface -> { wf.aodLookOverride = s.glassLook; wf.prepareOffline(d) }
             is OrbitWatchface -> wf.prepareOffline(d)
             else              -> error("unknown face")
         }

@@ -31,10 +31,10 @@
         app:wear_iconOff="@drawable/settings_off"
         app:wear_iconOn="@drawable/settings_on" />
 
-    <!-- Always-on style, shared with the Halo, Glass and Orbit faces (strings_face_aod.xml, AodStyle). -->
+    <!-- Always-on style, shared with the Halo, Glass and Orbit faces (strings_face_aod.xml, AodStyle); Glass names its looks (strings_face_aod_glass.xml). -->
     <ListPreference
         android:defaultValue="outline"
-        android:entries="@array/face_aod_style_names"
+        android:entries="@array/face_aod_style_names_glass"
         android:entryValues="@array/face_aod_style_values"
         android:key="@string/key_face_aod_style"
         android:summary="%s"

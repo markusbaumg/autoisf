@@ -11,8 +11,6 @@ import app.aaps.wear.watchfaces.common.FaceState.Level
 import app.aaps.wear.watchfaces.common.FaceState.LoopHealth
 import app.aaps.wear.watchfaces.common.FaceState.LoopMode
 import app.aaps.wear.watchfaces.common.FaceState.LoopRun
-import app.aaps.wear.watchfaces.glass.GlassFaceLogic.AmbTone
-import app.aaps.wear.watchfaces.glass.GlassFaceLogic.OutlineStyle
 import app.aaps.wear.watchfaces.common.FaceState.PhoneLink
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Pills
 import app.aaps.wear.watchfaces.common.FaceState.Range
@@ -451,10 +449,6 @@ class GlassFaceLogicTest {
     }
 
     @Test fun footerMaxWidthFitsTheChordAtTheFooter() {
-        // Glass/Orbit UX round 1: footer centre y 394, 26 px (cap bottom about y 403): the chord there less 16 px to the
-        // round edge on each side is about 217 px (at 236 px the "%" ended 6 px from the edge)
-        val capBottom = GlassFaceLogic.FOOTER_Y + 0.36f * GlassFaceLogic.FOOTER_SIZE
-        assertThat(GlassFaceLogic.FOOTER_MAX_WIDTH).isAtMost(GlassFaceLogic.chordWidth(capBottom, 16f))
         assertThat(GlassFaceLogic.chordWidth(225f, 16f)).isEqualTo(418f)
         // warnings stay 22 px or larger (a 1.2 mm cap height on the Watch5 Pro)
         assertThat(GlassFaceLogic.FOOTER_MIN_SIZE).isAtLeast(22f)
@@ -680,9 +674,8 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.SPARK_Y1 - GlassFaceLogic.SPARK_Y0).isAtLeast(48f)
         assertThat(GlassFaceLogic.SPARK_Y0 - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
         assertThat(GlassFaceLogic.PILL_Y0 - GlassFaceLogic.SPARK_Y1).isAtLeast(8f)
-        // the docked ball: 8 px or more under the card; the pill row and the graph start right of its hit area
+        // the docked ball: 8 px or more under the card; the graph starts right of its hit area
         assertThat(GlassFaceLogic.BALL_Y - GlassFaceLogic.BALL_R - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
-        assertThat(GlassFaceLogic.PILL_ROW_BALL_X0 - GlassFaceLogic.BALL_HIT_RIGHT).isAtLeast(8f)
         assertThat(GlassFaceLogic.SPARK_X0_BALL - GlassFaceLogic.BALL_HIT_RIGHT).isAtLeast(8f)
         // Glass polish round 2: the card ends 14 px or more above the drawn ball
         assertThat(GlassFaceLogic.BALL_Y - GlassFaceLogic.BALL_R - GlassFaceLogic.HERO_Y1).isAtLeast(14f)
@@ -895,15 +888,39 @@ class GlassFaceLogicTest {
         assertThat(two[2] + 60f - 225f).isEqualTo(225f - two[0])
     }
 
-    @Test fun pillRowMovesRightOfTheBall() {
-        // UX round 4: without the ball centred at 225 (320 px); with it right of the hit area, to the bezel-safe chord
-        assertThat(GlassFaceLogic.pillRowFrame(ballShown = false)).isEqualTo(225f to GlassFaceLogic.PILL_ROW_MAX_WIDTH)
-        val (c, w) = GlassFaceLogic.pillRowFrame(ballShown = true)
-        assertThat(c - w / 2f).isAtLeast(GlassFaceLogic.BALL_HIT_RIGHT + 8f)
-        // Glass/Orbit UX round 3: both ends 16 px or more inside the round edge at the row's lower edge (y 384)
-        val half = GlassFaceLogic.chordWidth(GlassFaceLogic.PILL_Y + 12f, 16f) / 2f
-        assertThat(c + w / 2f).isAtMost(225f + half)
-        assertThat(GlassFaceLogic.PILL_ROW_MAX_WIDTH / 2f).isAtMost(half)
+    @Test fun statusRowClearsTheBallAndTheMediaChip() {
+        // Glass AOD round 1: ONE row (pills + former footer) under the ball, centred, the same frame with or without it.
+        // Its glyphs (26 px values: about 10 px over and under the centre, the 20 px loop glyph) stay out of the ball's
+        // 48 px hit circle, so a tap on the row never arms the ball
+        val top = GlassFaceLogic.PILL_Y - 10f
+        val bottom = GlassFaceLogic.PILL_Y + 10f
+        assertThat(top - (GlassFaceLogic.BALL_Y + GlassFaceLogic.BALL_HIT_R)).isAtLeast(0f)
+        assertThat(GlassFaceLogic.PILL_Y0 - GlassFaceLogic.SPARK_Y1).isAtLeast(8f)
+        // Samsung's media chip ("SONOS") from about y 405: the row's glyphs end 8 px or more above it
+        assertThat(GlassFaceLogic.MEDIA_CHIP_TOP - bottom).isAtLeast(8f)
+        // both ends 16 px or more inside the round edge at the glyphs' lower edge
+        assertThat(GlassFaceLogic.ROW_MAX_WIDTH).isAtMost(GlassFaceLogic.chordWidth(bottom, 16f))
+    }
+
+    @Test fun statusRowDropsLowestKeepFirst() {
+        val f = GlassFaceLogic.ROW_KEEP_FIXED
+        // loop, IOB, KH, basal: KH first, then the basal, IOB; the loop and a warning never
+        assertThat(GlassFaceLogic.rowDrop(intArrayOf(f, GlassFaceLogic.ROW_KEEP_IOB, GlassFaceLogic.ROW_KEEP_KH, GlassFaceLogic.ROW_KEEP_BASAL))).isEqualTo(2)
+        assertThat(GlassFaceLogic.rowDrop(intArrayOf(f, GlassFaceLogic.ROW_KEEP_IOB, GlassFaceLogic.ROW_KEEP_BASAL))).isEqualTo(2)
+        assertThat(GlassFaceLogic.rowDrop(intArrayOf(f, f, GlassFaceLogic.ROW_KEEP_IOB))).isEqualTo(2)
+        assertThat(GlassFaceLogic.rowDrop(intArrayOf(f, f))).isNull()
+        assertThat(GlassFaceLogic.ROW_KEEP_BASAL).isGreaterThan(GlassFaceLogic.ROW_KEEP_KH)
+    }
+
+    @Test fun statusRowSaysLoopOffOnceAndSplitsTheBasal() {
+        // the loop item says "Loop aus" itself; the other footer warnings keep their words in the row
+        assertThat(GlassFaceLogic.rowWarnings(listOf(Warning.LOOP_OFF))).isEmpty()
+        assertThat(GlassFaceLogic.rowWarnings(listOf(Warning.LOOP_BAD, Warning.RES_CRITICAL))).containsExactly(Warning.RES_CRITICAL)
+        assertThat(GlassFaceLogic.rowWarnings(listOf(Warning.NO_PROFILE))).containsExactly(Warning.NO_PROFILE)
+        assertThat(GlassFaceLogic.rowWarnings(listOf(Warning.NO_DATA, Warning.RES_LOW))).isEmpty()
+        assertThat(GlassFaceLogic.splitValueUnit("0,00 U/h")).isEqualTo("0,00" to "U/h")
+        assertThat(GlassFaceLogic.splitValueUnit("120%")).isEqualTo("120" to "%")
+        assertThat(GlassFaceLogic.splitValueUnit("--")).isEqualTo("--" to "")
     }
 
     @Test fun predictionsSuppressed() {
@@ -930,33 +947,6 @@ class GlassFaceLogicTest {
     }
 
     // ------------------------------------------------------------------ ambient range shape
-
-    @Test fun ambientOutlineCarriesTheRange() {
-        fun o(r: Range, lowBit: Boolean = false) = GlassFaceLogic.ambientOutline(r, lowBit)
-        assertThat(o(Range.IN).style).isEqualTo(OutlineStyle.SOLID)
-        assertThat(o(Range.IN).tone).isEqualTo(AmbTone.LINE)
-        assertThat(o(Range.IN, lowBit = true).style).isEqualTo(OutlineStyle.NONE)
-        assertThat(o(Range.STALE).style).isEqualTo(OutlineStyle.SOLID)
-        assertThat(o(Range.STALE, lowBit = true).style).isEqualTo(OutlineStyle.NONE)
-        // UX round 1: quiet 1 px lines (never brighter than amb3), the shape carries the range
-        assertThat(o(Range.HIGH)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.LINE, false))
-        assertThat(o(Range.VERY_HIGH)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A3, false))
-        assertThat(o(Range.LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.LINE, false))
-        // UX round 3: urgent low is one heavy line (low: a double thin line), a different SHAPE; Glass/Orbit UX round 6: 3 px
-        assertThat(o(Range.URGENT_LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.SOLID, 3f, 0f, AmbTone.A3, true))
-        // Glass/Orbit UX round 6: burn-in protection drops the static outline, only the (temporary) lows keep theirs
-        for (r in listOf(Range.IN, Range.STALE, Range.HIGH, Range.VERY_HIGH))
-            assertThat(GlassFaceLogic.ambientOutline(r, lowBit = false, burnIn = true).style).isEqualTo(OutlineStyle.NONE)
-        assertThat(GlassFaceLogic.ambientOutline(Range.LOW, lowBit = false, burnIn = true)).isEqualTo(o(Range.LOW))
-        assertThat(GlassFaceLogic.ambientOutline(Range.URGENT_LOW, lowBit = false, burnIn = true)).isEqualTo(o(Range.URGENT_LOW))
-        assertThat(o(Range.URGENT_LOW).style).isNotEqualTo(o(Range.LOW).style)
-        for (r in Range.entries) assertThat(o(r).tone).isNotIn(listOf(AmbTone.A1, AmbTone.A2))
-        // low-bit keeps every non-in shape (drawn white, AA off)
-        for (r in listOf(Range.HIGH, Range.VERY_HIGH, Range.LOW, Range.URGENT_LOW))
-            assertThat(o(r, lowBit = true).style).isEqualTo(o(r).style)
-        // urgent low never looks like in range
-        assertThat(o(Range.URGENT_LOW)).isNotEqualTo(o(Range.IN))
-    }
 
     @Test fun refusalHasOneMessagePerReason() {
         assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.NO_MAX_BOLUS)).isEqualTo(GlassFaceLogic.Refusal.NO_MAX_BOLUS)

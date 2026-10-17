@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Glass's labels of the shared always-on setting (Glass AOD round 1, GlassAod.look): the stored values stay
+     "outline" / "minimal" / "glance", Glass draws them as BG + time (default), BG only, BG + time + delta. -->
+<resources>
+    <string name="face_aod_style_glass_time">BG + time</string>
+    <string name="face_aod_style_glass_bg">BG only</string>
+    <string name="face_aod_style_glass_glance">Glance</string>
+    <!-- always-on "BG only": the amber data age on its own, so it cannot pass for a number -->
+    <string name="glass_aod_age_ago">%1$s ago</string>
+    <string-array name="face_aod_style_names_glass" translatable="false">
+        <item>@string/face_aod_style_glass_time</item>
+        <item>@string/face_aod_style_glass_bg</item>
+        <item>@string/face_aod_style_glass_glance</item>
+    </string-array>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="face_aod_style_glass_time">BZ + Uhrzeit</string>
+    <string name="face_aod_style_glass_bg">Nur BZ</string>
+    <string name="face_aod_style_glass_glance">Übersicht</string>
+    <string name="glass_aod_age_ago">vor %1$s</string>
+</resources>
