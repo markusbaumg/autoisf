@@ -16,7 +16,7 @@ import kotlin.math.min
  * - text never goes below [MIN_TEXT_PX] (a 384 px screen would otherwise shrink a 17 px label to 14.5 px);
  * - the bolus tap target is a fixed 48 dp ([TAP_TARGET_DP]), not scaled.
  *
- * Current variant: "M", refined (round 1): ring R 158 (top at y 60, clear of the system status icon), hero 140 px
+ * Current variant: "M", refined (rounds 1 and 2): ring R 158 (top at y 60, clear of the system status icon), hero 140 px
  * (7.7 mm cap height), delta / secondary / bottom row on an even ~41 px step, and one bottom row COB - pill - IOB
  * with the values anchored at an equal gap to the pill (COB right-aligned, IOB left-aligned), so the row stays
  * balanced whatever the values are. The bolus ball (when enabled) takes the pill's slot but carries a loop badge.
@@ -51,18 +51,19 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val ambStroke = g(2f)
     val cutStroke = g(3f)
 
-    // IOB arc at the right bezel, filling from its bottom end.
-    val iobR = g(207f)
+    // IOB arc at the right bezel, filling from its bottom end. R 202 keeps ~4.3 % of the diameter to the bezel; the
+    // +-38 deg sweep keeps its lower end >= 16 px from the IOB value (tested).
+    val iobR = g(202f)
     val iobW = g(7f)
     val iobGlow = g(5f)
-    val iobHalfSweep = 45f
+    val iobHalfSweep = 38f
     val ambIobW = g(1f)
     val ambIobFillW = g(2f)
 
     // Time and German date.
     val timeY = g(102f)
     val timeSize = font(38f)
-    val dateY = g(134f)
+    val dateY = g(137f)                 // ~3 px more air under the time than round 1
     val dateSize = font(22f)
 
     // Hero BG.
@@ -77,7 +78,7 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     // Arrow, delta and BG age (the age only when it is getting old, see HaloFaceLogic.showBgAge).
     val deltaY = g(290f)
     val arrowSize = font(40f)
-    val deltaSize = font(28f)
+    val deltaSize = font(32f)           // ~1.7 mm cap height: the second most important value
     val arrowGap = g(6f)
 
     // Secondary line (temp target + basal), between the delta line and the pill.
@@ -87,15 +88,15 @@ class HaloLayout(val d: Float, density: Float = 2f) {
 
     // Loop pill: loop glyph (a circular arrow in the state colour) and the loop age.
     val pillY = g(372f)
-    val pillHalfW = g(38f)
+    val pillHalfW = g(42f)
     val pillHalfH = g(17f)
     val pillTextSize = font(22f)
-    val pillGlyphX = c - g(22f)
-    val pillGlyphR = g(6.5f)
-    val pillGlyphStroke = g(2.5f)
-    val pillGlyphHead = g(4f)
+    val pillGlyphX = c - g(24f)
+    val pillGlyphR = g(8.5f)            // ~1.4 mm: large enough to carry the state colour at a glance
+    val pillGlyphStroke = g(3f)
+    val pillGlyphHead = g(5f)
     val pillGlyphGlow = g(4f)
-    val pillTextX = c + g(10f)
+    val pillTextX = c + g(11f)
     val pillStroke = g(1f)
 
     // Bottom row: COB value (left, right-aligned) and IOB value (right, left-aligned) at the same gap to the pill.
@@ -123,6 +124,8 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val ballSubDy = g(12f)
     val ballSubMaxW = g(46f)
     val ballHitR = max(ballR, TAP_TARGET_DP / 2f * density)
+    /** Top edge of the ball's tap area: the 48 dp circle is cut off here, 4 design px below the secondary line. */
+    val ballHitTop = secondaryY + secondarySize * CAP_HEIGHT / 2f + g(4f)
     val badgeX = ballX + ballR * 0.7071f
     val badgeY = ballY - ballR * 0.7071f
     val badgeR = g(7f)
@@ -165,12 +168,15 @@ class HaloLayout(val d: Float, density: Float = 2f) {
         timeBox(),
         dateBox(),
         textBox("hero", c, heroY, heroMaxW, heroSize),
-        textBox("delta", c, deltaY, arrowSize + arrowGap + deltaSize * 0.52f * 11f, arrowSize), // "-0.25 · 12'"
+        deltaBox(11),                                                                           // "-0.25 · 12'"
         textBox("secondary", c, secondaryY, secondaryMaxW, secondarySize),
         pillBox(),
         cobBox(),
         iobBox(),
     )
+
+    /** Arrow plus a delta line of [chars] characters ("+15.8" = 5, with " · 12'" = 11). */
+    fun deltaBox(chars: Int) = textBox("delta", c, deltaY, arrowSize + arrowGap + deltaSize * 0.52f * chars, arrowSize)
 
     fun pillBox() = Box("pill", c - pillHalfW, pillY - pillHalfH, c + pillHalfW, pillY + pillHalfH, BEZEL_TEXT)
     fun cobBox() = textBox("cob", cobRight - rowMaxW / 2f, rowY, rowMaxW, rowValueSize, BEZEL_SIDE)
@@ -199,6 +205,13 @@ class HaloLayout(val d: Float, density: Float = 2f) {
         val nx = ex.coerceIn(b.left, b.right)
         val ny = ey.coerceIn(b.top, b.bottom)
         hypot(nx - ex, ny - ey) < ringW / 2f + gap
+    }
+
+    /** True when [b] comes closer than [gap] to a round end cap of the IOB arc. */
+    fun nearIobArcEnds(b: Box, gap: Float = 0f): Boolean = listOf(-iobHalfSweep, iobHalfSweep).any { a ->
+        val ex = c + iobR * kotlin.math.cos(Math.toRadians(a.toDouble())).toFloat()
+        val ey = c + iobR * kotlin.math.sin(Math.toRadians(a.toDouble())).toFloat()
+        hypot(ex.coerceIn(b.left, b.right) - ex, ey.coerceIn(b.top, b.bottom) - ey) < iobW / 2f + gap
     }
 
     /** True when any point of [b] lies on the ring stroke (within its 270 deg sweep). */

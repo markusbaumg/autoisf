@@ -18,7 +18,7 @@ class HaloLayoutTest {
             // The ring itself keeps >= 6 % of the diameter to the bezel.
             assertWithMessage("ring at d=$d").that(l.c - (l.ringR + l.ringW / 2f)).isAtLeast(0.06f * d)
             // The IOB arc is a bezel element, but stays fully on the glass.
-            assertWithMessage("IOB arc at d=$d").that(l.c - (l.iobR + l.iobW / 2f)).isAtLeast(0.02f * d)
+            assertWithMessage("IOB arc at d=$d").that(l.c - (l.iobR + l.iobW / 2f)).isAtLeast(0.04f * d)
         }
     }
 
@@ -59,9 +59,10 @@ class HaloLayoutTest {
             for (b in l.boxes().filter { it.name in setOf("secondary", "pill") }) {
                 assertWithMessage("${b.name} near a ring end at d=$d").that(l.nearRingEnds(b, gap = 0.02f * d)).isFalse()
             }
-            // The COB / IOB values (widest fitted width) keep 16 design px from the round caps.
+            // The COB / IOB values (widest fitted width) keep 16 design px from the round caps, also of the IOB arc.
             for (b in listOf(l.cobBox(), l.iobBox())) {
                 assertWithMessage("${b.name} near a ring end at d=$d").that(l.nearRingEnds(b, gap = 16f * l.u)).isFalse()
+                assertWithMessage("${b.name} near an IOB arc end at d=$d").that(l.nearIobArcEnds(b, gap = 16f * l.u)).isFalse()
             }
         }
     }
@@ -121,9 +122,39 @@ class HaloLayoutTest {
             for (b in l.boxes().filter { it.name in setOf("secondary", "cob", "iob") }) {
                 assertWithMessage("ball / ${b.name} at d=$d").that(ball.overlaps(b)).isFalse()
             }
+            // Its tap area is cut off 4 px below the secondary line (a tap on the TT text can never arm a bolus),
+            // but still covers the whole drawn ball.
+            val secondary = l.boxes().first { it.name == "secondary" }
+            assertWithMessage("ball hit top vs secondary at d=$d").that(l.ballHitTop).isAtLeast(secondary.bottom + 4f * l.u - 0.01f)
+            assertWithMessage("ball hit top vs ball at d=$d").that(l.ballHitTop).isAtMost(l.ballY - l.ballR)
             // Its tap circle never reaches the hero double-tap zone.
             assertWithMessage("ball hit vs hero zone at d=$d").that(l.ballY - l.ballHitR).isGreaterThan(l.heroTapBottom)
             assertWithMessage("ball hit on the glass at d=$d").that(hypot(0f, l.ballY - l.c) + l.ballHitR).isAtMost(l.c)
+        }
+    }
+
+    @Test fun widestDeltaFitsInsideTheTrendTail() {
+        for (d in diameters) {
+            val l = HaloLayout(d)
+            // "+15.8" / "-10.4" with the arrow, and with the BG age ("+15.8 · 12'").
+            for (b in listOf(l.deltaBox(5), l.deltaBox(11))) {
+                assertWithMessage("delta inside the tail at d=$d").that(l.insideTail(b)).isTrue()
+                assertWithMessage("delta on the ring at d=$d").that(l.touchesRing(b)).isFalse()
+            }
+            assertWithMessage("delta size at d=$d").that(l.deltaSize).isAtLeast(30f * l.u)
+        }
+    }
+
+    @Test fun loopGlyphKeepsItsGapInsideThePill() {
+        for (d in diameters) {
+            val l = HaloLayout(d)
+            val glyphLeft = l.pillGlyphX - l.pillGlyphR - l.pillGlyphStroke / 2f
+            val glyphRight = l.pillGlyphX + l.pillGlyphR + l.pillGlyphStroke / 2f
+            assertWithMessage("glyph inside the pill at d=$d").that(glyphLeft).isAtLeast(l.pillBox().left + 6f * l.u)
+            // Widest label "19'" (~3 x 0.55 em), centred at pillTextX: >= 4 px to the glyph and inside the pill.
+            val half = l.pillTextSize * 0.55f * 3f / 2f
+            assertWithMessage("glyph / text gap at d=$d").that(l.pillTextX - half - glyphRight).isAtLeast(4f * l.u)
+            assertWithMessage("text inside the pill at d=$d").that(l.pillTextX + half).isAtMost(l.pillBox().right)
         }
     }
 }

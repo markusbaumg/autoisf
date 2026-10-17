@@ -179,7 +179,8 @@ class HaloWatchface : WatchFace() {
     private var iobSrc: EventData.Status? = null
     private var iobFrac = 0f
     /** Last valid loop time (openApsStatus > 0), persisted; the phone sends -1 on runs without a new temp basal. */
-    private var loopTime = 0L
+    private var loopMemory = HaloFaceLogic.LoopTimeMemory({ 0L }, {})
+    private val loopTime get() = loopMemory.time
     private val fm = Paint.FontMetrics()
     private var backdropColour = 0
     private var backdropShader: RadialGradient? = null
@@ -191,16 +192,12 @@ class HaloWatchface : WatchFace() {
         AndroidInjection.inject(this)
         super.onCreate()
         // No preference writes or resend requests here: the service is also created for the picker preview.
-        loopTime = sp.getLong(KEY_LAST_LOOP_TIME, 0L)
+        // Only a valid time received from the phone is stored (the same in every instance).
+        loopMemory = HaloFaceLogic.LoopTimeMemory({ sp.getLong(KEY_LAST_LOOP_TIME, 0L) }, { sp.putLong(KEY_LAST_LOOP_TIME, it) })
         watchfaceScope.launch {
             complicationDataRepository.complicationData.collect {
                 data = it
-                val kept = HaloFaceLogic.rememberedLoopTime(it.statusData.openApsStatus, loopTime)
-                if (kept != loopTime) {
-                    loopTime = kept
-                    // Only a valid time received from the phone is stored (the same in every instance).
-                    sp.putLong(KEY_LAST_LOOP_TIME, kept)
-                }
+                loopMemory.onReceived(it.statusData.openApsStatus)
                 invalidate()
             }
         }
@@ -691,7 +688,7 @@ class HaloWatchface : WatchFace() {
             val glyph = when {
                 lowBit                  -> Color.WHITE
                 state == LoopState.OK   -> 0xFFC8C8C8.toInt()
-                state == LoopState.WARN -> AMBER
+                state == LoopState.WARN -> AMBER_MUTED
                 state == LoopState.STALE -> RED
                 else                    -> 0xFF8C8C8C.toInt()
             }
@@ -702,7 +699,7 @@ class HaloWatchface : WatchFace() {
         resetPaint().apply {
             color = when (state) {
                 LoopState.OK    -> 0xFF12281E.toInt()
-                LoopState.WARN  -> 0xFF2A2210.toInt()
+                LoopState.WARN  -> 0xFF1C1E24.toInt()        // neutral: WARN means "check", not an alarm
                 LoopState.STALE -> 0xFF2E1218.toInt()
                 LoopState.UNKNOWN -> 0xFF1C1E24.toInt()
             }
@@ -712,16 +709,18 @@ class HaloWatchface : WatchFace() {
             style = Paint.Style.STROKE; strokeWidth = L.pillStroke
             color = when (state) {
                 LoopState.OK    -> 0xFF285A40.toInt()
-                LoopState.WARN  -> 0xFF5A4A20.toInt()
+                LoopState.WARN  -> 0xFF3A3E48.toInt()
                 LoopState.STALE -> 0xFF6A2632.toInt()
                 LoopState.UNKNOWN -> 0xFF3A3E48.toInt()
             }
         }
         canvas.drawRoundRect(rect, corner, corner, p)
-        drawLoopGlyph(canvas, L.pillGlyphX, L.pillY, loopColour(state), aa = true, glow = state != LoopState.UNKNOWN)
+        // WARN: muted amber glyph and text only (no glow, no tinted fill or border), so it reads as "check".
+        val glyphColour = if (state == LoopState.WARN) AMBER_MUTED else loopColour(state)
+        drawLoopGlyph(canvas, L.pillGlyphX, L.pillY, glyphColour, aa = true, glow = state == LoopState.OK || state == LoopState.STALE)
         val textColour = when (state) {
             LoopState.OK    -> 0xFFD2F5E1.toInt()
-            LoopState.WARN  -> 0xFFFFE6AA.toInt()
+            LoopState.WARN  -> AMBER_MUTED
             LoopState.STALE -> 0xFFFFD2D8.toInt()
             LoopState.UNKNOWN -> GREY
         }
@@ -730,7 +729,7 @@ class HaloWatchface : WatchFace() {
 
     private fun loopColour(state: LoopState): Int = when (state) {
         LoopState.OK      -> GREEN
-        LoopState.WARN    -> AMBER
+        LoopState.WARN    -> AMBER_MUTED
         LoopState.STALE   -> RED
         LoopState.UNKNOWN -> GREY
     }
@@ -774,7 +773,7 @@ class HaloWatchface : WatchFace() {
         resetPaint().apply { color = Color.BLACK }
         canvas.drawCircle(L.badgeX, L.badgeY, L.badgeR + L.badgeRim, p)
         val c = loopColour(loop)
-        resetPaint().apply { color = c; if (loop != LoopState.UNKNOWN) setShadowLayer(L.pillGlyphGlow, 0f, 0f, withAlpha(c, 0x99)) }
+        resetPaint().apply { color = c; if (loop == LoopState.OK || loop == LoopState.STALE) setShadowLayer(L.pillGlyphGlow, 0f, 0f, withAlpha(c, 0x99)) }
         canvas.drawCircle(L.badgeX, L.badgeY, L.badgeR, p)
     }
 
@@ -928,7 +927,8 @@ class HaloWatchface : WatchFace() {
         val dy = y - offY
 
         val enabled = buttonShown && bolusButtonEnabled()
-        val inside = BolusTapGesture.isInside(dx, dy, L.ballX, L.ballY, L.ballHitR)
+        // The 48 dp circle is cut off at the top, so a tap on the secondary (TT / basal) line can never arm a bolus.
+        val inside = dy >= L.ballHitTop && BolusTapGesture.isInside(dx, dy, L.ballX, L.ballY, L.ballHitR)
         // A tap on the ball right after the face woke up is most likely a sleeve or palm: ignore it.
         if (inside && enabled && System.currentTimeMillis() - interactiveSince in 0 until WAKE_IGNORE_MS) return
         when (gesture.onTap(inside, enabled)) {
@@ -1040,6 +1040,8 @@ class HaloWatchface : WatchFace() {
 
         private const val GREEN = 0xFF3DDC97.toInt()
         private const val AMBER = 0xFFFFB547.toInt()
+        /** Loop WARN (13..19'): a desaturated amber, "check" rather than "alarm". */
+        private const val AMBER_MUTED = 0xFFC9A465.toInt()
         private const val RED = 0xFFFF5A6E.toInt()
         private const val GREY = 0xFF8A909C.toInt()
         private const val CYAN = 0xFF5AC8FA.toInt()
@@ -1053,7 +1055,7 @@ class HaloWatchface : WatchFace() {
         private const val DELTA = 0xFFDCE0E6.toInt()
         private const val STALE = 0xFF6E7480.toInt()
         private const val SECONDARY = 0xFFA0A6B0.toInt()
-        private const val IOB_TRACK = 0xFF262A32.toInt()
+        private const val IOB_TRACK = 0xFF1C1F25.toInt()  // dimmer than the ring track: only the blue fill should read
         private const val IOB_VALUE = 0xFFD7F0FF.toInt()
         private const val COB_VALUE = 0xFFFFE0B2.toInt()
         private const val AMB_GREY = 0xFFAAAAAA.toInt()

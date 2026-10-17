@@ -65,13 +65,34 @@ object HaloFaceLogic {
     fun loopAgeMinutes(openApsStatus: Long, now: Long): Long? =
         if (openApsStatus <= 0L) null else max(0L, (now - openApsStatus) / 60000L)
 
+    /**
+     * The face's loop time across updates and face recreation: starts from the persisted value ([load], e.g. after a
+     * watch reboot or when the system recreates the face service), keeps it when the phone sends -1, and persists
+     * ([store]) only a valid time received from the phone.
+     */
+    class LoopTimeMemory(load: () -> Long, private val store: (Long) -> Unit) {
+
+        var time: Long = max(load(), 0L)
+            private set
+
+        /** Applies a received openApsStatus; true when the remembered time changed. */
+        fun onReceived(openApsStatus: Long): Boolean {
+            val kept = rememberedLoopTime(openApsStatus, time)
+            if (kept == time) return false
+            time = kept
+            store(kept)
+            return true
+        }
+    }
+
     /** Loop age (minutes) up to which the pill is OK, and up to which it is WARN; older is STALE (red). */
-    const val LOOP_OK_MINUTES = 5L
+    const val LOOP_OK_MINUTES = 12L
     const val LOOP_WARN_MINUTES = 19L
 
     /**
-     * <= 5' OK, 6..19' WARN, >= 20' STALE, never received UNKNOWN. Red comes later than on the stock faces (> 14'),
-     * because the age is the last temp-basal enact: a stable loop that enacts nothing new for a while is not broken.
+     * <= 12' OK, 13..19' WARN, >= 20' STALE, never received UNKNOWN. OK and red come later than on the stock faces
+     * (> 14' red), because the age is the last temp-basal enact, not the last loop run: a stable loop that keeps its
+     * temp basal enacts nothing new for a while and is not broken, so it must not sit in amber for much of the day.
      */
     fun loopState(ageMinutes: Long?): LoopState = when {
         ageMinutes == null               -> LoopState.UNKNOWN

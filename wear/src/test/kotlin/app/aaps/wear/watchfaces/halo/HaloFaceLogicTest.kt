@@ -26,9 +26,9 @@ class HaloFaceLogicTest {
         assertThat(HaloFaceLogic.loopAgeMinutes(now - 3 * 60_000L, now)).isEqualTo(3L)
         assertThat(HaloFaceLogic.loopState(null)).isEqualTo(LoopState.UNKNOWN)
         assertThat(HaloFaceLogic.loopState(0)).isEqualTo(LoopState.OK)
-        assertThat(HaloFaceLogic.loopState(5)).isEqualTo(LoopState.OK)
-        assertThat(HaloFaceLogic.loopState(6)).isEqualTo(LoopState.WARN)
-        assertThat(HaloFaceLogic.loopState(14)).isEqualTo(LoopState.WARN)
+        assertThat(HaloFaceLogic.loopState(7)).isEqualTo(LoopState.OK)   // a stable loop keeping its temp basal
+        assertThat(HaloFaceLogic.loopState(12)).isEqualTo(LoopState.OK)
+        assertThat(HaloFaceLogic.loopState(13)).isEqualTo(LoopState.WARN)
         assertThat(HaloFaceLogic.loopState(19)).isEqualTo(LoopState.WARN)
         assertThat(HaloFaceLogic.loopState(20)).isEqualTo(LoopState.STALE)
     }
@@ -41,6 +41,28 @@ class HaloFaceLogicTest {
         assertThat(kept).isEqualTo(valid)
         assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(kept, now))).isEqualTo(LoopState.OK)
         assertThat(HaloFaceLogic.rememberedLoopTime(0L, valid)).isEqualTo(valid)
+    }
+
+    @Test fun persistedLoopTimeSurvivesRestartAndMinusOne() {
+        val now = 10_000_000L
+        val valid = now - 3 * 60_000L
+        val prefs = mutableMapOf<String, Long>()
+        fun memory() = HaloFaceLogic.LoopTimeMemory({ prefs["loop"] ?: 0L }, { prefs["loop"] = it })
+        // First face instance receives a valid time and persists it.
+        assertThat(memory().onReceived(valid)).isTrue()
+        assertThat(prefs["loop"]).isEqualTo(valid)
+        // The face is recreated (watch reboot / service restart) and the phone, just restarted, sends -1:
+        // the age comes from the persisted time, not "--".
+        val recreated = memory()
+        assertThat(recreated.time).isEqualTo(valid)
+        assertThat(recreated.onReceived(-1L)).isFalse()
+        assertThat(HaloFaceLogic.loopAgeMinutes(recreated.time, now)).isEqualTo(3L)
+        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(recreated.time, now))).isEqualTo(LoopState.OK)
+        assertThat(prefs["loop"]).isEqualTo(valid)
+        // Nothing ever received: grey UNKNOWN, and -1 is never stored.
+        val empty = HaloFaceLogic.LoopTimeMemory({ -1L }, { error("must not store") })
+        assertThat(empty.onReceived(-1L)).isFalse()
+        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(empty.time, now))).isEqualTo(LoopState.UNKNOWN)
     }
 
     @Test fun loopTimeMinusOneWithoutHistoryIsUnknown() {
