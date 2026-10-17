@@ -11,9 +11,16 @@ No changes to dosing math, limits or constraints. Phone and watch APKs must be i
 - Shared family design system (`common/FaceState`): BG age classes, range incl. urgent low / very high,
   loop health from the real loop run time, phone link, warning order W1..W10, TIEF/HOCH captions,
   placeholders, German unit spacing, burn-in shift. Ambient and low-bit variants for all three faces.
-- Four UX panel rounds (design + usability) on Glass and Orbit: larger hero digits, readable labels/pills
+- UX panel rounds (design + usability) on Glass and Orbit: larger hero digits, readable labels/pills
   (22 px physical floor), red low digits with readable contrast, TIEF/HOCH placement clear of the delta,
   stale and "---" handling, time/date below the system status icon, quieter ambient. Halo kept at size M.
+- Glass/Orbit UX rounds 1-6 (after the polish rework): Orbit satellites quieter (dim labels, 24 px values), alarm
+  rings replaced by value tint + status dot (red keeps a thin ring), smaller chart with a 55-240 mg/dL minimum scale,
+  hero weight 600; Glass trend chip with a dark base and double arrows as two parallel arrows, larger bolus ball
+  clear of the chart, very-stale digits dimmed, no static card outline under burn-in protection (except lows),
+  sparkline history dimmed with the last 15 min at full strength.
+- Orbit "no profile" shows the dim "--" skeleton (IOB/KH/BASAL "--", grey dashed LOOP) like Halo and Glass,
+  instead of hiding the satellites next to a green loop age.
 - German strings moved to `values-de` so de-AT and de-CH get German too.
 - LoopState tile is rebuilt whenever the loop-state list differs.
 
@@ -45,3 +52,9 @@ No changes to dosing math, limits or constraints. Phone and watch APKs must be i
 - Unit tests for all face logic, the shared guard, prefs migration, confirm binding, sync pointers and the
   notification throttle; an offline Robolectric render harness for the faces (tests only).
 - `_docs/watchfaces`: design record, state catalogue, per-face specs, state matrices and gallery.
+
+## Build
+- Tip `3405233382` (integration/kusi-watchfaces-r2). Release APKs signed with cert SHA-256
+  6ff302f5638b25502a0434554b64099ff735380d914a279857dfd2bbcd4b166b (apksigner 36.0.0).
+- app-full-release.apk sha256 4484d059e8968dca89fb2796e5c34329bd4827d86cf2865d2f586915d7af509c
+- wear-full-release.apk sha256 3871db09f8ab5aa2e9c42f991c604e8660409f172667bc59808b56ed9e7fc667
