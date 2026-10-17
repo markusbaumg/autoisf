@@ -111,8 +111,21 @@ abstract class ModernBaseComplicationProviderService : ComplicationDataSourceSer
         return buildComplicationData(type, data, complicationPendingIntent)
     }
 
+    override fun onComplicationActivated(complicationInstanceId: Int, type: ComplicationType) {
+        super.onComplicationActivated(complicationInstanceId, type)
+        ActiveComplications.activated(this, javaClass.name, complicationInstanceId)
+    }
+
+    override fun onComplicationDeactivated(complicationInstanceId: Int) {
+        super.onComplicationDeactivated(complicationInstanceId)
+        ActiveComplications.deactivated(this, javaClass.name, complicationInstanceId)
+    }
+
     override fun onComplicationRequest(request: ComplicationRequest, listener: ComplicationRequestListener) {
         aapsLogger.debug(LTag.WEAR, "Complication update requested: ${javaClass.simpleName} id=${request.complicationInstanceId} type=${request.complicationType}")
+        // A request means the instance is bound; this also registers complications that were
+        // activated before ActiveComplications existed (they are polled every UPDATE_PERIOD_SECONDS).
+        ActiveComplications.activated(this, javaClass.name, request.complicationInstanceId)
 
         val thisProvider = ComponentName(this, getProviderCanonicalName())
         val complicationPendingIntent = ComplicationTapActivity.getTapActionIntent(
