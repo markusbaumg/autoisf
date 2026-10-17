@@ -549,6 +549,44 @@ class OrbitFaceLogicTest {
         }
     }
 
+    @Test fun ringGauges() {
+        // variant rings (experimental): the gauge stays inside the satellite shell, so every BALL_R clearance holds
+        val o = OrbitFaceLogic
+        assertThat(o.RING_GAUGE_R + o.RING_GAUGE_W / 2f).isWithin(0.001f).of(o.BALL_R)
+        // the widest value (50 px at 21 px, cap about 0.71 em) and the 18 px label keep 1.5 px or more inside the gauge
+        val inner = o.RING_GAUGE_R - o.RING_GAUGE_W / 2f
+        assertThat(kotlin.math.hypot(o.RING_VALUE_HARD_MAX / 2f, o.RING_VALUE_DY + 0.36f * o.BALL_VALUE_SMALL)).isAtMost(inner - 1.5f)
+        assertThat(kotlin.math.hypot(o.RING_VALUE_MAX / 2f, o.RING_VALUE_DY + 0.36f * o.BALL_VALUE_SIZE)).isAtMost(inner - 1.5f)
+        assertThat(kotlin.math.hypot(48f / 2f, o.RING_LABEL_DY + 0.36f * o.RING_LABEL_SIZE)).isAtMost(inner - 1.5f)
+        assertThat(o.RING_LABEL_SIZE).isAtLeast(o.MIN_TEXT_PX)
+        assertThat(o.ringValueSize(46f)).isEqualTo(o.BALL_VALUE_SIZE)
+        assertThat(o.ringValueSize(56f)).isEqualTo(o.BALL_VALUE_SMALL)
+        assertThat(o.ringValueSize(200f)).isEqualTo(o.MIN_TEXT_PX)
+        // fractions
+        assertThat(o.ringIob("1,50")).isWithin(0.001f).of(0.5f)
+        assertThat(o.ringIob("-0,30")).isWithin(0.001f).of(-0.1f)
+        assertThat(o.ringIob("9")).isEqualTo(1f)
+        assertThat(o.ringIob("IOB")).isNull()
+        assertThat(o.ringLoop(3L)).isWithin(0.001f).of(0.2f)
+        assertThat(o.ringLoop(23L)).isEqualTo(1f) // late loop: a full red ring
+        assertThat(o.ringLoop(null)).isNull()
+        assertThat(o.ringCob("12(3)g")).isWithin(0.001f).of(0.2f)
+        assertThat(o.ringCob("90g")).isEqualTo(1f)
+        assertThat(o.ringCob("--g")).isNull()
+        assertThat(o.ringBasal("0,85 U/h", 0.85)).isWithin(0.001f).of(0.5f) // the profile rate: half a turn, the tick
+        assertThat(o.ringBasal("120%", null)).isWithin(0.001f).of(0.6f)
+        assertThat(o.ringBasal("0,00 U/h", 0.85)).isEqualTo(0f)
+        assertThat(o.ringBasal("0,85 U/h", null)).isNull()
+        assertThat(o.ringSweep(0f)).isEqualTo(0f)
+        assertThat(o.ringSweep(0.005f)).isEqualTo(o.RING_MIN_SWEEP)
+        assertThat(o.ringSweep(-0.005f)).isEqualTo(-o.RING_MIN_SWEEP)
+        assertThat(o.ringSweep(0.5f)).isEqualTo(180f)
+        // profile basal: the segment covering now, the newest one wins, an old one is ignored
+        val now = 10_000_000L
+        assertThat(o.profileBasalAt(longArrayOf(now - 600_000L, now - 60_000L), longArrayOf(now - 60_000L, now), doubleArrayOf(0.7, 0.9), now)).isEqualTo(0.9)
+        assertThat(o.profileBasalAt(longArrayOf(now - 7_200_000L), longArrayOf(now - 3_600_000L), doubleArrayOf(0.7), now)).isNull()
+    }
+
     @Test fun gapWidths() {
         // an 80 px text -> (80 + 16) / 2 / 170 rad = 16.2 deg (text width ±8 px; Glass/Orbit UX round 4: orbit r 170)
         assertThat(OrbitFaceLogic.gapHalfDeg(80f)).isWithin(0.1f).of(16.18f)

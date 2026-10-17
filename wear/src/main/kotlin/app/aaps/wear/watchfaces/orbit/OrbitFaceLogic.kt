@@ -30,13 +30,17 @@ object OrbitFaceLogic {
      * signature status balls: four softly lit discs at 10:30 / 1:30 / 4:30 / 7:30 on the orbit, the bolus ball at 9.
      * [Variant.PLANETS] keeps the classic text layout and adds glowing orbs ON a brighter orbit ring, each beside its
      * value (toward 3 / 9 o'clock), the ring lit in the orb's colour around it; LOOP / IOB orbs are larger.
+     * [Variant.RINGS] keeps the classic positions and draws every satellite as a thin ring gauge (a dark track with a
+     * progress arc in the family colour from 12 o'clock: IOB vs [RING_IOB_FULL_U], loop age vs 15 min, KH vs 60 g,
+     * basal vs the profile basal) with the value and label inside.
      */
-    enum class Variant { CLASSIC, DISCS, PLANETS }
+    enum class Variant { CLASSIC, DISCS, PLANETS, RINGS }
 
     /** The variant this build draws. */
-    val VARIANT: Variant = Variant.PLANETS
+    val VARIANT: Variant = Variant.RINGS
     val DISCS: Boolean get() = VARIANT == Variant.DISCS
     val PLANETS: Boolean get() = VARIANT == Variant.PLANETS
+    val RINGS: Boolean get() = VARIANT == Variant.RINGS
 
     const val CX = 225f
     const val CY = 225f
@@ -117,6 +121,82 @@ object OrbitFaceLogic {
     val ORB_R = floatArrayOf(14f, 14f, 11f, 11f, 0f)
     /** Half span (deg) of the lit ring segment around an orb. */
     const val ORB_RING_LIT_DEG = 14f
+
+    /**
+     * Variant rings: the gauge sits inside the satellite shell (centre r [RING_GAUGE_R], [RING_GAUGE_W] wide, outer edge
+     * exactly [BALL_R], so the bezel / chart / pill clearances of the classic face hold unchanged). The value and label
+     * move 1 px toward the centre and the label sits at the 18 px floor so both keep 2 px or more of air to the gauge.
+     */
+    const val RING_GAUGE_W = 2.5f
+    const val RING_GAUGE_R = BALL_R - RING_GAUGE_W / 2f
+    const val RING_VALUE_DY = 10f
+    const val RING_LABEL_DY = 12f
+    const val RING_LABEL_SIZE = 18f
+    /** Widest value inside the gauge at 24 px; wider steps down to 21 px bold (fit [RING_VALUE_HARD_MAX]). */
+    const val RING_VALUE_MAX = 48f
+    const val RING_VALUE_HARD_MAX = 50f
+    /** A non-zero value never draws a shorter arc than this (deg), so 0,05 U still reads as "some". */
+    const val RING_MIN_SWEEP = 8f
+    /**
+     * IOB full scale. The phone does not sync max IOB to the watch, so the IOB gauge reads against a nominal 3 U
+     * (EXPERIMENTAL; a real max IOB would need a new EventData field).
+     */
+    const val RING_IOB_FULL_U = 3.0
+    const val RING_LOOP_FULL_MIN = 15.0
+    const val RING_COB_FULL_G = 60.0
+    /** Basal gauge: the profile rate is half a turn (the tick at 6 o'clock), 200 % fills the ring. */
+    const val RING_BASAL_FULL_RATIO = 2.0
+
+    /** IOB gauge fraction in -1..1 (negative IOB runs counter-clockwise), null when unknown. */
+    fun ringIob(iobSum: String): Float? {
+        val n = leadingNumber(display(iobSum)) ?: return null
+        return (n / RING_IOB_FULL_U).coerceIn(-1.0, 1.0).toFloat()
+    }
+
+    /** Loop age gauge 0..1 (full at 15 min, where the loop turns red), null without a run. */
+    fun ringLoop(ageMinutes: Long?): Float? = ageMinutes?.let { (it / RING_LOOP_FULL_MIN).coerceIn(0.0, 1.0).toFloat() }
+
+    /** KH gauge 0..1 (full at 60 g), null when unknown. */
+    fun ringCob(cob: String): Float? {
+        val n = leadingNumber(display(cob).replace(Regex("\\([^)]*\\)"), "")) ?: return null
+        return (n / RING_COB_FULL_G).coerceIn(0.0, 1.0).toFloat()
+    }
+
+    /**
+     * Basal gauge 0..1: a "%" TBR against 100 %, an absolute rate against [profileBasal]; half a turn is the profile
+     * rate. Null when neither a percentage nor a profile rate is known.
+     */
+    fun ringBasal(currentBasal: String, profileBasal: Double?): Float? {
+        val v = basalValue(currentBasal)
+        val n = leadingNumber(v) ?: return null
+        val ratio = when {
+            v.endsWith("%")                          -> n / 100.0
+            profileBasal != null && profileBasal > 0 -> n / profileBasal
+            else                                     -> return null
+        }
+        return (ratio / RING_BASAL_FULL_RATIO).coerceIn(0.0, 1.0).toFloat()
+    }
+
+    /** The profile basal of the segment covering [now] (the phone sends segments up to now, 15 min slack), or null. */
+    fun profileBasalAt(starts: LongArray, ends: LongArray, amounts: DoubleArray, now: Long): Double? {
+        var best = -1
+        for (i in starts.indices) if (starts[i] <= now && ends[i] >= now - 15 * 60_000L && (best < 0 || starts[i] > starts[best])) best = i
+        return if (best >= 0) amounts[best] else null
+    }
+
+    /** Arc sweep (deg, signed) for a gauge fraction; a non-zero value gets at least [RING_MIN_SWEEP]. */
+    fun ringSweep(fraction: Float): Float {
+        if (abs(fraction) < 1e-4f) return 0f
+        val sweep = 360f * fraction
+        return if (abs(sweep) < RING_MIN_SWEEP) (if (sweep < 0f) -RING_MIN_SWEEP else RING_MIN_SWEEP) else sweep
+    }
+
+    /** Value size inside a gauge: 24 px; wider than [RING_VALUE_MAX] -> 21 px bold, then shrink, never below 18. */
+    fun ringValueSize(widthAt24: Float): Float {
+        if (widthAt24 <= RING_VALUE_MAX) return BALL_VALUE_SIZE
+        val small = widthAt24 * BALL_VALUE_SMALL / BALL_VALUE_SIZE
+        return if (small <= RING_VALUE_HARD_MAX) BALL_VALUE_SMALL else max(MIN_TEXT_PX, BALL_VALUE_SMALL * RING_VALUE_HARD_MAX / small)
+    }
 
     /** bgAge thresholds (states.md §1) in minutes since the last BG. */
     const val AGING_FROM_MIN = FaceState.AGING_MIN        // age label amber

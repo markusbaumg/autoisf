@@ -296,6 +296,8 @@ class OrbitWatchface : WatchFace() {
     private val orbGlow = arrayOfNulls<Shader>(5)
     private val orbBody = arrayOfNulls<Shader>(5)
     private val orbKey = IntArray(5)
+    // variant rings: the gauge fraction per satellite (NaN = no reference, track only)
+    private val gauge = FloatArray(5) { Float.NaN }
     private val bolusX = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS)
     private val bolusY = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS)
     private val outlinePath = Path()
@@ -656,6 +658,33 @@ class OrbitWatchface : WatchFace() {
             ballLabelSize[i] = floorPx(OrbitFaceLogic.fitSize(lw, OrbitFaceLogic.BALL_LABEL_SIZE, OrbitFaceLogic.BALL_LABEL_MAX))
             // a label that still does not fit at the floor ("BASAL" in a warning ring) drops its tracking
             ballLabelTrack[i] = if (lw * ballLabelSize[i] / OrbitFaceLogic.BALL_LABEL_SIZE > OrbitFaceLogic.BALL_LABEL_MAX + 0.5f) 0f else LABEL_TRACKING
+            if (OrbitFaceLogic.RINGS) {
+                // variant rings: value and label fit inside the gauge (2 px of air), the label at the 18 px floor
+                setText(OrbitFaceLogic.BALL_VALUE_SIZE, tf600)
+                ballSize[i] = floorPx(OrbitFaceLogic.ringValueSize(text.measureText(b.value)))
+                ballLabelSize[i] = floorPx(OrbitFaceLogic.RING_LABEL_SIZE)
+                ballLabelTrack[i] = if (lw * OrbitFaceLogic.RING_LABEL_SIZE / OrbitFaceLogic.BALL_LABEL_SIZE > RING_LABEL_MAX) 0f else LABEL_TRACKING
+            }
+        }
+        // variant rings: the gauge fractions (only for live values; "--", loop open / never and loop off draw the track)
+        if (OrbitFaceLogic.RINGS) {
+            val basals = d.treatmentData.basals
+            val profileBasal = OrbitFaceLogic.profileBasalAt(
+                LongArray(basals.size) { basals[it].startTime }, LongArray(basals.size) { basals[it].endTime },
+                DoubleArray(basals.size) { basals[it].amount }, now
+            )
+            for (i in balls.indices) {
+                val b = balls[i]
+                gauge[i] = Float.NaN
+                if (b == null || skeleton || b.dashed || b.pause || b.value == "--") continue
+                gauge[i] = when (i) {
+                    OrbitFaceLogic.IDX_LOOP  -> OrbitFaceLogic.ringLoop(loopAge)
+                    OrbitFaceLogic.IDX_IOB   -> OrbitFaceLogic.ringIob(st.iobSum)
+                    OrbitFaceLogic.IDX_COB   -> OrbitFaceLogic.ringCob(st.cob)
+                    OrbitFaceLogic.IDX_BASAL -> OrbitFaceLogic.ringBasal(st.currentBasal, profileBasal)
+                    else                     -> null
+                } ?: Float.NaN
+            }
         }
 
         refreshBolusCheck()
@@ -1444,6 +1473,11 @@ class OrbitWatchface : WatchFace() {
             drawDisc(canvas, i, b, muted)
             return
         }
+        if (OrbitFaceLogic.RINGS) {
+            drawGauge(canvas, i, b, muted)
+            drawBallText(canvas, i, b, muted, OrbitFaceLogic.RING_VALUE_DY, OrbitFaceLogic.RING_LABEL_DY)
+            return
+        }
         // UX round 3: an unknown value ("--": first start, no profile) draws "--" over its label again (an empty disc
         // read as a rendering fault)
         // variant planets: the warning SHAPES (dashed / red rings) are drawn on the orb ([drawOrb]); only the text here
@@ -1472,6 +1506,13 @@ class OrbitWatchface : WatchFace() {
                 canvas.drawCircle(x, y, r - 1f, stroke)
             }
         }
+        drawBallText(canvas, i, b, muted, BALL_VALUE_DY, BALL_LABEL_DY)
+    }
+
+    /** Value (or pause glyph) and label of a satellite, the value in its family hue; [valueDy] / [labelDy] from the centre. */
+    private fun drawBallText(canvas: Canvas, i: Int, b: Ball, muted: Boolean, valueDy: Float, labelDy: Float) {
+        val x = ballX[i]
+        val y = ballY[i]
         val dim = b.ring == Ring.DIM || b.dimValue
         // UX round 3: labels neutral; the value carries the hue (loop green, IOB cyan, TBR teal, TT violet)
         // Glass/Orbit UX round 6: the labels a step quieter (TXT3), the values are the jewels
@@ -1489,19 +1530,68 @@ class OrbitWatchface : WatchFace() {
             i == OrbitFaceLogic.IDX_COB -> KH_COL
             else                  -> VAL_TXT
         }
-        if (b.pause) drawPause(canvas, x, y - BALL_VALUE_DY, AMBER, true, hollow = false)
+        if (b.pause) drawPause(canvas, x, y - valueDy, AMBER, true, hollow = false)
         else {
             val size = ballSize[i]
             val tf = if (size < OrbitFaceLogic.BALL_VALUE_SIZE) tf700 else tf600
-            val vy = if (b.label.isEmpty()) y else y - BALL_VALUE_DY
+            val vy = if (b.label.isEmpty()) y else y - valueDy
             drawText(canvas, b.value, x, vy, size, tf, valueColour, true)
-            if (!dim && !muted && (b.ring == Ring.AMBER || b.ring == Ring.RED)) {
+            // variant rings: the arc already carries amber / red, no status dot squeezed inside the gauge
+            if (!OrbitFaceLogic.RINGS && !dim && !muted && (b.ring == Ring.AMBER || b.ring == Ring.RED)) {
                 val vw = text.measureText(b.value)
                 setFill(if (b.ring == Ring.RED) RED else AMBER, true)
                 canvas.drawCircle(x - vw / 2f - STATUS_DOT_GAP - STATUS_DOT_R, vy, STATUS_DOT_R, fill)
             }
         }
-        if (b.label.isNotEmpty()) drawText(canvas, b.label, x, y + BALL_LABEL_DY, ballLabelSize[i], tf600, labelColour, true, ballLabelTrack[i])
+        if (b.label.isNotEmpty()) drawText(canvas, b.label, x, y + labelDy, ballLabelSize[i], tf600, labelColour, true, ballLabelTrack[i])
+    }
+
+    /**
+     * EXPERIMENTAL variant rings: a thin ring gauge around the value. A dark track tinted in the family colour, and a
+     * progress arc in that colour from 12 o'clock (clockwise; negative IOB counter-clockwise) with round caps. The
+     * basal gauge marks the profile rate with a tick at 6 o'clock. Warnings keep their SHAPE: a muted late loop is a
+     * dashed red ring, loop open / never a dashed neutral / dim ring, loop off a full amber ring around the pause glyph;
+     * a late loop (>= 15 min) is a full red ring by construction.
+     */
+    private fun drawGauge(canvas: Canvas, i: Int, b: Ball, muted: Boolean) {
+        val x = ballX[i]
+        val y = ballY[i]
+        val r = OrbitFaceLogic.RING_GAUGE_R
+        val w = OrbitFaceLogic.RING_GAUGE_W
+        rect.set(x - r, y - r, x + r, y + r)
+        if (muted || b.dashed) {
+            setStroke(if (muted) 2f else w, if (muted) RED else if (b.ring == Ring.DIM) DIM_RING else NEUTRAL_RING, true)
+            stroke.pathEffect = ringDash
+            canvas.drawCircle(x, y, r, stroke)
+            stroke.pathEffect = null
+            return
+        }
+        if (b.pause) {
+            setStroke(w, withAlpha(AMBER, 170), true)
+            canvas.drawCircle(x, y, r, stroke)
+            return
+        }
+        val family = discFamily(i, b, false)
+        val dim = family == null || b.dimValue
+        // track
+        setStroke(w, if (family == null) DIM_RING else discMix(family, if (dim) 0.14f else GAUGE_TRACK_TINT), true)
+        canvas.drawCircle(x, y, r, stroke)
+        // profile tick (basal): a short notch outside the track at 6 o'clock
+        if (i == OrbitFaceLogic.IDX_BASAL && !gauge[i].isNaN()) {
+            setStroke(1.5f, withAlpha(TXT2, 150), true)
+            canvas.drawLine(x, y + r - w / 2f - 2.5f, x, y + r - w / 2f, stroke)
+        }
+        val f = gauge[i]
+        if (family == null || f.isNaN()) return
+        val sweep = OrbitFaceLogic.ringSweep(f)
+        if (sweep == 0f) return
+        setStroke(w, family, true)
+        stroke.strokeCap = Paint.Cap.ROUND
+        if (kotlin.math.abs(sweep) >= 359.9f) {
+            stroke.strokeCap = Paint.Cap.BUTT
+            canvas.drawCircle(x, y, r, stroke)
+        } else canvas.drawArc(rect, -90f, sweep, false, stroke)
+        stroke.strokeCap = Paint.Cap.BUTT
     }
 
     /** Variant planets: the moon dot hides behind a drawn orb (it would sit on top of it). */
@@ -2035,6 +2125,9 @@ class OrbitWatchface : WatchFace() {
         // variant planets (experimental)
         private const val PLANET_TRACK = 0xFF46536E.toInt()
         private const val ORB_GLOW = 2.3f
+        // variant rings (experimental)
+        private const val GAUGE_TRACK_TINT = 0.26f
+        private const val RING_LABEL_MAX = 48f
         private const val NEUTRAL_RING = 0xFF3A4250.toInt()
         private const val DIM_RING = 0xFF2C323D.toInt()
         private const val DIM_TXT = 0xFF7D8796.toInt()
