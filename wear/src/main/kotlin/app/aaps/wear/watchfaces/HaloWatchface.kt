@@ -19,6 +19,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.view.SurfaceHolder
 import android.widget.Toast
+import androidx.annotation.VisibleForTesting
 import androidx.wear.watchface.ComplicationSlotsManager
 import androidx.wear.watchface.WatchState
 import androidx.wear.watchface.style.CurrentUserStyleRepository
@@ -190,11 +191,7 @@ class HaloWatchface : WatchFace() {
         // Only a valid time received from the phone is stored (the same in every instance).
         loopMemory = HaloFaceLogic.LoopTimeMemory({ sp.getLong(KEY_LAST_LOOP_TIME, 0L) }, { sp.putLong(KEY_LAST_LOOP_TIME, it) })
         watchfaceScope.launch {
-            complicationDataRepository.complicationData.collect {
-                data = it
-                loopMemory.onReceived(LoopRunTime.of(it.statusData))
-                invalidate()
-            }
+            complicationDataRepository.complicationData.collect { onData(it) }
         }
         disposable += rxBus
             .toObservable(EventWearPreferenceChange::class.java)
@@ -208,6 +205,25 @@ class HaloWatchface : WatchFace() {
             .toObservable(EventData.Preferences::class.java)
             .observeOn(aapsSchedulers.main)
             .subscribe { invalidate() }
+    }
+
+    private fun onData(d: ComplicationData) {
+        data = d
+        loopMemory.onReceived(LoopRunTime.of(d.statusData))
+        invalidate()
+    }
+
+    /**
+     * Offline render harness only (wear/src/test); never called on the watch. The state of the live instance after
+     * onCreate + createWatchFace (loop memory, not headless) without injection or side effects, then [d] as received
+     * data. The injected fields must be set before. Returns the bolus guard (phone answer, taps).
+     */
+    @VisibleForTesting
+    internal fun prepareOffline(d: ComplicationData): BolusRequestGuard {
+        headless = false
+        loopMemory = HaloFaceLogic.LoopTimeMemory({ sp.getLong(KEY_LAST_LOOP_TIME, 0L) }, { sp.putLong(KEY_LAST_LOOP_TIME, it) })
+        onData(d)
+        return guard
     }
 
     override suspend fun createWatchFace(

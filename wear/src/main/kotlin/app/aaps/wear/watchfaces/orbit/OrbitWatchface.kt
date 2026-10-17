@@ -18,6 +18,7 @@ import android.os.VibrationEffect
 import android.text.format.DateFormat
 import android.os.Vibrator
 import android.widget.Toast
+import androidx.annotation.VisibleForTesting
 import androidx.wear.watchface.TapType
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -281,6 +282,24 @@ class OrbitWatchface : WatchFace() {
     override fun onCreate() {
         AndroidInjection.inject(this)
         super.onCreate()
+        initDrawing()
+        simpleUi.onCreate(::invalidate)
+
+        watchfaceScope.launch {
+            complicationDataRepository.complicationData.collect { onData(it) }
+        }
+        disposable += rxBus
+            .toObservable(EventWearPreferenceChange::class.java)
+            .observeOn(aapsSchedulers.main)
+            .subscribe { prefsChanged() }
+        disposable += rxBus
+            .toObservable(EventData.Preferences::class.java)
+            .observeOn(aapsSchedulers.main)
+            .subscribe { prefsChanged() }
+    }
+
+    /** Labels, shapes and preferences (onCreate, after injection). */
+    private fun initDrawing() {
         labels = OrbitFaceLogic.Labels(
             again = getString(R.string.orbit_bolus_again),
             cob = getString(R.string.orbit_cob),
@@ -304,23 +323,23 @@ class OrbitWatchface : WatchFace() {
         )
         buildShapes()
         readPrefs()
-        simpleUi.onCreate(::invalidate)
+    }
 
-        watchfaceScope.launch {
-            complicationDataRepository.complicationData.collect {
-                data = it
-                invalidate()
-            }
-        }
-        disposable += rxBus
-            .toObservable(EventWearPreferenceChange::class.java)
-            .observeOn(aapsSchedulers.main)
-            .subscribe { prefsChanged() }
-        disposable += rxBus
-            .toObservable(EventData.Preferences::class.java)
-            .observeOn(aapsSchedulers.main)
-            .subscribe { prefsChanged() }
+    private fun onData(d: ComplicationData) {
+        data = d
+        invalidate()
+    }
 
+    /**
+     * Offline render harness only (wear/src/test); never called on the watch. onCreate's drawing state without
+     * injection or side effects (the injected fields must be set before), then [d] as received data.
+     * Returns the bolus guard (phone answer, taps).
+     */
+    @VisibleForTesting
+    internal fun prepareOffline(d: ComplicationData): BolusRequestGuard {
+        initDrawing()
+        onData(d)
+        return guard
     }
 
     /** sys.preview: the headless (picker / editor) instance renders the fixed sample and starts no services. */

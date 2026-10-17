@@ -157,4 +157,17 @@ dependencies {
 
     ksp(libs.com.google.dagger.android.processor)
     ksp(libs.com.google.dagger.compiler)
+
+    // Offline render harness of the Halo / Glass / Orbit faces (Robolectric native Canvas, JUnit 4 via vintage)
+    testImplementation(libs.org.robolectric)
+    testImplementation(libs.junit.junit4)
+    testRuntimeOnly(libs.org.junit.vintage.engine)
+}
+
+// The render harness (WatchfaceRenderHarness) runs only on request and writes its PNGs to the given directory:
+// ./gradlew :wear:testFullDebugUnitTest --tests '*WatchfaceRenderHarness*' -PwatchfaceRenderOut=/abs/dir
+val watchfaceRenderOut: Provider<String> = providers.gradleProperty("watchfaceRenderOut")
+tasks.withType<Test>().configureEach {
+    if (watchfaceRenderOut.isPresent) systemProperty("watchface.render.out", watchfaceRenderOut.get())
+    else exclude("**/WatchfaceRenderHarness*")
 }

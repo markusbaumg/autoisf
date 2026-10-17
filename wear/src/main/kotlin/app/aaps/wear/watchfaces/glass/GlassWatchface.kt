@@ -20,6 +20,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.text.format.DateFormat
 import android.widget.Toast
+import androidx.annotation.VisibleForTesting
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.rx.AapsSchedulers
@@ -267,11 +268,7 @@ class GlassWatchface : WatchFace() {
         simpleUi.onCreate { dirty = true; invalidate() }
 
         watchfaceScope.launch {
-            complicationDataRepository.complicationData.collect {
-                data = it
-                dirty = true
-                invalidate()
-            }
+            complicationDataRepository.complicationData.collect { onData(it) }
         }
         disposable += rxBus
             .toObservable(EventWearPreferenceChange::class.java)
@@ -284,6 +281,22 @@ class GlassWatchface : WatchFace() {
 
         refreshPhoneReachable()
         rxBus.send(EventWearToMobile(ActionResendData("GlassWatchface::onCreate")))
+    }
+
+    private fun onData(d: ComplicationData) {
+        data = d
+        dirty = true
+        invalidate()
+    }
+
+    /**
+     * Offline render harness only (wear/src/test); never called on the watch. [d] as received data, without
+     * injection or side effects (the injected fields must be set before). Returns the bolus guard (phone answer, taps).
+     */
+    @VisibleForTesting
+    internal fun prepareOffline(d: ComplicationData): BolusRequestGuard {
+        onData(d)
+        return guard
     }
 
     override fun onDestroy() {

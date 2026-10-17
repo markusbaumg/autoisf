@@ -18,6 +18,7 @@ import android.graphics.Canvas
 import android.graphics.Rect
 import android.text.format.DateFormat
 import android.view.SurfaceHolder
+import androidx.annotation.VisibleForTesting
 import androidx.wear.watchface.CanvasType
 import androidx.wear.watchface.ComplicationSlotsManager
 import androidx.wear.watchface.DrawMode
@@ -380,6 +381,51 @@ abstract class WatchFace : WatchFaceService() {
             }
         }
     }
+
+    // ---------------------------------------------------------------- offline render harness (tests only)
+
+    /**
+     * Offline render harness only (wear/src/test, WatchfaceRenderHarness); never called on the watch. Sets the frame
+     * state exactly as [WatchFaceRenderer.render] does (bounds, mode, live render, time) and draws one frame with
+     * [onDraw]. [time] is the shown clock, [nowMillis] the renderer's epoch time ([latestEpochMillis]).
+     */
+    @VisibleForTesting
+    internal fun renderOffline(canvas: Canvas, time: ZonedDateTime, nowMillis: Long, ambient: Boolean, lowBit: Boolean, burnIn: Boolean, is24h: Boolean) {
+        if (faceRect.width() != canvas.width || faceRect.height() != canvas.height) {
+            faceRect.set(0, 0, canvas.width, canvas.height)
+            watchShape = if (canvas.width == canvas.height) WatchShape.CIRCLE else WatchShape.SQUARE
+            if (!layoutComplete) {
+                onLayout(watchShape, faceRect, null)
+                layoutComplete = true
+            }
+        }
+        if (isAmbient != ambient) {
+            isAmbient = ambient
+            onWatchModeChanged(currentWatchMode)
+        }
+        isLiveRender = true
+        lowBitAmbient = lowBit
+        burnInProtection = burnIn
+        previousTime.set(latestTime)
+        latestTime.year = time.year
+        latestTime.month = time.monthValue - 1
+        latestTime.monthDay = time.dayOfMonth
+        latestTime.hour = time.hour
+        latestTime.minute = time.minute
+        latestTime.second = time.second
+        latestTime.timezone = time.zone.id
+        latestEpochMillis = nowMillis
+        onTimeChanged(previousTime, latestTime)
+        if (is24h != is24HourFormat) {
+            is24HourFormat = is24h
+            on24HourFormatChanged(is24h)
+        }
+        onDraw(canvas)
+    }
+
+    /** Offline render harness only: a tap as the renderer's tap listener delivers it. */
+    @VisibleForTesting
+    internal fun tapOffline(tapType: Int, x: Int, y: Int, eventTime: Long) = onTapCommand(tapType, x, y, eventTime)
 
     // Helper method for subclasses to trigger invalidation
     fun invalidate() {
