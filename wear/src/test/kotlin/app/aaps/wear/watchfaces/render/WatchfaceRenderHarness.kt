@@ -338,8 +338,7 @@ class WatchfaceRenderHarness {
         val (x, y) = when (face) {
             Face.HALO  -> HaloLayout(px.toFloat(), 2f).let { it.ballX to it.ballY }
             Face.GLASS -> GlassFaceLogic.BALL_X * scale to GlassFaceLogic.BALL_Y * scale
-            Face.ORBIT -> OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS) * scale to
-                OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS) * scale
+            Face.ORBIT -> OrbitFaceLogic.BOLUS_X * scale to OrbitFaceLogic.BOLUS_Y * scale
         }
         wf.tapOffline(TapType.UP, x.toInt(), y.toInt(), eventTime)
         shadowOf(Looper.getMainLooper()).idle()

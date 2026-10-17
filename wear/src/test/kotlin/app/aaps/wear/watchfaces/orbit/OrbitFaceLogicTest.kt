@@ -438,56 +438,54 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.pointY(168f, 45f)).isWithin(0.1f).of(106.2f)
         assertThat(OrbitFaceLogic.pointX(168f, 270f)).isWithin(0.01f).of(57f)
         assertThat(OrbitFaceLogic.pointY(168f, 180f)).isWithin(0.01f).of(393f)
-        // UX round 3: satellites and the round bolus button keep 20 px (1.5 mm) to the raised bezel
-        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R).isAtMost(225f - 20f)
-        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BOLUS_HALF).isAtMost(225f - 20f)
-        // Glass/Orbit UX round 1: the satellites sit ON the orbit (the ring breaks around them)
-        assertThat(OrbitFaceLogic.SAT_R).isEqualTo(OrbitFaceLogic.ORBIT_R)
-        // the date on the ring at 6 o'clock keeps 16 px or more to the bezel (its cap bottom at about +0.36 em)
-        assertThat(225f - (OrbitFaceLogic.ORBIT_R + 0.36f * 24f)).isAtLeast(16f)
+        // Orbit discs round 2: the orbit uses the whole dial (r 195-205 brief), the discs ride on it just inside the
+        // line: the ring runs through every disc (between its centre and its outer edge)
+        assertThat(OrbitFaceLogic.ORBIT_R).isAtLeast(195f)
+        assertThat(OrbitFaceLogic.ORBIT_R).isAtMost(205f)
+        assertThat(OrbitFaceLogic.ORBIT_R).isGreaterThan(OrbitFaceLogic.SAT_R)
+        assertThat(OrbitFaceLogic.ORBIT_R).isLessThan(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R - 6f)
+        // every disc and the bolus button (with its halo) keep the 14 px no-content band to the glass edge
+        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R).isAtMost(225f - OrbitFaceLogic.BEZEL_MARGIN)
+        assertThat(OrbitFaceLogic.BOLUS_R + OrbitFaceLogic.BOLUS_OUTER).isAtMost(225f - OrbitFaceLogic.BEZEL_MARGIN)
+        assertThat(OrbitFaceLogic.BEZEL_MARGIN).isAtLeast(15f)
+        // ... also the AOD outlines under the largest burn-in shift
+        val shift = OrbitFaceLogic.BURN_IN_MAX_SHIFT * kotlin.math.sqrt(2f)
+        assertThat(OrbitFaceLogic.AMB_SAT_R + OrbitFaceLogic.BALL_R + shift).isAtMost(225f - 14.5f)
         // symmetric layout: LOOP/IOB and COB/BASAL mirror each other, TT and the bolus button are the 3/9 o'clock pair
         assertThat(OrbitFaceLogic.DEG_LOOP + OrbitFaceLogic.DEG_IOB).isEqualTo(360f)
         assertThat(OrbitFaceLogic.DEG_COB + OrbitFaceLogic.DEG_BASAL).isEqualTo(360f)
         assertThat(OrbitFaceLogic.DEG_TT + OrbitFaceLogic.DEG_BOLUS).isEqualTo(360f)
-        // Glass/Orbit UX round 2: the W4-W9 pill row takes the date's place at 6 o'clock, 16 px or more under the
-        // (fixed) chart, and its rounded ends keep 12 px or more to the bezel
-        val dateY = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f)
-        // Glass/Orbit UX round 5: the pill sits on the ring 5 px low and the date stacks above it (time/date in every
-        // state): date row clear of the chart and of the pill
-        assertThat(OrbitFaceLogic.SLOT_Y).isEqualTo(dateY + 5f)
-        assertThat(OrbitFaceLogic.DATE_STACK_Y - 11f - OrbitFaceLogic.SPARK_Y_BOTTOM).isAtLeast(6f)
+        val bx = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL)
+        val by = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL)
+        // the date sits inside the ring at the bottom: clear of the lower discs and of the ring under it
+        val dateBottom = OrbitFaceLogic.DATE_Y + 0.36f * 22f
+        assertThat(OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f) - dateBottom).isAtLeast(12f)
+        assertThat(OrbitFaceLogic.DATE_Y - 8f).isGreaterThan(by + OrbitFaceLogic.BALL_R)
+        assertThat(OrbitFaceLogic.DATE_Y - 8f - OrbitFaceLogic.SPARK_Y_BOTTOM).isAtLeast(30f)
+        // a W4-W9 pill row takes the date's place, the date stacks above it, clear of the chart and of the pill
+        assertThat(OrbitFaceLogic.DATE_STACK_Y - 8f - OrbitFaceLogic.SPARK_Y_BOTTOM).isAtLeast(6f)
         assertThat(OrbitFaceLogic.SLOT_Y - OrbitFaceLogic.ROW_PILL_H / 2f - (OrbitFaceLogic.DATE_STACK_Y + 8f)).isAtLeast(4f)
         val endCx = OrbitFaceLogic.CX - OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f + OrbitFaceLogic.ROW_PILL_H / 2f
-        assertThat(225f - kotlin.math.hypot(endCx - 225f, OrbitFaceLogic.SLOT_Y - 225f) - OrbitFaceLogic.ROW_PILL_H / 2f).isAtLeast(12f)
+        assertThat(225f - kotlin.math.hypot(endCx - 225f, OrbitFaceLogic.SLOT_Y - 225f) - OrbitFaceLogic.ROW_PILL_H / 2f).isAtLeast(14f)
+        val rowCapR = OrbitFaceLogic.ROW_PILL_H / 2f
+        val rowCapX = OrbitFaceLogic.CX + OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f - rowCapR
+        assertThat(kotlin.math.hypot(bx - rowCapX, by - OrbitFaceLogic.SLOT_Y) - rowCapR - OrbitFaceLogic.BALL_R).isAtLeast(12f)
+        // the stacked date keeps 8 px to the lower discs
+        val chordX = bx - kotlin.math.sqrt(OrbitFaceLogic.BALL_R * OrbitFaceLogic.BALL_R - (OrbitFaceLogic.DATE_STACK_Y - 11f - by).let { it * it }.coerceAtMost(OrbitFaceLogic.BALL_R * OrbitFaceLogic.BALL_R))
+        assertThat(chordX - (OrbitFaceLogic.CX + OrbitFaceLogic.DATE_LINE_MAX_WIDTH / 2f)).isAtLeast(8f)
         // one chart box for every state: a W1-W3 pill in the delta row stays above it (no reflow)
         assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y - OrbitFaceLogic.SLOT_IN_DELTA_H / 2f).isAtLeast(OrbitFaceLogic.DELTA_ROW_Y - 12f)
         assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y + OrbitFaceLogic.SLOT_IN_DELTA_H / 2f).isAtMost(OrbitFaceLogic.SPARK_Y_TOP + OrbitFaceLogic.SPARK_INSET)
-        // Glass/Orbit UX round 5: the clamped delta-row pill keeps SAT_CLEAR to the KH / basal discs at its lower edge
+        // the clamped delta-row pill keeps SAT_CLEAR to the KH / basal discs
         val pillHalf = OrbitFaceLogic.slotInDeltaMaxPillWidth() / 2f
-        val pillBottom = OrbitFaceLogic.SLOT_IN_DELTA_Y + OrbitFaceLogic.SLOT_IN_DELTA_H / 2f
-        val bx = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL)
-        val by = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL)
         val capR = OrbitFaceLogic.SLOT_IN_DELTA_H / 2f
-        assertThat(pillBottom).isLessThan(by)
         assertThat(kotlin.math.hypot(bx - (OrbitFaceLogic.CX + pillHalf - capR), by - OrbitFaceLogic.SLOT_IN_DELTA_Y) - capR)
-            .isAtLeast(OrbitFaceLogic.BALL_R + OrbitFaceLogic.SAT_CLEAR)
-        assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM).isLessThan(dateY - 12f - 11f)
-        // ... and its widest text plus the warning icon keeps clear of the 4 and 8 o'clock satellites
-        val half = (OrbitFaceLogic.SLOT_IN_DELTA_MAX_WIDTH + 20f) / 2f + 14f
-        val endX = OrbitFaceLogic.CX - half + OrbitFaceLogic.SLOT_H / 2f
-        val cobX = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB)
-        val cobY = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB)
-        assertThat(kotlin.math.hypot(endX - cobX, OrbitFaceLogic.SLOT_IN_DELTA_Y - cobY))
-            .isAtLeast(OrbitFaceLogic.SLOT_H / 2f + OrbitFaceLogic.BALL_R + 8f)
-        // the time sits below the Watch5 Pro status icon (y 23-49): its cap top is below y 58
+            .isAtLeast(OrbitFaceLogic.BALL_R + OrbitFaceLogic.SAT_CLEAR - 0.01f)
+        // the time sits below the Watch5 Pro status icon (y 23-49): its cap top is below y 58; the ring opens for the icon
         assertThat(OrbitFaceLogic.TIME_Y - 0.36f * OrbitFaceLogic.TIME_SIZE).isAtLeast(58f)
-        // the 180 px sparkline stays clear of the lower satellites
-        val cobRight = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB) + OrbitFaceLogic.BALL_R
-        // Glass/Orbit UX round 2: 16 px or more clearance to the 4 and 8 o'clock satellites (no plate around the plot)
-        assertThat(OrbitFaceLogic.SPARK_X0 - cobRight).isAtLeast(12f) // Glass/Orbit UX round 5: 12 px, a wider chart
-        // Orbit discs round 1: 136 px between the 7:30 / 4:30 discs on the r 163 orbit
-        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(136f)
-        // Glass/Orbit UX round 6: the chart keeps 12 px or more to the KH / basal discs over its whole height
+        assertThat(OrbitFaceLogic.ORBIT_R * kotlin.math.sin(Math.toRadians(OrbitFaceLogic.TIME_GAP_DEG.toDouble())).toFloat()).isAtLeast(30f)
+        // the chart (never crossing the ring) keeps 12 px or more to the KH / basal discs over its whole height
+        assertThat(OrbitFaceLogic.SPARK_X1 - OrbitFaceLogic.SPARK_X0).isAtLeast(140f)
         for (deg in floatArrayOf(OrbitFaceLogic.DEG_COB, OrbitFaceLogic.DEG_BASAL)) {
             val sx = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, deg)
             val sy = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, deg)
@@ -495,60 +493,39 @@ class OrbitFaceLogicTest {
             for (y in floatArrayOf(OrbitFaceLogic.SPARK_Y_TOP, OrbitFaceLogic.SPARK_Y_BOTTOM))
                 assertThat(kotlin.math.hypot(nx - sx, y - sy) - OrbitFaceLogic.BALL_R).isAtLeast(12f)
         }
-        // UX round 2: the pill row (TIEF/HOCH + status) stays 4 px or more clear of the 4 o'clock satellite's shell
-        // the 4:30 disc sits above the row, so the clearance is measured in 2D (rounded end to disc)
-        val rowCapR = OrbitFaceLogic.ROW_PILL_H / 2f
-        val rowCapX = OrbitFaceLogic.CX + OrbitFaceLogic.PILL_ROW_MAX_WIDTH / 2f - rowCapR
-        assertThat(kotlin.math.hypot(bx - rowCapX, by - OrbitFaceLogic.SLOT_Y) - rowCapR - OrbitFaceLogic.BALL_R).isAtLeast(12f)
-        // the stacked date (above a warning pill) keeps 8 px to the disc
-        val chordX = bx - kotlin.math.sqrt(OrbitFaceLogic.BALL_R * OrbitFaceLogic.BALL_R - (OrbitFaceLogic.DATE_STACK_Y - 11f - by).let { it * it })
-        assertThat(chordX - (OrbitFaceLogic.CX + OrbitFaceLogic.DATE_LINE_MAX_WIDTH / 2f)).isAtLeast(8f)
-        // Orbit discs round 1: a HOCH / TIEF caption at the end of the delta row keeps 8 px or more to the KH / basal discs
+        // a HOCH / TIEF caption at the end of the delta row keeps 8 px or more to the KH / basal discs
         val deltaCapR = OrbitFaceLogic.CAPTION_H / 2f
         val deltaCapX = OrbitFaceLogic.CX + OrbitFaceLogic.DELTA_ROW_MAX_WIDTH / 2f - deltaCapR
         assertThat(kotlin.math.hypot(bx - deltaCapX, by - OrbitFaceLogic.DELTA_ROW_Y) - deltaCapR - OrbitFaceLogic.BALL_R).isAtLeast(8f)
-        // Orbit discs round 1: every disc's outer edge keeps 6 % of the screen (27 px on the 450 grid: 23 px at 384,
-        // 29 px at 480) to the bezel, and its texts stay inside that margin under the largest burn-in shift
-        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R).isAtMost(225f - OrbitFaceLogic.BEZEL_MARGIN)
-        assertThat(OrbitFaceLogic.BEZEL_MARGIN).isAtLeast(0.06f * 450f)
-        // (the lower discs' labels face the bezel: at most 3 caps of about 0.66 em at the 384 px floor, 21.1 design px)
-        val shift = OrbitFaceLogic.BURN_IN_MAX_SHIFT * kotlin.math.sqrt(2f)
-        val floor384 = OrbitFaceLogic.MIN_TEXT_PX * 450f / 384f
-        val lx = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL) - OrbitFaceLogic.CX + 3f * 0.66f * floor384 / 2f
-        val ly = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BASAL) - OrbitFaceLogic.CY + OrbitFaceLogic.BALL_LABEL_DY + OrbitFaceLogic.CAP_HALF_EM * floor384
-        assertThat(kotlin.math.hypot(lx, ly) + shift).isAtMost(225f - OrbitFaceLogic.BEZEL_MARGIN)
-        // Orbit discs round 1: the bolus button (with its halo ring) keeps 12 px (1 mm) or more to the LOOP and KH discs
+        // the bolus button (with its halo ring) keeps 12 px (1 mm) or more to the LOOP and KH discs, and its hit circle
+        // never overlaps a tap on them
         for (deg in floatArrayOf(OrbitFaceLogic.DEG_LOOP, OrbitFaceLogic.DEG_COB)) {
             val d = kotlin.math.hypot(
-                OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, deg) - OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS),
-                OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, deg) - OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS)
+                OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, deg) - OrbitFaceLogic.BOLUS_X,
+                OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, deg) - OrbitFaceLogic.BOLUS_Y
             )
             assertThat(d - OrbitFaceLogic.BALL_R - OrbitFaceLogic.BOLUS_OUTER).isAtLeast(12f)
-        }
-        // ... is one step larger than the status discs, with a hit area of 56 px or more
-        assertThat(OrbitFaceLogic.BOLUS_HALF).isGreaterThan(OrbitFaceLogic.BALL_R)
-        assertThat(2f * OrbitFaceLogic.BOLUS_HIT_R).isAtLeast(56f)
-        // Glass/Orbit UX round 3: the bolus hit circle (48 px) never overlaps a tap on the LOOP or KH satellite next to it
-        for (deg in floatArrayOf(OrbitFaceLogic.DEG_LOOP, OrbitFaceLogic.DEG_COB)) {
-            val d = kotlin.math.hypot(
-                OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, deg) - OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS),
-                OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, deg) - OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_BOLUS)
-            )
             assertThat(d).isAtLeast(OrbitFaceLogic.BOLUS_HIT_R + OrbitFaceLogic.BALL_R)
         }
+        assertThat(OrbitFaceLogic.BOLUS_HALF).isGreaterThan(OrbitFaceLogic.BALL_R)
+        assertThat(2f * OrbitFaceLogic.BOLUS_HIT_R).isAtLeast(56f)
     }
 
     @Test fun gapWidths() {
-        // an 80 px text -> (80 + 16) / 2 / 163 rad = 16.9 deg (text width ±8 px; Orbit discs round 1: orbit r 163)
-        assertThat(OrbitFaceLogic.gapHalfDeg(80f)).isWithin(0.1f).of(16.87f)
+        // an 80 px text -> (80 + 16) / 2 / 195 rad = 14.1 deg (text width ±8 px; Orbit discs round 2: orbit r 195)
+        assertThat(OrbitFaceLogic.gapHalfDeg(80f)).isWithin(0.1f).of(14.10f)
         assertThat(OrbitFaceLogic.gapHalfDeg(400f)).isEqualTo(OrbitFaceLogic.MAX_GAP_DEG)
         // the date gap never runs into the break of the 4 and 8 o'clock satellites
         assertThat(180f - OrbitFaceLogic.MAX_GAP_DEG).isGreaterThan(OrbitFaceLogic.DEG_BASAL + OrbitFaceLogic.BALL_GAP_DEG)
         // Glass/Orbit UX round 3: the ring stops a constant 6 px before every satellite and the bolus button
-        val chord = 2f * OrbitFaceLogic.ORBIT_R * kotlin.math.sin(Math.toRadians(OrbitFaceLogic.BALL_GAP_DEG / 2.0)).toFloat()
-        assertThat(chord).isWithin(0.01f).of(OrbitFaceLogic.BALL_R + 6f)
-        val bolusChord = 2f * OrbitFaceLogic.ORBIT_R * kotlin.math.sin(Math.toRadians(OrbitFaceLogic.BOLUS_GAP_DEG / 2.0)).toFloat()
-        assertThat(bolusChord).isWithin(0.01f).of(OrbitFaceLogic.BOLUS_OUTER + 6f)
+        // (Orbit discs round 2: the disc centres sit inside the ring; the ring end is 6 px from the disc's edge)
+        val endX = OrbitFaceLogic.pointX(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_IOB + OrbitFaceLogic.BALL_GAP_DEG)
+        val endY = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_IOB + OrbitFaceLogic.BALL_GAP_DEG)
+        assertThat(kotlin.math.hypot(endX - OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_IOB), endY - OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_IOB)))
+            .isWithin(0.05f).of(OrbitFaceLogic.BALL_R + 6f)
+        val bEndX = OrbitFaceLogic.pointX(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_BOLUS + OrbitFaceLogic.BOLUS_GAP_DEG)
+        val bEndY = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, OrbitFaceLogic.DEG_BOLUS + OrbitFaceLogic.BOLUS_GAP_DEG)
+        assertThat(kotlin.math.hypot(bEndX - OrbitFaceLogic.BOLUS_X, bEndY - OrbitFaceLogic.BOLUS_Y)).isWithin(0.05f).of(OrbitFaceLogic.BOLUS_OUTER + 6f)
     }
 
     @Test fun worstCaseWidths() {
@@ -559,12 +536,12 @@ class OrbitFaceLogicTest {
         assertThat(60f * small / OrbitFaceLogic.BALL_VALUE_SIZE).isAtMost(OrbitFaceLogic.valueMaxWidth(small) + 0.5f)
         // never below the family's 18 px floor (or a larger floor in design px on a small screen)
         assertThat(OrbitFaceLogic.ballValueSize(110f)).isEqualTo(OrbitFaceLogic.MIN_TEXT_PX)
-        assertThat(OrbitFaceLogic.ballValueSize(40f, 23f)).isEqualTo(23f)
+        assertThat(OrbitFaceLogic.ballValueSize(40f, 25f)).isEqualTo(25f)
         // the label shrinks first: "BASAL" has a short token, the others are short already
         assertThat(OrbitFaceLogic.shortLabel(OrbitFaceLogic.BASAL_LABEL)).isEqualTo("BAS")
         assertThat(OrbitFaceLogic.shortLabel("IOB")).isEqualTo("IOB")
         // Orbit discs round 1: the hero group keeps 8 px to the bolus button (with its halo) at 9 o'clock
-        assertThat(OrbitFaceLogic.CX - OrbitFaceLogic.HERO_GROUP_MAX_BOLUS / 2f - (OrbitFaceLogic.CX - OrbitFaceLogic.SAT_R + OrbitFaceLogic.BOLUS_OUTER))
+        assertThat(OrbitFaceLogic.CX - OrbitFaceLogic.HERO_GROUP_MAX_BOLUS / 2f - (OrbitFaceLogic.BOLUS_X + OrbitFaceLogic.BOLUS_OUTER))
             .isAtLeast(8f - 0.01f)
         assertThat(OrbitFaceLogic.heroGroupWidth(OrbitFaceLogic.estimateWidth("22,2+", 108f), OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("22,2+", 108f), true, OrbitFaceLogic.HERO_GROUP_MAX_BOLUS), true))
             .isAtMost(OrbitFaceLogic.HERO_GROUP_MAX_BOLUS)
@@ -654,7 +631,7 @@ class OrbitFaceLogicTest {
         val loop = OrbitFaceLogic.moon(52, gapT, gapD, false, shown)
         assertThat(loop.kind).isEqualTo(MoonKind.RIM)
         assertThat(loop.ball).isEqualTo(OrbitFaceLogic.IDX_LOOP)
-        assertThat(OrbitFaceLogic.BALL_OCCLUDE_DEG).isWithin(0.1f).of(14.45f) // r 35 discs on r 163
+        assertThat(OrbitFaceLogic.BALL_OCCLUDE_DEG).isWithin(0.1f).of(11.12f) // r 35 discs on r 175, ring r 195
     }
 
     @Test fun dateLineWithTempTarget() {
