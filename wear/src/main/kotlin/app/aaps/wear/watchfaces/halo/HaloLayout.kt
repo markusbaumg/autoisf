@@ -75,6 +75,27 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val heroStrike = g(2f)
     val heroAmbStroke = g(2.5f)
     val heroAmbStrokeBurnIn = g(2f)
+    val heroAmbLift = g(8f)
+
+    // TIEF / HOCH caption right of the digits (top-aligned to their cap height); digits + caption are centred as one
+    // group and fitted to [heroGroupMaxW] (still inside the trend tail at the caption's height).
+    val captionSize = font(22f)
+    val captionGap = g(8f)
+    val captionPad = g(7f)             // badge padding left / right of the word
+    val captionBadgeH = g(30f)
+    val captionRadius = g(7f)
+    val captionStroke = g(2f)          // ambient badge outline (no fill: burn-in safe)
+    val heroGroupMaxW = g(262f)
+
+    // Emphasis step (urgent low / very high): ring track and fill wider, backdrop stronger.
+    val ringWEmphasis = g(20f)
+    val ambDoubleGap = g(9f)           // ambient low: doubled track, the two arcs this far apart
+
+    // Status text in the meta line (W2 / W3: "Keine Daten · 17′"), fitted inside the ring at the delta line.
+    val metaMaxW = g(262f)
+    // Phone-off glyph (W10) after the age.
+    val phoneGlyphH = g(20f)
+    val phoneGlyphW = g(12f)
 
     // Arrow, delta and BG age (the age only when it is getting old, see HaloFaceLogic.showBgAge).
     val deltaY = g(290f)
@@ -153,6 +174,10 @@ class HaloLayout(val d: Float, density: Float = 2f) {
     val badgeY = ballY - ballR * 0.7071f
     val badgeR = g(7f)
     val badgeRim = g(2.5f)
+    val ballCountdownR = ballR + g(5f)
+    val ballCountdownW = g(2.2f)
+    /** Below this ball diameter (screen px) the armed label is "2×" instead of "nochmal". */
+    val ballSmall = 2f * ballR < 50f
 
     // Double-tap zone of the hero BG (opens the main menu).
     val heroTapLeft = g(95f)

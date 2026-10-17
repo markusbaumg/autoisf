@@ -3,7 +3,6 @@
 <resources>
     <string name="label_watchface_halo" translatable="false">AAPS Halo</string>
     <!-- The bolus request setting is shared by the Halo, Glass and Orbit faces: see strings_face_bolus.xml. -->
-    <string name="halo_bolus_sub">U 2×</string>
     <string name="halo_bolus_again">again</string>
     <string name="halo_bolus_sent">Bolus request sent. Confirm on the watch.</string>
     <string name="halo_bolus_refused_max">%1$s U is above the max bolus (%2$s U)</string>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Family strings of the Halo / Glass / Orbit faces (designsystem/states.md §4.4), used through FaceState.Words. -->
+<resources>
+    <string name="face_waiting">Waiting for AAPS</string>
+    <string name="face_phone_lost">Phone disconnected · %1$s</string>
+    <string name="face_no_data">No data · %1$s</string>
+    <string name="face_no_profile">No profile</string>
+    <string name="face_loop_off">Loop off</string>
+    <string name="face_loop_off_short">off</string>
+    <string name="face_loop_age">Loop %1$s</string>
+    <string name="face_loop_open">Open</string>
+    <string name="face_reservoir">Reservoir %1$s</string>
+    <string name="face_phone_batt">Phone %1$d %%</string>
+    <string name="face_low">LOW</string>
+    <string name="face_high">HIGH</string>
+    <string name="face_minutes" translatable="false">%1$d′</string>
+    <string name="face_hours">%1$d h</string>
+    <string name="face_days">%1$d d</string>
+    <string name="face_bolus_unit">U</string>
+    <string name="face_bolus_again_short" translatable="false">2×</string>
+</resources>

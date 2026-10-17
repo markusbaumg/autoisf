@@ -1,13 +1,17 @@
 package app.aaps.wear.watchfaces.halo
 
-import app.aaps.wear.watchfaces.halo.HaloFaceLogic.AgeLevel
-import app.aaps.wear.watchfaces.halo.HaloFaceLogic.AmbientHero
-import app.aaps.wear.watchfaces.halo.HaloFaceLogic.LoopState
+import app.aaps.wear.watchfaces.common.FaceState
+import app.aaps.wear.watchfaces.common.FaceState.BgAge
+import app.aaps.wear.watchfaces.common.FaceState.LoopHealth
+import app.aaps.wear.watchfaces.common.FaceState.Warning
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
 
 class HaloFaceLogicTest {
+
+    private fun health(age: Long?, realRun: Boolean = true) =
+        FaceState.loopHealth(age, FaceState.LoopRun.RUNNING, FaceState.LoopMode.UNKNOWN, realRun)
 
     @Test fun angleMapsScaleOntoRing() {
         assertThat(HaloFaceLogic.angle(40.0)).isEqualTo(135f)
@@ -17,18 +21,23 @@ class HaloFaceLogicTest {
         assertThat(HaloFaceLogic.angle(500.0)).isEqualTo(405f)
     }
 
-    @Test fun loopStates() {
+    @Test fun loopHealthFromTheRealRunTimeAndTheLegacyEnactTime() {
         val now = 10_000_000L
         assertThat(HaloFaceLogic.loopAgeMinutes(-1L, now)).isNull()
         assertThat(HaloFaceLogic.loopAgeMinutes(0L, now)).isNull()
         assertThat(HaloFaceLogic.loopAgeMinutes(now - 3 * 60_000L, now)).isEqualTo(3L)
-        assertThat(HaloFaceLogic.loopState(null)).isEqualTo(LoopState.UNKNOWN)
-        assertThat(HaloFaceLogic.loopState(0)).isEqualTo(LoopState.OK)
-        assertThat(HaloFaceLogic.loopState(7)).isEqualTo(LoopState.OK)   // a stable loop keeping its temp basal
-        assertThat(HaloFaceLogic.loopState(12)).isEqualTo(LoopState.OK)
-        assertThat(HaloFaceLogic.loopState(13)).isEqualTo(LoopState.WARN)
-        assertThat(HaloFaceLogic.loopState(19)).isEqualTo(LoopState.WARN)
-        assertThat(HaloFaceLogic.loopState(20)).isEqualTo(LoopState.STALE)
+        assertThat(health(null)).isEqualTo(LoopHealth.NEVER)
+        // real loop run time (lastLoopRunAt): family thresholds
+        assertThat(health(5)).isEqualTo(LoopHealth.OK)
+        assertThat(health(6)).isEqualTo(LoopHealth.WARN)
+        assertThat(health(14)).isEqualTo(LoopHealth.WARN)
+        assertThat(health(15)).isEqualTo(LoopHealth.BAD)
+        // older phone app (last temp basal enact): a stable loop keeping its temp basal is not broken
+        assertThat(health(7, realRun = false)).isEqualTo(LoopHealth.OK)
+        assertThat(health(12, realRun = false)).isEqualTo(LoopHealth.OK)
+        assertThat(health(13, realRun = false)).isEqualTo(LoopHealth.WARN)
+        assertThat(health(19, realRun = false)).isEqualTo(LoopHealth.WARN)
+        assertThat(health(20, realRun = false)).isEqualTo(LoopHealth.BAD)
     }
 
     @Test fun loopTimeMinusOneKeepsTheLastValidValue() {
@@ -37,7 +46,7 @@ class HaloFaceLogicTest {
         // -1 after a valid value ("no change needed" run, or phone restart): keep the remembered time, not red "--".
         val kept = HaloFaceLogic.rememberedLoopTime(-1L, valid)
         assertThat(kept).isEqualTo(valid)
-        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(kept, now))).isEqualTo(LoopState.OK)
+        assertThat(health(HaloFaceLogic.loopAgeMinutes(kept, now))).isEqualTo(LoopHealth.OK)
         assertThat(HaloFaceLogic.rememberedLoopTime(0L, valid)).isEqualTo(valid)
     }
 
@@ -55,12 +64,12 @@ class HaloFaceLogicTest {
         assertThat(recreated.time).isEqualTo(valid)
         assertThat(recreated.onReceived(-1L)).isFalse()
         assertThat(HaloFaceLogic.loopAgeMinutes(recreated.time, now)).isEqualTo(3L)
-        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(recreated.time, now))).isEqualTo(LoopState.OK)
+        assertThat(health(HaloFaceLogic.loopAgeMinutes(recreated.time, now))).isEqualTo(LoopHealth.OK)
         assertThat(prefs["loop"]).isEqualTo(valid)
         // Nothing ever received: grey UNKNOWN, and -1 is never stored.
         val empty = HaloFaceLogic.LoopTimeMemory({ -1L }, { error("must not store") })
         assertThat(empty.onReceived(-1L)).isFalse()
-        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(empty.time, now))).isEqualTo(LoopState.UNKNOWN)
+        assertThat(health(HaloFaceLogic.loopAgeMinutes(empty.time, now))).isEqualTo(LoopHealth.NEVER)
     }
 
     @Test fun loopTimeMinusOneWithoutHistoryIsUnknown() {
@@ -68,7 +77,7 @@ class HaloFaceLogicTest {
         val kept = HaloFaceLogic.rememberedLoopTime(-1L, 0L)
         assertThat(kept).isEqualTo(0L)
         assertThat(HaloFaceLogic.loopAgeMinutes(kept, now)).isNull()
-        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(kept, now))).isEqualTo(LoopState.UNKNOWN)
+        assertThat(health(HaloFaceLogic.loopAgeMinutes(kept, now))).isEqualTo(LoopHealth.NEVER)
         assertThat(HaloFaceLogic.rememberedLoopTime(-1L, -1L)).isEqualTo(0L)
     }
 
@@ -77,39 +86,32 @@ class HaloFaceLogicTest {
         val old = now - 20 * 60_000L
         val fresh = now - 60_000L
         assertThat(HaloFaceLogic.rememberedLoopTime(fresh, old)).isEqualTo(fresh)
-        assertThat(HaloFaceLogic.loopState(HaloFaceLogic.loopAgeMinutes(HaloFaceLogic.rememberedLoopTime(fresh, old), now))).isEqualTo(LoopState.OK)
+        assertThat(health(HaloFaceLogic.loopAgeMinutes(HaloFaceLogic.rememberedLoopTime(fresh, old), now))).isEqualTo(LoopHealth.OK)
         // A valid value always wins, also an older one (e.g. after the phone's clock or data was reset).
         assertThat(HaloFaceLogic.rememberedLoopTime(old, fresh)).isEqualTo(old)
     }
 
-    @Test fun bgAgeLevels() {
-        val now = 10_000_000L
-        assertThat(HaloFaceLogic.bgAgeMinutes(0L, now)).isNull()
-        assertThat(HaloFaceLogic.bgAgeMinutes(now - 61_000L, now)).isEqualTo(1L)
-        assertThat(HaloFaceLogic.bgAgeLevel(null)).isEqualTo(AgeLevel.STALE)
-        assertThat(HaloFaceLogic.bgAgeLevel(5)).isEqualTo(AgeLevel.FRESH)
-        assertThat(HaloFaceLogic.bgAgeLevel(6)).isEqualTo(AgeLevel.OLD)
-        assertThat(HaloFaceLogic.bgAgeLevel(11)).isEqualTo(AgeLevel.OLD)
-        assertThat(HaloFaceLogic.bgAgeLevel(12)).isEqualTo(AgeLevel.STALE)
-        assertThat(HaloFaceLogic.isStale(0L, now)).isTrue()
-        assertThat(HaloFaceLogic.isStale(now - 12 * 60_000L + 1, now)).isFalse()
-        assertThat(HaloFaceLogic.isStale(now - 12 * 60_000L, now)).isTrue()
+    @Test fun bgAgeIsAlwaysOnTheMetaLine() {
+        // fresh / aging: arrow + delta + age; old without a slot owner: the age alone; W2 / W3: the warning with the age
+        assertThat(HaloFaceLogic.meta(BgAge.FRESH, null)).isEqualTo(HaloFaceLogic.Meta.TREND_DELTA_AGE)
+        assertThat(HaloFaceLogic.meta(BgAge.AGING, Warning.LOOP_BAD)).isEqualTo(HaloFaceLogic.Meta.TREND_DELTA_AGE)
+        assertThat(HaloFaceLogic.meta(BgAge.STALE, Warning.NO_DATA)).isEqualTo(HaloFaceLogic.Meta.WARNING)
+        assertThat(HaloFaceLogic.meta(BgAge.FRESH, Warning.PHONE_LOST)).isEqualTo(HaloFaceLogic.Meta.WARNING)
+        assertThat(HaloFaceLogic.meta(BgAge.NONE, Warning.WAITING)).isEqualTo(HaloFaceLogic.Meta.AGE_ONLY)
+        // the status line takes every other owner; W2 / W3 live in the meta line, W10 is a glyph
+        assertThat(HaloFaceLogic.secondaryOwner(Warning.LOOP_OFF)).isEqualTo(Warning.LOOP_OFF)
+        assertThat(HaloFaceLogic.secondaryOwner(Warning.NO_DATA)).isNull()
+        assertThat(HaloFaceLogic.secondaryOwner(Warning.PHONE_LOST_FRESH)).isNull()
+        assertThat(HaloFaceLogic.secondaryOwner(null)).isNull()
     }
 
-    @Test fun staleBgLooksDifferentInAmbient() {
-        assertThat(HaloFaceLogic.ambientHero(AgeLevel.FRESH)).isEqualTo(AmbientHero.OUTLINE)
-        assertThat(HaloFaceLogic.ambientHero(AgeLevel.OLD)).isEqualTo(AmbientHero.OUTLINE)
-        assertThat(HaloFaceLogic.ambientHero(AgeLevel.STALE)).isEqualTo(AmbientHero.STRUCK)
-        val now = 10_000_000L
-        assertThat(HaloFaceLogic.ambientHero(HaloFaceLogic.bgAgeLevel(HaloFaceLogic.bgAgeMinutes(now - 13 * 60_000L, now)))).isEqualTo(AmbientHero.STRUCK)
-        assertThat(HaloFaceLogic.ambientHero(HaloFaceLogic.bgAgeLevel(HaloFaceLogic.bgAgeMinutes(0L, now)))).isEqualTo(AmbientHero.STRUCK)
-    }
-
-    @Test fun bgAgeIsShownOnlyWhenGettingOld() {
-        assertThat(HaloFaceLogic.showBgAge(0)).isFalse()
-        assertThat(HaloFaceLogic.showBgAge(4)).isFalse()
-        assertThat(HaloFaceLogic.showBgAge(5)).isTrue()
-        assertThat(HaloFaceLogic.showBgAge(null)).isTrue()
+    @Test fun ambientTrackCarriesTheRange() {
+        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.IN)).isEqualTo(HaloFaceLogic.Track.SOLID)
+        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.HIGH)).isEqualTo(HaloFaceLogic.Track.DASHED)
+        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.VERY_HIGH)).isEqualTo(HaloFaceLogic.Track.DASHED_BOLD)
+        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.LOW)).isEqualTo(HaloFaceLogic.Track.DOUBLE)
+        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.URGENT_LOW)).isEqualTo(HaloFaceLogic.Track.DOUBLE)
+        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.STALE)).isEqualTo(HaloFaceLogic.Track.SOLID)
     }
 
     @Test fun noDataIsDashes() {
@@ -117,26 +119,17 @@ class HaloFaceLogicTest {
         assertThat(HaloFaceLogic.orDash("")).isEqualTo("--")
         assertThat(HaloFaceLogic.orDash("---")).isEqualTo("--")
         assertThat(HaloFaceLogic.orDash("-")).isEqualTo("--")
-        assertThat(HaloFaceLogic.orDash("-0.1")).isEqualTo("-0.1")
-        assertThat(HaloFaceLogic.orDash("9.4")).isEqualTo("9.4")
-        assertThat(HaloFaceLogic.ageText(null)).isEqualTo("--")
-        assertThat(HaloFaceLogic.ageText(3)).isEqualTo("3'")
-    }
-
-    @Test fun iob() {
-        assertThat(HaloFaceLogic.parseIob("2.53")).isEqualTo(2.53)
-        assertThat(HaloFaceLogic.parseIob("-0,10")).isEqualTo(-0.10)
-        assertThat(HaloFaceLogic.parseIob("1.2U")).isEqualTo(1.2)
-        assertThat(HaloFaceLogic.parseIob("--")).isNull()
-        assertThat(HaloFaceLogic.iobFraction(-1.0)).isEqualTo(0f)
-        assertThat(HaloFaceLogic.iobFraction(3.0)).isEqualTo(0.5f)
-        assertThat(HaloFaceLogic.iobFraction(12.0)).isEqualTo(1f)
+        assertThat(HaloFaceLogic.orDash("IOB")).isEqualTo("--")
+        assertThat(HaloFaceLogic.orDash("-.--U/h")).isEqualTo("--")
+        assertThat(HaloFaceLogic.orDash("-0,1")).isEqualTo("-0,1")
+        assertThat(HaloFaceLogic.orDash("9,4")).isEqualTo("9,4")
     }
 
     @Test fun secondaryLine() {
-        assertThat(HaloFaceLogic.secondaryLine("5.6", 2, "0.00U/h")).isEqualTo("TT 5.6   ·   0.00U/h")
-        assertThat(HaloFaceLogic.secondaryLine("5.0 - 6.0", 0, "0.00U/h")).isEqualTo("0.00U/h")
+        assertThat(HaloFaceLogic.secondaryLine("5,6", 2, "0,00U/h")).isEqualTo("TT 5,6  ·  0,00 U/h")
+        assertThat(HaloFaceLogic.secondaryLine("5,0 - 6,0", 0, "0,85 U/h")).isEqualTo("0,85 U/h")
         assertThat(HaloFaceLogic.secondaryLine("--", 2, "")).isEqualTo("--")
+        assertThat(HaloFaceLogic.secondaryLine("5,5", 2, "-.--U/h")).isEqualTo("TT 5,5  ·  --")
     }
 
     @Test fun fourCharMmolFits() {
@@ -164,7 +157,8 @@ class HaloFaceLogicTest {
     }
 
     @Test fun valueUnitSplitsNumberAndUnit() {
-        assertThat(HaloFaceLogic.valueUnit("1.44", "U")).isEqualTo("1.44" to "U")
+        assertThat(HaloFaceLogic.valueUnit("1,44", "U")).isEqualTo("1,44" to "U")
+        assertThat(HaloFaceLogic.valueUnit("IOB", "U")).isEqualTo("--" to "")
         assertThat(HaloFaceLogic.valueUnit("1.2U", "U")).isEqualTo("1.2" to "U")
         assertThat(HaloFaceLogic.valueUnit("-0.10", "U")).isEqualTo("-0.10" to "U")
         assertThat(HaloFaceLogic.valueUnit("0g", "g")).isEqualTo("0" to "g")
@@ -176,12 +170,11 @@ class HaloFaceLogicTest {
     }
 
     @Test fun burnInOffsetIsSmallAndMoves() {
-        val xs = (0 until 60).map { HaloFaceLogic.burnInOffsetX(it) }
-        val ys = (0 until 60).map { HaloFaceLogic.burnInOffsetY(it) }
-        assertThat(xs.all { kotlin.math.abs(it) <= 5f }).isTrue()
-        assertThat(ys.all { kotlin.math.abs(it) <= 5f }).isTrue()
-        assertThat(xs.zip(ys).toSet().size).isGreaterThan(3)
-        assertThat(HaloFaceLogic.burnInOffsetX(-1)).isEqualTo(HaloFaceLogic.burnInOffsetX(5))
+        val xs = (0L until 60L).map { HaloFaceLogic.burnInOffsetX(it) }
+        val ys = (0L until 60L).map { HaloFaceLogic.burnInOffsetY(it) }
+        assertThat(xs.all { kotlin.math.abs(it) <= 4f }).isTrue()
+        assertThat(ys.all { kotlin.math.abs(it) <= 4f }).isTrue()
+        assertThat(xs.zip(ys).toSet().size).isGreaterThan(10)
     }
 
     @Test fun firstStartOnlyBeforeAnyData() {

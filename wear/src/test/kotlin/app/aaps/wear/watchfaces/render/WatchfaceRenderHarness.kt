@@ -63,7 +63,8 @@ import kotlin.math.min
  * to `<out>/<face>/<state>.png` plus a contact sheet `<out>/<face>_sheet.png`.
  *
  * Arrows are the phone's TrendArrow symbols (DoubleUp is "\u21c8", not two arrows).
- * Watch: Galaxy Watch5 Pro, 450x450 round, xhdpi (density 2.0), 24 h clock. Data in mmol/L as the phone sends it.
+ * Watch: Galaxy Watch5 Pro, 450x450 round, xhdpi (density 2.0), 24 h clock. Data in mmol/L as the phone sends it, in
+ * the phone's locale: a German phone sends "6,4", "+0,1", "1,25", "0,85 U/h" (decimal comma), an English one dots.
  * The bolus ball is driven by real taps (WatchFace.tapOffline) through the shared BolusRequestGuard.
  *
  * Runs only on request (excluded otherwise, see wear/build.gradle.kts):
@@ -97,17 +98,23 @@ class WatchfaceRenderHarness {
 
     // ------------------------------------------------------------------ data
 
+    /** Locale of the phone that "sent" the data of the state being rendered (German: decimal comma). */
+    private var phoneGerman = true
+
+    /** A phone string with the phone locale's decimal separator. */
+    private fun loc(s: String): String = if (phoneGerman) s.replace('.', ',') else s
+
     private fun bg(
         now: Long, mmol: Double, arrow: String, delta: String, level: Long, ageMin: Int = 2, mgdlUnits: Boolean = false, history: List<Double> = emptyList()
     ): Pair<EventData.SingleBg, EventData.GraphData> {
         val ts = now - ageMin * 60_000L
         val mgdl = mmol * 18.0
-        val sgvString = if (mgdlUnits) "%.0f".format(Locale.US, mgdl) else "%.1f".format(Locale.US, mmol)
+        val sgvString = if (mgdlUnits) "%.0f".format(Locale.US, mgdl) else loc("%.1f".format(Locale.US, mmol))
         val deltaMmol = delta.toDoubleOrNull() ?: 0.0
         val single = EventData.SingleBg(
             dataset = 0, timeStamp = ts, sgvString = sgvString, glucoseUnits = if (mgdlUnits) "mg/dl" else "mmol",
-            slopeArrow = arrow, delta = if (mgdlUnits) "%+.0f".format(Locale.US, deltaMmol * 18) else delta,
-            deltaDetailed = delta, avgDelta = if (mgdlUnits) "%+.0f".format(Locale.US, deltaMmol * 18) else delta, avgDeltaDetailed = delta,
+            slopeArrow = arrow, delta = if (mgdlUnits) "%+.0f".format(Locale.US, deltaMmol * 18) else loc(delta),
+            deltaDetailed = loc(delta), avgDelta = if (mgdlUnits) "%+.0f".format(Locale.US, deltaMmol * 18) else loc(delta), avgDeltaDetailed = loc(delta),
             sgvLevel = level, sgv = mgdl, high = 180.0, low = 70.0, color = 0, deltaMgdl = deltaMmol * 18, avgDeltaMgdl = deltaMmol * 18
         )
         // 3 h of history ending at the current value (oldest first), 5 min apart.
@@ -116,20 +123,21 @@ class WatchfaceRenderHarness {
         val hist = history.ifEmpty { List(n) { k -> mmol - deltaMmol * (n - 1 - k) * 0.6 } }
         hist.forEachIndexed { k, v ->
             val t = ts - (hist.size - 1 - k) * 5 * 60_000L
-            pts.add(single.copy(timeStamp = t, sgv = v.coerceAtLeast(2.2) * 18.0, sgvString = "%.1f".format(Locale.US, v)))
+            pts.add(single.copy(timeStamp = t, sgv = v.coerceAtLeast(2.2) * 18.0, sgvString = loc("%.1f".format(Locale.US, v))))
         }
         return single to EventData.GraphData(pts)
     }
 
     private fun status(
         now: Long, loopAgeMin: Int? = 2, iob: String = "1.25", cob: String = "12g", basal: String = "0.85 U/h",
-        tt: String = "5.5", ttLevel: Int = 0, external: String = ""
+        tt: String = "5.5", ttLevel: Int = 0, external: String = "", reservoir: String = "142U", reservoirLevel: Int = 0,
+        battery: String = "78", batteryLevel: Int = 1
     ): EventData.Status {
         val loopAt = loopAgeMin?.let { now - it * 60_000L } ?: -1L
         return EventData.Status(
-            dataset = 0, externalStatus = external, iobSum = iob, iobDetail = "(0.80|0.45)", cob = cob, currentBasal = basal,
-            battery = "78", rigBattery = "64%", openApsStatus = loopAt, bgi = "-0.4", batteryLevel = 1, patientName = "",
-            tempTarget = tt, tempTargetLevel = ttLevel, reservoirString = "142U", reservoir = 142.0, reservoirLevel = 0,
+            dataset = 0, externalStatus = external, iobSum = loc(iob), iobDetail = loc("(0.80|0.45)"), cob = cob, currentBasal = loc(basal),
+            battery = battery, rigBattery = "64%", openApsStatus = loopAt, bgi = loc("-0.4"), batteryLevel = batteryLevel, patientName = "",
+            tempTarget = loc(tt), tempTargetLevel = ttLevel, reservoirString = reservoir, reservoir = 142.0, reservoirLevel = reservoirLevel,
             lastLoopRunAt = if (loopAt > 0) loopAt else 0L
         )
     }
@@ -167,6 +175,16 @@ class WatchfaceRenderHarness {
         RenderState("loop_23") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 23)) },
         RenderState("loop_15") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 15)) },
         RenderState("loop_off") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 8, external = "Loop disabled\n")) },
+        RenderState("aging_8") { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 8) },
+        RenderState("sentinel_low_39") { now -> data(now, 2.15, "↓", "-0.3", -1) },
+        RenderState("sentinel_high_400") { now -> data(now, 22.3, "↗", "+0.4", 1) },
+        RenderState("no_profile") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, iob = "", cob = "", basal = "", external = "Kein Profil")) },
+        RenderState("loop_never_pump") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = null)) },
+        RenderState("reservoir_critical") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, reservoir = "5U", reservoirLevel = 2)) },
+        RenderState("phone_battery_low") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, battery = "8", batteryLevel = 0)) },
+        RenderState("tt_active") { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, tt = "8.0", ttLevel = 2, basal = "120%")) },
+        RenderState("phone_lost_fresh", phoneReachable = false, data = inRange),
+        RenderState("low_loop_23") { now -> data(now, 3.2, "↘", "-0.2", -1, st = status(now, loopAgeMin = 23)) },
         RenderState("ball_idle", ball = Ball.IDLE, data = inRange),
         RenderState("ball_armed", ball = Ball.ARMED, data = inRange),
         RenderState("ball_sent", ball = Ball.SENT, data = inRange),
@@ -175,6 +193,12 @@ class WatchfaceRenderHarness {
         RenderState("ambient_lowbit", mode = Mode.LOW_BIT, data = inRange),
         RenderState("ambient_burnin", mode = Mode.BURN_IN, data = inRange),
         RenderState("ambient_stale", mode = Mode.AMBIENT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        RenderState("ambient_high", mode = Mode.AMBIENT) { now -> data(now, 12.4, "↗", "+0.4", 1) },
+        RenderState("ambient_low", mode = Mode.AMBIENT) { now -> data(now, 3.4, "↓", "-0.3", -1) },
+        RenderState("ambient_urgent_low", mode = Mode.AMBIENT) { now -> data(now, 2.6, "\u21ca", "-0.6", -1) },
+        RenderState("lowbit_urgent_low", mode = Mode.LOW_BIT) { now -> data(now, 2.6, "\u21ca", "-0.6", -1) },
+        RenderState("lowbit_stale", mode = Mode.LOW_BIT) { now -> data(now, 6.4, "→", "+0.1", 0, ageMin = 17, st = status(now, loopAgeMin = 17)) },
+        RenderState("burnin_loop_off", mode = Mode.BURN_IN) { now -> data(now, 6.4, "→", "+0.1", 0, st = status(now, loopAgeMin = 8, external = "Loop disabled\n")) },
         RenderState("round_384", px = 384, data = inRange),
         RenderState("round_480", px = 480, data = inRange),
         RenderState("en_in_range", lang = "en", data = inRange),
@@ -230,6 +254,7 @@ class WatchfaceRenderHarness {
             Face.ORBIT -> Robolectric.buildService(OrbitWatchface::class.java).get().also { inject(it, sp, context) }
         }
         val now = System.currentTimeMillis()
+        phoneGerman = s.lang == "de"
         val d = s.data(now)
         val guard: BolusRequestGuard = when (wf) {
             is HaloWatchface  -> wf.prepareOffline(d)

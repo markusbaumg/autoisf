@@ -1,9 +1,13 @@
 package app.aaps.wear.watchfaces.halo
 
+import app.aaps.wear.watchfaces.common.FaceState
 import kotlin.math.max
-import kotlin.math.min
 
-/** Pure helpers for the "AAPS Halo" watch face (value mapping, states, formatting), unit tested. */
+/**
+ * Pure helpers of the "AAPS Halo" watch face (ring mapping, loop time memory, which line carries which state, text
+ * formatting), unit tested. The state itself (BG age, range, loop health, phone link, warning order) comes from the
+ * family helper [FaceState], so Halo, Glass and Orbit can never disagree.
+ */
 object HaloFaceLogic {
 
     /** Ring start (Canvas degrees, 0 = 3 o'clock, clockwise) and sweep; the gap is at the bottom. */
@@ -14,17 +18,7 @@ object HaloFaceLogic {
     const val SCALE_MIN_MGDL = 40.0
     const val SCALE_MAX_MGDL = 300.0
 
-    const val DEFAULT_LOW_MGDL = 70.0
-    const val DEFAULT_HIGH_MGDL = 180.0
-
-    /** BG age (minutes) from which the age is shown amber, and from which the reading counts as stale (red). */
-    const val BG_OLD_MINUTES = 6L
-    const val BG_STALE_MINUTES = 12L
-
-    /** BG age from which the age is shown on the delta line (younger is the normal case and would read like the loop age). */
-    const val BG_SHOW_AGE_MINUTES = 5L
-
-    const val NO_DATA = "--"
+    const val NO_DATA = FaceState.NO_DATA
 
     /** Canvas angle on the ring for a BG value in mg/dL. */
     fun angle(mgdl: Double): Float {
@@ -38,31 +32,21 @@ object HaloFaceLogic {
      * First start: nothing has arrived from the phone yet (no BG, no loop time, IOB placeholder). The bolus ball stays
      * hidden then, like on Glass and Orbit.
      */
-    fun firstStart(bgTimeStamp: Long, loopTime: Long, iobSum: String): Boolean =
-        bgTimeStamp <= 0L && loopTime <= 0L && iobSum.trim().let { it == "IOB" || it.isEmpty() }
+    fun firstStart(bgTimeStamp: Long, loopTime: Long, iobSum: String): Boolean = FaceState.firstStart(bgTimeStamp, loopTime, iobSum)
 
-    // ------------------------------------------------------------------ loop
-
-    /** UNKNOWN: no loop time was ever received (grey, not red: nothing is known to be wrong). */
-    enum class LoopState { OK, WARN, STALE, UNKNOWN }
+    // ------------------------------------------------------------------ loop time
 
     /**
-     * Loop time to show: the received openApsStatus when it is valid (> 0), otherwise the remembered one.
+     * Loop time to show: the received time when it is valid (> 0), otherwise the remembered one.
      *
-     * The phone sends -1 whenever loop.lastRun.lastTBREnact is 0, which happens on every loop run that enacts no new
-     * temp basal ("no change needed", the run resets it) and after a phone app restart until the first enact. The
-     * stock faces skip -1 and keep the last value; this does the same, and the caller persists the result.
+     * An older phone app sends openApsStatus = -1 whenever loop.lastRun.lastTBREnact is 0, which happens on every loop
+     * run that enacts no new temp basal and after a phone app restart until the first enact. The stock faces skip -1 and
+     * keep the last value; this does the same, and the caller persists the result.
      */
     fun rememberedLoopTime(received: Long, remembered: Long): Long = if (received > 0L) received else max(remembered, 0L)
 
-    /**
-     * Loop age in whole minutes, or null when there is no loop status (-1).
-     *
-     * The caller passes LoopRunTime.of(status): the real loop run time (EventData.Status.lastLoopRunAt) or, from an
-     * older phone app, openApsStatus (loop.lastRun.lastTBREnact, the last temp basal enact).
-     */
-    fun loopAgeMinutes(openApsStatus: Long, now: Long): Long? =
-        if (openApsStatus <= 0L) null else max(0L, (now - openApsStatus) / 60000L)
+    /** Loop age in whole minutes, or null when there is no loop time. */
+    fun loopAgeMinutes(loopTime: Long, now: Long): Long? = FaceState.loopAgeMinutes(loopTime, now)
 
     /**
      * The face's loop time across updates and face recreation: starts from the persisted value ([load], e.g. after a
@@ -74,9 +58,9 @@ object HaloFaceLogic {
         var time: Long = max(load(), 0L)
             private set
 
-        /** Applies a received openApsStatus; true when the remembered time changed. */
-        fun onReceived(openApsStatus: Long): Boolean {
-            val kept = rememberedLoopTime(openApsStatus, time)
+        /** Applies a received loop time; true when the remembered time changed. */
+        fun onReceived(loopTime: Long): Boolean {
+            val kept = rememberedLoopTime(loopTime, time)
             if (kept == time) return false
             time = kept
             store(kept)
@@ -84,80 +68,58 @@ object HaloFaceLogic {
         }
     }
 
-    /** Loop age (minutes) up to which the pill is OK, and up to which it is WARN; older is STALE (red). */
-    const val LOOP_OK_MINUTES = 12L
-    const val LOOP_WARN_MINUTES = 19L
+    // ------------------------------------------------------------------ which line carries what
 
     /**
-     * <= 12' OK, 13..19' WARN, >= 20' STALE, never received UNKNOWN. OK and red come later than on the stock faces
-     * (> 14' red). With an older phone app the age is the last temp-basal enact, not the last loop run: a stable loop
-     * that keeps its temp basal enacts nothing new for a while and is not broken, so it must not sit in amber for much
-     * of the day. With lastLoopRunAt (real run time) a working loop stays at 0..5'.
+     * What the meta line under the BG shows. The BG age is ALWAYS visible there:
+     * TREND_DELTA_AGE "→ +0,1 · 2′" while the reading is fresh or aging; AGE_ONLY "17′" (alert) for an old reading;
+     * WARNING "Keine Daten · 17′" (alert) when W2 / W3 own the status slot: then the age, with its reason, is the most
+     * prominent text under the struck-through value, and arrow and delta (which describe old data) are gone.
      */
-    fun loopState(ageMinutes: Long?): LoopState = when {
-        ageMinutes == null               -> LoopState.UNKNOWN
-        ageMinutes <= LOOP_OK_MINUTES    -> LoopState.OK
-        ageMinutes <= LOOP_WARN_MINUTES  -> LoopState.WARN
-        else                             -> LoopState.STALE
+    enum class Meta { TREND_DELTA_AGE, AGE_ONLY, WARNING }
+
+    fun meta(age: FaceState.BgAge, owner: FaceState.Warning?): Meta = when {
+        owner != null && owner.dataOld  -> Meta.WARNING
+        FaceState.isOld(age)            -> Meta.AGE_ONLY
+        else                            -> Meta.TREND_DELTA_AGE
     }
 
-    // ------------------------------------------------------------------ BG age
+    /** The secondary line (TT / basal) carries the slot owner, except W2 / W3 (in the meta line) and W10 (a glyph). */
+    fun secondaryOwner(owner: FaceState.Warning?): FaceState.Warning? =
+        owner?.takeIf { !it.dataOld && it != FaceState.Warning.PHONE_LOST_FRESH }
 
-    enum class AgeLevel { FRESH, OLD, STALE }
+    /** Ambient ring track: the range as a shape, never only as a colour. */
+    enum class Track { SOLID, DASHED, DASHED_BOLD, DOUBLE }
 
-    /** BG age in whole minutes, or null without a reading. */
-    fun bgAgeMinutes(timeStamp: Long, now: Long): Long? = if (timeStamp <= 0L) null else max(0L, (now - timeStamp) / 60000L)
-
-    /** No reading or >= 12' STALE, 6..11' OLD, otherwise FRESH. */
-    fun bgAgeLevel(ageMinutes: Long?): AgeLevel = when {
-        ageMinutes == null               -> AgeLevel.STALE
-        ageMinutes >= BG_STALE_MINUTES   -> AgeLevel.STALE
-        ageMinutes >= BG_OLD_MINUTES     -> AgeLevel.OLD
-        else                             -> AgeLevel.FRESH
+    fun ambientTrack(range: FaceState.Range): Track = when (range) {
+        FaceState.Range.HIGH                            -> Track.DASHED
+        FaceState.Range.VERY_HIGH                       -> Track.DASHED_BOLD
+        FaceState.Range.LOW, FaceState.Range.URGENT_LOW -> Track.DOUBLE
+        else                                            -> Track.SOLID
     }
-
-    /** Show the BG age only when it is getting old (or unknown), so a fresh "0'" is not confused with the loop age. */
-    fun showBgAge(ageMinutes: Long?): Boolean = ageMinutes == null || ageMinutes >= BG_SHOW_AGE_MINUTES
-
-    fun isStale(timeStamp: Long, now: Long): Boolean = bgAgeLevel(bgAgeMinutes(timeStamp, now)) == AgeLevel.STALE
-
-    /** How the hero BG is drawn in ambient: a stale reading must look different there too (struck through, dimmed). */
-    enum class AmbientHero { OUTLINE, STRUCK }
-
-    fun ambientHero(level: AgeLevel): AmbientHero = if (level == AgeLevel.STALE) AmbientHero.STRUCK else AmbientHero.OUTLINE
-
-    /** Age label like "3'", or "--" without a reading. */
-    fun ageText(ageMinutes: Long?): String = ageMinutes?.let { "$it'" } ?: NO_DATA
 
     // ------------------------------------------------------------------ text values
 
-    /** "--" for missing values (blank, or only dashes like the "---" placeholders of the watch data). */
-    fun orDash(value: String?): String =
-        if (value == null || value.isBlank() || value.all { it == '-' }) NO_DATA else value
+    /** "--" for missing values (blank, the placeholders of the watch data store, no digits). */
+    fun orDash(value: String?): String = FaceState.display(value)
 
     /**
-     * Splits a value into number and [unit] for the bottom row: "1.44" / "1.2U" with "U" -> ("1.44", "U"),
-     * "12(5)g" with "g" -> ("12(5)", "g"). Missing data ("", "---", "--g") -> ("--", ""), without a unit.
+     * Splits a value into number and [unit] for the bottom row: "1,44" / "1,2U" with "U" -> ("1,44", "U"),
+     * "12(5)g" with "g" -> ("12(5)", "g"). Missing data ("", "IOB", "--g", "---") -> ("--", ""), without a unit.
      */
     fun valueUnit(raw: String?, unit: String): Pair<String, String> {
-        val v = orDash(raw).trim().removeSuffix(unit).trim()
-        return if (v.isEmpty() || v.all { it == '-' }) NO_DATA to "" else v to unit
+        val v = orDash(raw).removeSuffix(unit).trim()
+        return if (v.isEmpty() || v == NO_DATA || v.none { it.isDigit() }) NO_DATA to "" else v to unit
     }
 
-    /** Parse an IOB string like "2.53", "-0,10" or "1.2U"; null when unreadable. */
-    fun parseIob(iob: String?): Double? {
-        if (iob == null) return null
-        val cleaned = iob.replace(',', '.').filter { it.isDigit() || it == '.' || it == '-' }
-        return cleaned.toDoubleOrNull()
+    const val SEP = "  ·  "
+
+    /** "TT 5,6 · 0,85 U/h" with an active temp target (level 2), otherwise only the basal ("--" without data). */
+    fun secondaryLine(tempTarget: String, tempTargetLevel: Int, basal: String): String {
+        val b = FaceState.spacedUnit(basal)
+        val tt = FaceState.display(tempTarget)
+        return if (tempTargetLevel == 2 && tt != NO_DATA) "TT $tt$SEP$b" else b
     }
-
-    /** Fraction (0..1) of the IOB arc to fill; 6 U fills it, negative IOB fills nothing. */
-    fun iobFraction(iob: Double?): Float = if (iob == null || iob <= 0.0) 0f else min(iob / 6.0, 1.0).toFloat()
-
-    /** "TT 5.6   ·   0.00U/h" with an active temp target (level 2), otherwise only the basal ("--" without data). */
-    fun secondaryLine(tempTarget: String, tempTargetLevel: Int, basal: String): String =
-        if (tempTargetLevel == 2 && tempTarget.isNotBlank() && orDash(tempTarget) != NO_DATA) "TT $tempTarget   ·   ${orDash(basal)}"
-        else orDash(basal)
 
     /** Text scale so that a text of [width] fits into [maxWidth] (never enlarges). */
     fun fitScale(width: Float, maxWidth: Float): Float = if (width <= maxWidth || width <= 0f) 1f else maxWidth / width
@@ -187,10 +149,7 @@ object HaloFaceLogic {
 
     // ------------------------------------------------------------------ burn-in protection
 
-    private val BURN_IN_X = floatArrayOf(0f, 5f, 0f, -5f, 3f, -3f)
-    private val BURN_IN_Y = floatArrayOf(0f, 0f, 5f, 0f, -4f, -4f)
-
-    /** Ambient shift (design px) for screens with burn-in protection; changes every minute, never more than 5 px. */
-    fun burnInOffsetX(minute: Int): Float = BURN_IN_X[Math.floorMod(minute, BURN_IN_X.size)]
-    fun burnInOffsetY(minute: Int): Float = BURN_IN_Y[Math.floorMod(minute, BURN_IN_Y.size)]
+    /** Ambient shift (design px) on burn-in screens: a new offset in [-4, 4] every minute ([minuteKey] = epoch minute). */
+    fun burnInOffsetX(minuteKey: Long): Float = FaceState.burnInShift(minuteKey, 0).toFloat()
+    fun burnInOffsetY(minuteKey: Long): Float = FaceState.burnInShift(minuteKey, 1).toFloat()
 }
