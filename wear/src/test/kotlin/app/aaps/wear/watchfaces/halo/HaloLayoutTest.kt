@@ -17,8 +17,6 @@ class HaloLayoutTest {
             }
             // The ring itself keeps >= 6 % of the diameter to the bezel.
             assertWithMessage("ring at d=$d").that(l.c - (l.ringR + l.ringW / 2f)).isAtLeast(0.06f * d)
-            // The IOB arc is a bezel element, but stays fully on the glass.
-            assertWithMessage("IOB arc at d=$d").that(l.c - (l.iobR + l.iobW / 2f)).isAtLeast(0.04f * d)
         }
     }
 
@@ -31,12 +29,11 @@ class HaloLayoutTest {
         }
     }
 
-    @Test fun textStaysOffTheRingAndTheIobArc() {
+    @Test fun textStaysOffTheRing() {
         for (d in diameters) {
             val l = HaloLayout(d)
             for (b in l.boxes()) {
                 assertWithMessage("${b.name} on the ring at d=$d").that(l.touchesRing(b)).isFalse()
-                assertWithMessage("${b.name} on the IOB arc at d=$d").that(l.touchesIobArc(b)).isFalse()
             }
             val hero = l.boxes().first { it.name == "hero" }
             assertWithMessage("hero inside the trend tail at d=$d").that(l.insideTail(hero)).isTrue()
@@ -46,7 +43,7 @@ class HaloLayoutTest {
     @Test fun textNeverBelowTheFloorAndTapTargetIs48dp() {
         for (d in diameters) {
             val l = HaloLayout(d, density = 2f)
-            for (size in listOf(l.timeSize, l.dateSize, l.deltaSize, l.secondarySize, l.pillTextSize, l.rowValueSize, l.rowUnitSize, l.ballAmountSize, l.ballSubSize)) {
+            for (size in listOf(l.timeSize, l.deltaSize, l.secondarySize, l.pillTextSize, l.rowValueSize, l.rowUnitSize, l.ballAmountSize, l.ballSubSize)) {
                 assertWithMessage("text size at d=$d").that(size).isAtLeast(HaloLayout.MIN_TEXT_PX)
             }
             assertWithMessage("hit radius at d=$d").that(l.ballHitR).isEqualTo(48f)
@@ -59,10 +56,9 @@ class HaloLayoutTest {
             for (b in l.boxes().filter { it.name in setOf("secondary", "pill") }) {
                 assertWithMessage("${b.name} near a ring end at d=$d").that(l.nearRingEnds(b, gap = 0.02f * d)).isFalse()
             }
-            // The COB / IOB values (widest fitted width) keep 16 design px from the round caps, also of the IOB arc.
+            // The COB / IOB values (widest fitted width) keep 16 design px from the round caps.
             for (b in listOf(l.cobBox(), l.iobBox())) {
                 assertWithMessage("${b.name} near a ring end at d=$d").that(l.nearRingEnds(b, gap = 16f * l.u)).isFalse()
-                assertWithMessage("${b.name} near an IOB arc end at d=$d").that(l.nearIobArcEnds(b, gap = 16f * l.u)).isFalse()
             }
         }
     }
@@ -86,7 +82,7 @@ class HaloLayoutTest {
             val l = HaloLayout(d)
             var a = HaloFaceLogic.RING_START
             while (a <= HaloFaceLogic.RING_START + HaloFaceLogic.RING_SWEEP) {
-                if (l.tailDrawnAt(a)) for (b in listOf(l.timeBox(), l.dateBox())) {
+                if (l.tailDrawnAt(a)) for (b in listOf(l.timeBox())) {
                     assertWithMessage("tail at $a deg / ${b.name} at d=$d").that(l.tailDistance(a, b)).isAtLeast(l.tailTextClear - 0.5f)
                 }
                 a += 0.5f
@@ -183,6 +179,22 @@ class HaloLayoutTest {
             val l = HaloLayout(d)
             val secondary = l.boxes().first { it.name == "secondary" }
             assertWithMessage("delta / secondary gap at d=$d").that(secondary.top - l.deltaBox(11).bottom).isAtLeast(8f * l.u)
+        }
+    }
+
+    /** Declutter round: the knob never reaches the system status icon at 12 o'clock (Watch5 Pro: icon ends at ~y 57). */
+    @Test fun knobStaysBelowTheStatusIcon() {
+        val l = HaloLayout(450f)
+        assertWithMessage("knob top").that(l.knobTop).isAtLeast(60f)
+    }
+
+    /** Declutter round: the hero BG (size M) keeps ~24 px of clear space to the time above and the delta line below. */
+    @Test fun heroHasClearSpaceAboveAndBelow() {
+        for (d in diameters) {
+            val l = HaloLayout(d)
+            val hero = l.boxes().first { it.name == "hero" }
+            assertWithMessage("time / hero at d=$d").that(hero.top - l.timeBox().bottom).isAtLeast(24f * l.u)
+            assertWithMessage("hero / delta at d=$d").that(l.deltaBox(11).top - hero.bottom).isAtLeast(22f * l.u)
         }
     }
 }

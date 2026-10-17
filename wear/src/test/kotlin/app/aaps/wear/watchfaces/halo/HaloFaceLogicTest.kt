@@ -105,13 +105,29 @@ class HaloFaceLogicTest {
         assertThat(HaloFaceLogic.secondaryOwner(null)).isNull()
     }
 
-    @Test fun ambientTrackCarriesTheRange() {
-        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.IN)).isEqualTo(HaloFaceLogic.Track.SOLID)
-        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.HIGH)).isEqualTo(HaloFaceLogic.Track.DASHED)
-        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.VERY_HIGH)).isEqualTo(HaloFaceLogic.Track.DASHED_BOLD)
-        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.LOW)).isEqualTo(HaloFaceLogic.Track.DOUBLE)
-        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.URGENT_LOW)).isEqualTo(HaloFaceLogic.Track.DOUBLE)
-        assertThat(HaloFaceLogic.ambientTrack(FaceState.Range.STALE)).isEqualTo(HaloFaceLogic.Track.SOLID)
+    @Test fun cobOnlyWithCarbsOnBoard() {
+        assertThat(HaloFaceLogic.cobShown("0g")).isFalse()
+        assertThat(HaloFaceLogic.cobShown("0 g")).isFalse()
+        assertThat(HaloFaceLogic.cobShown("--g")).isFalse()
+        assertThat(HaloFaceLogic.cobShown("")).isFalse()
+        assertThat(HaloFaceLogic.cobShown(null)).isFalse()
+        assertThat(HaloFaceLogic.cobShown("12g")).isTrue()
+        assertThat(HaloFaceLogic.cobShown("12(5)g")).isTrue()
+        assertThat(HaloFaceLogic.cobShown("0,5g")).isTrue()
+    }
+
+    @Test fun basalOnlyWhenATempBasalMatters() {
+        // plain rates (profile or routine SMB zero temps) stay hidden
+        assertThat(HaloFaceLogic.basalShown("0.85U/h", freshLow = false)).isFalse()
+        assertThat(HaloFaceLogic.basalShown("0,00U/h", freshLow = false)).isFalse()
+        assertThat(HaloFaceLogic.basalShown("100%", freshLow = false)).isFalse()
+        assertThat(HaloFaceLogic.basalShown("-.--U/h", freshLow = true)).isFalse()
+        assertThat(HaloFaceLogic.basalShown("", freshLow = true)).isFalse()
+        // a TBR percentage, and a zero rate during a low (insulin withheld)
+        assertThat(HaloFaceLogic.basalShown("150%", freshLow = false)).isTrue()
+        assertThat(HaloFaceLogic.basalShown("0%", freshLow = false)).isTrue()
+        assertThat(HaloFaceLogic.basalShown("0,00U/h", freshLow = true)).isTrue()
+        assertThat(HaloFaceLogic.basalShown("0.85U/h", freshLow = true)).isFalse()
     }
 
     @Test fun noDataIsDashes() {

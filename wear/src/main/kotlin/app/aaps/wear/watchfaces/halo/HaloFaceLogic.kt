@@ -88,16 +88,6 @@ object HaloFaceLogic {
     fun secondaryOwner(owner: FaceState.Warning?): FaceState.Warning? =
         owner?.takeIf { !it.dataOld && it != FaceState.Warning.PHONE_LOST_FRESH }
 
-    /** Ambient ring track: the range as a shape, never only as a colour. */
-    enum class Track { SOLID, DASHED, DASHED_BOLD, DOUBLE }
-
-    fun ambientTrack(range: FaceState.Range): Track = when (range) {
-        FaceState.Range.HIGH                            -> Track.DASHED
-        FaceState.Range.VERY_HIGH                       -> Track.DASHED_BOLD
-        FaceState.Range.LOW, FaceState.Range.URGENT_LOW -> Track.DOUBLE
-        else                                            -> Track.SOLID
-    }
-
     // ------------------------------------------------------------------ text values
 
     /** "--" for missing values (blank, the placeholders of the watch data store, no digits). */
@@ -119,6 +109,25 @@ object HaloFaceLogic {
         val b = FaceState.spacedUnit(basal)
         val tt = FaceState.display(tempTarget)
         return if (tempTargetLevel == 2 && tt != NO_DATA) "TT $tt$SEP$b" else b
+    }
+
+    /**
+     * Declutter round (owner: "too much information, too little space"): COB only while carbs are on board, so "0 g"
+     * never takes a slot. "12(5)g" counts by its leading number; missing data hides it too.
+     */
+    fun cobShown(cob: String?): Boolean = (FaceState.parseNumber(cob) ?: 0.0) > 0.0
+
+    /**
+     * Basal only when a temp basal matters. The phone sends either the running rate ("0,85U/h", a TBR or the profile
+     * rate, the watch cannot tell them apart) or a TBR percentage ("120%"). Shown: a percentage other than 100 %
+     * (a TBR is running), and a zero rate (or 0 %) during a [freshLow] (insulin is withheld: reassuring, and the
+     * reason the BG should recover). Hidden: every plain rate, including the routine zero temps of an SMB loop.
+     */
+    fun basalShown(basal: String?, freshLow: Boolean): Boolean {
+        val b = FaceState.display(basal)
+        if (b == NO_DATA) return false
+        val v = FaceState.parseNumber(b) ?: return false
+        return if (b.endsWith("%")) v != 100.0 else freshLow && v == 0.0
     }
 
     /** Text scale so that a text of [width] fits into [maxWidth] (never enlarges). */
