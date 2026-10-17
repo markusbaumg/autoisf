@@ -22,10 +22,10 @@
         android:summary="%s"
         android:title="@string/pref_face_bolus_request_amount" />
 
-    <!-- Always-on style, shared with the Halo, Glass and Orbit faces (strings_face_aod.xml, AodStyle). -->
+    <!-- Always-on style, shared with the Halo, Glass and Orbit faces (strings_face_aod.xml, AodStyle); Orbit names its looks (strings_face_aod_orbit.xml). -->
     <ListPreference
         android:defaultValue="outline"
-        android:entries="@array/face_aod_style_names"
+        android:entries="@array/face_aod_style_names_orbit"
         android:entryValues="@array/face_aod_style_values"
         android:key="@string/key_face_aod_style"
         android:summary="%s"

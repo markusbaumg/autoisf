@@ -129,15 +129,38 @@ class OrbitFaceLogicTest {
         assertThat(mg.deltaPart + mg.agePart).isEqualTo("-12 · 3′")
         // delta.missing
         assertThat(OrbitFaceLogic.deltaRow("--", 3, de).deltaPart).isEqualTo("-- · ")
-        // key_show_delta off: age only
-        val noDelta = OrbitFaceLogic.deltaRow("+0,1", 1, de, showDelta = false)
-        assertThat(noDelta.deltaPart + noDelta.agePart).isEqualTo("1′")
         // key_show_ago off hides a fresh age, never an aging one
         val noAgo = OrbitFaceLogic.deltaRow("+0,1", 1, de, showAgo = false)
         assertThat(noAgo.deltaPart + noAgo.agePart).isEqualTo("+0,1")
         val aging = OrbitFaceLogic.deltaRow("+0,1", 8, de, showAgo = false)
         assertThat(aging.agePart).isEqualTo("8′")
-        assertThat(OrbitFaceLogic.deltaRow("+0,1", 1, de, showDelta = false, showAgo = false).isEmpty).isTrue()
+    }
+
+    /**
+     * Orbit live round 1: the watch showed "→ 0′" (no delta) while Halo and Glass showed "+0.1" / "-0.0" for the same
+     * reading. Live-like phone strings (English and German phone locale, mg/dL) always reach the row as sent.
+     */
+    @Test fun deltaRowShowsLiveDeltas() {
+        fun row(delta: String, age: Long = 0) = OrbitFaceLogic.deltaRow(delta, age, de).let { it.deltaPart + it.agePart }
+        assertThat(row("+0.1")).isEqualTo("+0.1 · 0′")
+        assertThat(row("-0.0")).isEqualTo("-0.0 · 0′")
+        assertThat(row("+0,1")).isEqualTo("+0,1 · 0′")
+        assertThat(row("+2", 2)).isEqualTo("+2 · 2′")
+        assertThat(row(" +0.1 ")).isEqualTo("+0.1 · 0′")
+        // a delta without a sign gets one; nothing sent is "--", never an empty row
+        assertThat(row("0.1")).isEqualTo("+0.1 · 0′")
+        assertThat(row("")).isEqualTo("-- · 0′")
+        // key_show_ago off: the delta alone
+        assertThat(OrbitFaceLogic.deltaRow("-0.0", 1, de, showAgo = false).let { it.deltaPart + it.agePart }).isEqualTo("-0.0")
+        assertThat(OrbitFaceLogic.deltaRow("+0.1", 1, de, showAgo = false).isEmpty).isFalse()
+    }
+
+    /** The avg delta pref is on by default: an avg (or detailed) variant the phone left at "--" falls back to the delta. */
+    @Test fun deltaSourceFallsBackToPlainDelta() {
+        assertThat(OrbitFaceLogic.deltaSource("+0.1", "--", "--", "--", detailed = false, avg = true)).isEqualTo("+0.1")
+        assertThat(OrbitFaceLogic.deltaSource("-0.0", "--", "", "--", detailed = false, avg = true)).isEqualTo("-0.0")
+        assertThat(OrbitFaceLogic.deltaSource("+2", "--", "--", "--", detailed = true, avg = true)).isEqualTo("+2")
+        assertThat(OrbitFaceLogic.deltaSource("+0,1", "+0,08", "+0,2", "--", detailed = true, avg = true)).isEqualTo("+0,1")
     }
 
     @Test fun deltaSource() {

@@ -396,31 +396,42 @@ object OrbitFaceLogic {
     // ------------------------------------------------------------------ delta row
 
     /**
-     * Meta row: "+0,1 · " and the age "1′" (amber from 6 min). [showDelta] off drops the delta; [showAgo] off hides
-     * a FRESH age, but an AGING (or older) age is always shown (toggle exception). Both empty: the row is empty.
+     * Meta row: "+0,1 · " and the age "1′" (amber from 6 min). [showAgo] off hides a FRESH age, but an AGING (or older)
+     * age is always shown (toggle exception).
+     *
+     * Orbit live round 1 (the watch showed "→ 0′" with no delta while Halo and Glass showed "+0.1" for the same data):
+     * Orbit was the only one of the three faces that still honoured key_show_delta, a setting of the stock faces that
+     * is off on the owner's watch, so the trend arrow and the age stood alone. As on Halo and Glass, a reading always
+     * shows its delta, signed, exactly as the phone sent it ("+0.1", "-0.0", "+0,1", "+2"); a missing delta is "--".
      */
     data class DeltaRow(val deltaPart: String, val agePart: String, val ageAmber: Boolean) {
 
         val isEmpty: Boolean get() = deltaPart.isEmpty() && agePart.isEmpty()
     }
 
-    fun deltaRow(delta: String, ageMinutes: Long?, labels: Labels, showDelta: Boolean = true, showAgo: Boolean = true): DeltaRow {
+    fun deltaRow(delta: String, ageMinutes: Long?, labels: Labels, showAgo: Boolean = true): DeltaRow {
         val aging = (ageMinutes ?: 0L) >= AGING_FROM_MIN
         val age = if (showAgo || aging) ageText(ageMinutes, labels) else ""
-        val d = if (showDelta) display(delta) else ""
+        val d = FaceState.deltaText(delta)
         return DeltaRow(
-            deltaPart = if (d.isEmpty()) "" else if (age.isEmpty()) d else "$d · ",
+            deltaPart = if (age.isEmpty()) d else "$d · ",
             agePart = age,
             ageAmber = aging
         )
     }
 
-    /** Delta source (spec §4.4): detailed and/or average delta when those prefs are on. */
-    fun deltaSource(delta: String, deltaDetailed: String, avgDelta: String, avgDeltaDetailed: String, detailed: Boolean, avg: Boolean): String = when {
-        avg && detailed -> avgDeltaDetailed
-        avg             -> avgDelta
-        detailed        -> deltaDetailed
-        else            -> delta
+    /**
+     * Delta source (spec §4.4): detailed and/or average delta when those prefs are on. Orbit live round 1 (as Glass): a
+     * picked variant the phone did not fill ("--") falls back to the plain delta, so the row keeps a number.
+     */
+    fun deltaSource(delta: String, deltaDetailed: String, avgDelta: String, avgDeltaDetailed: String, detailed: Boolean, avg: Boolean): String {
+        val picked = when {
+            avg && detailed -> avgDeltaDetailed
+            avg             -> avgDelta
+            detailed        -> deltaDetailed
+            else            -> delta
+        }
+        return if (FaceState.display(picked) == FaceState.NO_DATA) delta else picked
     }
 
     // ------------------------------------------------------------------ phone link and status slot

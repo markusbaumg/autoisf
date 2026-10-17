@@ -41,6 +41,7 @@ import app.aaps.wear.data.ComplicationData
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
 import app.aaps.wear.interaction.menus.MainMenuActivity
+import app.aaps.wear.watchfaces.common.AodStyle
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.FaceState
 import app.aaps.wear.watchfaces.common.LoopRunTime
@@ -154,13 +155,14 @@ class OrbitWatchface : WatchFace() {
     private var showLoop = true
     private var showDate = true
     private var showWeek = false
-    private var showDelta = true
     private var showAgo = true
     private var showDirection = true
     private var detailedDelta = false
     private var avgDelta = false
     private var showPredictions = true
     private var timeFrameH = OrbitFaceLogic.DEFAULT_TIME_FRAME_H
+    /** The shared always-on style (face_aod_style), mapped to Orbit's own look by [OrbitAod.look]. */
+    private var aodStyle = AodStyle.DEFAULT
     private var loopStatesRaw = ""
     private var loopStateNames: Set<String> = emptySet()
     private var loopStatesTimeStamp = 0L
@@ -232,6 +234,11 @@ class OrbitWatchface : WatchFace() {
     private val ballLabelText = arrayOfNulls<String>(5)
 
     /** Offline render harness only: the date line text drawn by the last frame ("" when none was drawn). */
+    /** Offline render harness only: draws this look in ambient instead of the one the setting picks (AOD exploration). */
+    @VisibleForTesting internal var aodLookOverride: OrbitAod.Look? = null
+    /** Offline render harness only: the always-on model of the last ambient rebuild. */
+    @VisibleForTesting internal var aodModel: OrbitAod.Model? = null
+    private val aodPainter = OrbitAod.Painter()
     @VisibleForTesting internal var drawnDateText = ""
     /** Offline render harness only: the glyph box (design px) of the date line drawn by the last frame. */
     @VisibleForTesting internal val drawnDateBox = RectF()
@@ -284,12 +291,6 @@ class OrbitWatchface : WatchFace() {
         TRACK_LIT, TRACK_DARK, Shader.TileMode.CLAMP
     )
 
-    // ambient range tracks (spec §6): dashed 6/6 1 px for HIGH; UX round 2: LOW is one 2 px ring with long dashes
-    // (the doubled ring read heavy next to the satellites)
-    // UX round 3: high = fine dots, low = long dashes (6/6 and 22/6 looked alike at arm's length)
-    private val ambDash = DashPathEffect(floatArrayOf(2f, 7f), 0f)
-    private val ambLowDash = DashPathEffect(floatArrayOf(22f, 6f), 0f)
-    private val ambUrgentDash = DashPathEffect(floatArrayOf(48f, 4f), 0f)
     private val tf300 = Typeface.create(Typeface.DEFAULT, 300, false)
     private val tf400 = Typeface.create(Typeface.DEFAULT, 400, false)
     private val tf500 = Typeface.create(Typeface.DEFAULT, 500, false)
@@ -297,10 +298,6 @@ class OrbitWatchface : WatchFace() {
     private val tf700 = Typeface.create(Typeface.DEFAULT, 700, false)
     private val ballX = FloatArray(5) { OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.BALL_DEGS[it]) }
     private val ballY = FloatArray(5) { OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.BALL_DEGS[it]) }
-    // Orbit discs round 2: in AOD the disc outlines sit [OrbitFaceLogic.AMB_SAT_R] in, clear of the bezel band under
-    // the per-minute burn-in shift
-    private val ambBallX = FloatArray(5) { OrbitFaceLogic.pointX(OrbitFaceLogic.AMB_SAT_R, OrbitFaceLogic.BALL_DEGS[it]) }
-    private val ambBallY = FloatArray(5) { OrbitFaceLogic.pointY(OrbitFaceLogic.AMB_SAT_R, OrbitFaceLogic.BALL_DEGS[it]) }
     // one lit-disc shader (and a glow for the hot disc) per satellite, rebuilt only when its look changes
     private val discShader = arrayOfNulls<Shader>(5)
     private val glowShader = arrayOfNulls<Shader>(5)
@@ -452,12 +449,12 @@ class OrbitWatchface : WatchFace() {
         showLoop = sp.getBoolean(R.string.key_show_external_status, true)
         showDate = sp.getBoolean(R.string.key_show_date, true)
         showWeek = sp.getBoolean(R.string.key_show_week_number, false)
-        showDelta = sp.getBoolean(R.string.key_show_delta, true)
         showAgo = sp.getBoolean(R.string.key_show_ago, true)
         showDirection = sp.getBoolean(R.string.key_show_direction, true)
         detailedDelta = sp.getBoolean(R.string.key_show_detailed_delta, false)
         avgDelta = sp.getBoolean(R.string.key_show_avg_delta, true)
         showPredictions = sp.getBoolean(R.string.key_prediction_lines, true)
+        aodStyle = AodStyle.read(sp)
         timeFrameH = (sp.getString(R.string.key_chart_time_frame, OrbitFaceLogic.DEFAULT_TIME_FRAME_H.toString()).toIntOrNull()
             ?: OrbitFaceLogic.DEFAULT_TIME_FRAME_H).coerceIn(1, 5)
     }
@@ -584,7 +581,7 @@ class OrbitWatchface : WatchFace() {
         heroText = OrbitFaceLogic.heroText(bg.sgvString, bg.sgv, ageMin)
         trend = if (OrbitFaceLogic.isOld(bgAge) || !showDirection) Trend.NONE else OrbitFaceLogic.trend(bg.slopeArrow, bg.deltaMgdl)
         val delta = OrbitFaceLogic.deltaSource(bg.delta, bg.deltaDetailed, bg.avgDelta, bg.avgDeltaDetailed, detailedDelta, avgDelta)
-        deltaRow = OrbitFaceLogic.deltaRow(delta, ageMin, labels, showDelta, showAgo)
+        deltaRow = OrbitFaceLogic.deltaRow(delta, ageMin, labels, showAgo)
 
         // status
         firstStart = OrbitFaceLogic.firstStart(bg.timeStamp, LoopRunTime.of(st), st.iobSum)
@@ -694,6 +691,21 @@ class OrbitWatchface : WatchFace() {
         shiftX = OrbitFaceLogic.burnInShift(minuteKey, 0).toFloat()
         shiftY = OrbitFaceLogic.burnInShift(minuteKey, 1).toFloat()
         buildSparkline(d, now)
+        if (isAmbient) buildAod(d, now, delta)
+    }
+
+    /** AOD round 2: the always-on model (BG, arrow, time and at most one line of words); see [OrbitAod]. */
+    private fun buildAod(d: ComplicationData, now: Long, delta: String) {
+        val look = aodLookOverride ?: OrbitAod.look(aodStyle)
+        val spark = if (look == OrbitAod.Look.BG_SPARK) {
+            val pts = d.graphData.entries.toMutableList()
+            if (d.bgData.sgv > 0) pts.add(d.bgData)
+            OrbitAod.sparkPoints(LongArray(pts.size) { pts[it].timeStamp }, DoubleArray(pts.size) { pts[it].sgv }, now)
+        } else FloatArray(0)
+        val ampm = if (amPmText.isEmpty()) "" else " $amPmText"
+        aodModel = OrbitAod.model(heroText, range, bgAge, trend, timeText + ampm, caption, slot, deltaRow, delta, spark)
+        aodPainter.lowWord = labels.sentinelLow
+        aodPainter.highWord = labels.sentinelHigh
     }
 
     private fun labelWidth(label: String, size: Float, tracking: Float): Float {
@@ -1061,73 +1073,13 @@ class OrbitWatchface : WatchFace() {
     }
 
     /**
-     * Ambient (spec §6): greys only (white in low-bit, AA off), no corona/glow/moon/bolus/targets/predictions.
-     * The range is carried by the track's shape, so colour is never the only signal: solid ambLine for in range /
-     * stale (dropped in low-bit), fine 2/7 dots 1 px amb2 for HIGH, one 2 px ring with long dashes for LOW, one solid
-     * 2 px amb1 ring for URGENT LOW. Burn-in: outlined digits, a thin solid time, satellites as values only (no rings), hollow dots/bars,
-     * strokes <= 2 px (3 for an urgent-low BG), per-minute [-4, 4] shift.
+     * Always-on (AOD round 2, owner feedback on the outline AOD: "too hard to read with the fine, thin lines, and it's
+     * too much information"): bold, dimmed digits with the trend arrow, the time in most looks, and one line of words
+     * only when something needs attention. No ring, discs, chart, date or bolus button. Drawn by [OrbitAod.Painter].
      */
     private fun drawAmbient(canvas: Canvas) {
-        val aa = !lowBitAmbient
-        val burnIn = burnInProtection
-        when (range) {
-            Range.HIGH, Range.VERY_HIGH -> {
-                drawTrack(canvas, 1f, amb(AMB2), aa, ambDash)
-            }
-
-            // Glass/Orbit UX round 3 (burn-in): no static full ring for hours: urgent low keeps its 2 px weight in long
-            // dashes (still unlike low's 22/6 rhythm), in range / stale draws no ring at all
-            // Glass/Orbit UX round 4: without burn-in protection urgent low is a solid 3 px ring (2 px read like low's at arm's length)
-            Range.URGENT_LOW            -> if (burnIn) drawTrack(canvas, 2f, amb(AMB2), aa, ambUrgentDash) else drawTrack(canvas, 3f, amb(AMB1), aa)
-
-            // UX round 3 (safety): low and urgent low differ by SHAPE, not by grey level (both are white in low-bit):
-            // low = one 2 px ring of long dashes, urgent low = one solid 2 px ring (plus the double-outlined TIEF badge)
-            Range.LOW                   -> drawTrack(canvas, 2f, amb(AMB2), aa, ambLowDash)
-            else                        -> if (!lowBitAmbient && !burnIn) drawTrack(canvas, 1f, AMB_LINE, aa)
-        }
-
-        // sparkline: history only (hidden while a W4-W9 pill holds the bottom, as interactive)
-        if (hasSpark && !pillRowShown) {
-            setStroke(1.5f, amb(AMB3), aa)
-            stroke.strokeJoin = Paint.Join.ROUND
-            canvas.drawPath(sparkPath, stroke)
-            if (hasNowDot) {
-                setStroke(1.2f, amb(NOW_HOLLOW), aa)
-                canvas.drawCircle(nowX, nowY, 4f, stroke)
-            }
-        }
-
-        drawHero(canvas, amb(AMB1), glow = false, ambient = true)
-        val s = slot
-        when {
-            // W1..W3 (incl. the stale "Keine Daten · 17′") own slot A as an outline pill
-            s != null && slotInDeltaRow -> drawWarning(canvas, s, OrbitFaceLogic.CX, OrbitFaceLogic.SLOT_IN_DELTA_Y, ambient = true, deltaWarnMax())
-            !firstStart                 -> drawDeltaRow(canvas, amb(AMB2), amb(if (deltaRow.ageAmber) AMB1 else AMB2), aa, ambient = true, arrowColour = amb(AMB1))
-        }
-        drawPillRow(canvas, if (s != null && !slotInDeltaRow) s else null, ambient = true)
-
-        // every satellite as value + label (Glass/Orbit UX round 3: all four, two alone read lopsided). Orbit discs
-        // round 1: each keeps a 1 px grey outline (no fill, no glow), so Orbit still reads as balls on an orbit; it moves
-        // with the burn-in shift and is dropped under burn-in protection (no static ring on those panels)
-        for (i in balls.indices) {
-            val b = balls[i] ?: continue
-            val x = ambBallX[i]
-            val y = ambBallY[i]
-            setFill(Color.BLACK, aa)
-            canvas.drawCircle(x, y, OrbitFaceLogic.BALL_R, fill)
-            if (!burnIn) {
-                setStroke(1f, amb(AMB_DISC), aa)
-                canvas.drawCircle(x, y, OrbitFaceLogic.BALL_R - 0.5f, stroke)
-            }
-            if (b.value == "--" && !b.pause) continue
-            drawDiscValue(canvas, b, x, if (b.label.isEmpty()) y else y - BALL_VALUE_DY, ballSize[i], tf400, amb(AMB1), amb(AMB1), aa, hollowPause = true)
-            val label = ballLabelText[i] ?: b.label
-            if (label.isNotEmpty()) drawText(canvas, label, x, y + BALL_LABEL_DY, ballLabelSize[i], tf500, amb(AMB2), aa, ballLabelTrack[i])
-        }
-
-        // burn-in: the small time solid in a thin weight (an outlined 23 px time smeared into a double stroke)
-        drawTime(canvas, amb(AMB1), if (burnIn) tf300 else tf400, aa)
-        drawDateLine(canvas, amb(AMB2), amb(AMB2), aa)
+        val m = aodModel ?: return
+        aodPainter.draw(canvas, m, aodLookOverride ?: OrbitAod.look(aodStyle), lowBitAmbient, burnInProtection)
     }
 
     /** Time with the optional AM/PM suffix (locale.en_12h), below the system status icon (UX round 3). */
@@ -2087,8 +2039,6 @@ class OrbitWatchface : WatchFace() {
         private const val TXT1 = 0xFFEEF1F7.toInt()
         private const val AMB1 = 0xFFE0E0E0.toInt()
         private const val AMB2 = 0xFF9A9A9A.toInt()
-        private const val AMB3 = 0xFF6E6E6E.toInt()
-        private const val AMB_LINE = 0xFF3C3C3C.toInt()
         private const val AMBER = 0xFFFFB547.toInt()
         private const val RED = 0xFFFF5A6E.toInt()
         private const val LOW_TXT = 0xFFFFD6DC.toInt()
@@ -2154,7 +2104,6 @@ class OrbitWatchface : WatchFace() {
         /** Disc labels: a light neutral, 4.5:1 or more on every disc fill (about 9:1 on the hot red one). */
         private const val DISC_LABEL = 0xFFB8C0D0.toInt()
         /** Ambient disc outline (1 px, interactive-free grey; dropped under burn-in protection). */
-        private const val AMB_DISC = 0xFF5A5A5A.toInt()
         private val DIAG = kotlin.math.sqrt(0.5).toFloat()
         private const val NEUTRAL_RING = 0xFF3A4250.toInt()
         private const val DIM_RING = 0xFF2C323D.toInt()

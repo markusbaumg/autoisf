@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orbit's labels of the shared always-on setting (AOD round 2, OrbitAod.look): the stored values stay
+     "outline" / "minimal" / "glance", Orbit draws them as BG + time (default), BG only, BG + delta. -->
+<resources>
+    <string name="face_aod_style_orbit_time">BG + time</string>
+    <string name="face_aod_style_orbit_bg">BG only</string>
+    <string name="face_aod_style_orbit_delta">BG + time + delta</string>
+    <string-array name="face_aod_style_names_orbit" translatable="false">
+        <item>@string/face_aod_style_orbit_time</item>
+        <item>@string/face_aod_style_orbit_bg</item>
+        <item>@string/face_aod_style_orbit_delta</item>
+    </string-array>
+</resources>

@@ -166,8 +166,11 @@ dependencies {
 
 // The render harness (WatchfaceRenderHarness) runs only on request and writes its PNGs to the given directory:
 // ./gradlew :wear:testFullDebugUnitTest --tests '*WatchfaceRenderHarness*' -PwatchfaceRenderOut=/abs/dir
+// -PwatchfaceRenderOnly=<regex> renders only the "<face>/<state>" ids the regex finds (e.g. 'orbit/aod_').
 val watchfaceRenderOut: Provider<String> = providers.gradleProperty("watchfaceRenderOut")
+val watchfaceRenderOnly: Provider<String> = providers.gradleProperty("watchfaceRenderOnly")
 tasks.withType<Test>().configureEach {
+    if (watchfaceRenderOnly.isPresent) systemProperty("watchface.render.only", watchfaceRenderOnly.get())
     if (watchfaceRenderOut.isPresent) systemProperty("watchface.render.out", watchfaceRenderOut.get())
     else exclude("**/*WatchfaceRenderHarness*")
 }
