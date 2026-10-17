@@ -6,7 +6,7 @@
     <string name="key_face_bolus_request_enabled" translatable="false">face_bolus_request_enabled</string>
     <string name="key_face_bolus_request_amount" translatable="false">face_bolus_request_amount</string>
     <string name="pref_face_bolus_request_enabled">Double-tap bolus request</string>
-    <string name="pref_face_bolus_request_enabled_summary">Halo, Glass and Orbit: double-tap the bolus button (within 0.8 s) to request a bolus. The phone checks it and you confirm on the watch. Needs Wear control on the phone, a connected phone with current data and an amount within the phone\'s max bolus. This setting applies to all three faces.</string>
+    <string name="pref_face_bolus_request_enabled_summary">Double-tap only sends a request. The phone checks it, you confirm on the watch. Applies to Halo, Glass and Orbit.</string>
     <string name="pref_face_bolus_request_amount">Bolus request amount</string>
     <!-- Only these two amounts; BolusRequestPrefs hides the button for any other stored value. -->
     <string-array name="face_bolus_request_amount_names" translatable="false">
