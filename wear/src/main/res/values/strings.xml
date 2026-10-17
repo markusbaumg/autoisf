@@ -269,7 +269,6 @@
     <string name="orbit_loop_age">Loop %1$s</string>
     <string name="orbit_loop_off_short">OFF</string>
     <string name="orbit_loop_open">Open</string>
-    <string name="orbit_pump_only">Pump</string>
     <string name="orbit_reservoir">Reservoir %1$s</string>
     <string name="orbit_phone_battery">Phone %1$s %%</string>
     <string name="orbit_bolus_refused_phone">Phone not connected. No request sent.</string>

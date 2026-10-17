@@ -453,7 +453,7 @@ class GlassWatchface : WatchFace() {
         timeText = GlassFaceLogic.timeText(latestTime.hour, latestTime.minute, is24HourFormat)
         amPmText = GlassFaceLogic.amPm(latestTime.hour, is24HourFormat)
         timePaint.typeface = tf400
-        timePaint.textSize = 42f
+        timePaint.textSize = TIME_SIZE
         val timeW = timePaint.measureText(timeText)
         setText(tf500, 17f)
         val amPmW = amPmText?.let { AM_PM_GAP + text.measureText(it) } ?: 0f
@@ -503,19 +503,21 @@ class GlassWatchface : WatchFace() {
             )
         )
 
-        // hero: chip on the right, or removed with BG and meta centred (trend.hidden_pref)
-        showChip = sp.getBoolean(R.string.key_show_direction, true)
-        hero = GlassFaceLogic.heroLayout(showChip, metaEmpty = !showDelta && !showAge && captionText.isEmpty())
+        // hero: chip on the right, or removed with BG and meta centred (trend.hidden_pref; UX round 3: also for a
+        // struck reading and "---", whose age is centred under the digits as on Halo)
         bgText = GlassFaceLogic.bgText(bg.sgvString, age, sentinel)
-        bgColour = when {
-            stale                        -> TXT2
-            range == Range.URGENT_LOW    -> LOW_COL // UX round 2: saturated, never a pale near-white
-            else                         -> Color.WHITE
+        showChip = GlassFaceLogic.chipShown(sp.getBoolean(R.string.key_show_direction, true), strike, bgText)
+        hero = GlassFaceLogic.heroLayout(showChip, metaEmpty = !showDelta && !showAge && captionText.isEmpty())
+        // UX round 3 (spec F1): low AND urgent low digits are red; a white 3,4 next to a white 6,4 hid the low in sunlight
+        bgColour = when (GlassFaceLogic.digitTone(range, stale)) {
+            GlassFaceLogic.DigitTone.STALE -> TXT2
+            GlassFaceLogic.DigitTone.LOW   -> LOW_COL
+            GlassFaceLogic.DigitTone.WHITE -> Color.WHITE
         }
         setText(tf600, GlassFaceLogic.BG_SIZE)
-        bgSize = GlassFaceLogic.bgFitSize({ size -> text.textSize = size; text.measureText(bgText) }, hero.bgMaxWidth)
+        bgSize = GlassFaceLogic.bgFitSize({ size -> text.textSize = size; bgWidth() }, hero.bgMaxWidth)
         text.textSize = bgSize
-        bgHalfWidth = text.measureText(bgText) / 2f
+        bgHalfWidth = bgWidth() / 2f
         if (stale) trend = Trend.NONE
         layoutMeta()
 
@@ -689,7 +691,7 @@ class GlassWatchface : WatchFace() {
         val measure18: (String) -> Float = { text.measureText(it) }
         val fit = GlassFaceLogic.fitFooter(GlassFaceLogic.footerRuns(input, slotWords, FOOTER_SEP, measure18), FOOTER_SEP, measure18)
         val runs = fit.runs
-        lastFooterSize = fit.size
+        lastFooterSize = minPx(fit.size, MIN_TEXT_PX)
         text.textSize = lastFooterSize
         val width = GlassFaceLogic.lineWidth(runs, FOOTER_SEP) { text.measureText(it) }
         val sep = text.measureText(FOOTER_SEP)
@@ -815,10 +817,35 @@ class GlassWatchface : WatchFace() {
         return centreY - (fm.ascent + fm.descent) / 2f
     }
 
+    /** Width of [bgText] in [text] with the tight decimal separator (UX round 3, [GlassFaceLogic.splitDecimal]). */
+    private fun bgWidth(): Float {
+        val parts = GlassFaceLogic.splitDecimal(bgText) ?: return text.measureText(bgText)
+        return text.measureText(parts.first) + text.measureText(parts.second) + text.measureText(parts.third) -
+            2f * GlassFaceLogic.SEPARATOR_KERN * text.textSize
+    }
+
+    /** [bgText] centred on [cx] with the tight separator; [text] is set up (any style), its alignment is changed. */
+    private fun drawBg(canvas: Canvas, cx: Float, cy: Float) {
+        text.textAlign = Paint.Align.LEFT
+        val y = baseline(cy)
+        var x = cx - bgWidth() / 2f
+        val parts = GlassFaceLogic.splitDecimal(bgText)
+        if (parts == null) {
+            canvas.drawText(bgText, x, y, text)
+            return
+        }
+        val kern = GlassFaceLogic.SEPARATOR_KERN * text.textSize
+        canvas.drawText(parts.first, x, y, text)
+        x += text.measureText(parts.first) - kern
+        canvas.drawText(parts.second, x, y, text)
+        x += text.measureText(parts.second) - kern
+        canvas.drawText(parts.third, x, y, text)
+    }
+
     /** Time (tabular digits, own paint), 12 h suffix, and the date unless key_show_date is off (time then at y=74). */
     private fun drawTime(canvas: Canvas, tf: Typeface, colour: Int, suffixColour: Int, dateColour: Int, aa: Boolean) {
         timePaint.typeface = tf
-        timePaint.textSize = 42f
+        timePaint.textSize = TIME_SIZE
         timePaint.isAntiAlias = aa
         timePaint.color = colour
         val fm = timePaint.fontMetrics
@@ -829,7 +856,7 @@ class GlassWatchface : WatchFace() {
             text.color = suffixColour
             canvas.drawText(it, amPmX, y, text)
         }
-        if (showDate) drawCentred(canvas, dateText, CX, DATE_Y, tf500, DATE_SIZE, dateColour, aa)
+        if (showDate) drawCentred(canvas, dateText, CX, DATE_Y, tf500, minPx(DATE_SIZE, MIN_TEXT_PX), dateColour, aa)
     }
 
     private fun drawInteractive(canvas: Canvas, now: Long) {
@@ -839,16 +866,15 @@ class GlassWatchface : WatchFace() {
         setText(tf600, bgSize, align = Paint.Align.CENTER)
         text.color = bgColour
         if (!stale) text.setShadowLayer(10f, 0f, 0f, withAlpha(rangeColour, 0x70))
-        canvas.drawText(bgText, hero.bgX, baseline(hero.bgY), text)
+        drawBg(canvas, hero.bgX, hero.bgY)
         if (strike && bgText != "---") {
             line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE; line.strokeWidth = 3f; line.color = TXT2
             canvas.drawLine(hero.bgX - bgHalfWidth - 4f, hero.bgY + 2f, hero.bgX + bgHalfWidth + 4f, hero.bgY + 2f, line)
         }
         drawCaption(canvas, ambient = false, lowBit = false)
 
-        // trend chip; for old data the chip carries the BG age instead, large and in alert (age.stale)
-        if (staleAgeInChip()) drawStaleAge(canvas, ALERT_COL, aa = true)
-        else if (showChip) {
+        // trend chip (a struck reading has none: its age sits under the digits, in alert)
+        if (showChip) {
             fill.reset(); fill.isAntiAlias = true; fill.color = withAlpha(rangeColour, 40)
             canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, fill)
             stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 2f; stroke.color = withAlpha(rangeColour, 210)
@@ -856,9 +882,9 @@ class GlassWatchface : WatchFace() {
             drawArrow(canvas, rangeColour, aa = true, maxWidth = 4f)
         }
 
-        // meta line + phone-off glyph (W10)
-        if (!staleAgeInChip()) drawMeta(canvas, DELTA_COL, TXT3, when (ageLevel) {
-            Level.NORMAL -> TXT2
+        // meta line + phone-off glyph (W10); UX round 3: a normal age in the delta colour (TXT2 was 4.2:1 on the glass)
+        drawMeta(canvas, DELTA_COL, TXT3, when (ageLevel) {
+            Level.NORMAL -> DELTA_COL
             Level.WARN   -> WARN_COL
             Level.ALERT  -> ALERT_COL
         }, aa = true)
@@ -908,16 +934,6 @@ class GlassWatchface : WatchFace() {
         if (ball != BallState.HIDDEN) drawBall(canvas, now)
     }
 
-    /** age.stale: a struck reading has no trend; the chip slot shows its age instead ("17′", "3 Std"), large. */
-    private fun staleAgeInChip(): Boolean = showChip && strike && bgText != "---"
-
-    private fun drawStaleAge(canvas: Canvas, colour: Int, aa: Boolean) {
-        setText(tf700, STALE_AGE_SIZE, aa, Paint.Align.RIGHT)
-        text.textSize = GlassFaceLogic.fitSize(STALE_AGE_SIZE, text.measureText(ageText), STALE_AGE_MAX_W)
-        text.color = colour
-        canvas.drawText(ageText, HERO_X1 - HERO_PAD, baseline(hero.chipY), text)
-    }
-
     /**
      * Caption so colour is never the only carrier, as a pill inside the card (UX round 2: 24 px bold, on the delta line
      * after the delta, clear of the comma and of the chip column). "TIEF" (low:
@@ -933,20 +949,29 @@ class GlassWatchface : WatchFace() {
         val wordColour = when {
             lowBit                                    -> Color.WHITE
             ambient                                   -> A_TXT1
-            caption == FaceState.Caption.LOW_BADGE    -> Color.WHITE
+            caption == FaceState.Caption.LOW_BADGE    -> BADGE_TEXT_COL // UX round 3: near-black on red (white was 3.0:1)
             caption == FaceState.Caption.HIGH_WORD    -> HIGH_COL
             else                                      -> LOW_TEXT_COL
         }
         rect.set(x - w / 2f, y - CAPTION_H / 2f, x + w / 2f, y + CAPTION_H / 2f)
         if (ambient) {
             if (caption == FaceState.Caption.LOW_BADGE) {
-                stroke.reset(); stroke.isAntiAlias = aa; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1.5f; stroke.color = wordColour
+                // urgent low by SHAPE (UX round 3): a double outline, 2 px outside and 1 px inside, burn-in safe
+                stroke.reset(); stroke.isAntiAlias = aa; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 2f; stroke.color = wordColour
                 canvas.drawRoundRect(rect, CAPTION_H / 2f, CAPTION_H / 2f, stroke)
+                stroke.strokeWidth = 1f
+                rect.inset(3.5f, 3.5f)
+                canvas.drawRoundRect(rect, CAPTION_H / 2f - 3.5f, CAPTION_H / 2f - 3.5f, stroke)
             }
-        } else {
-            fill.reset(); fill.isAntiAlias = true
-            fill.color = if (caption == FaceState.Caption.LOW_BADGE) LOW_COL else withAlpha(hue, 56)
+        } else if (caption == FaceState.Caption.LOW_BADGE) {
+            fill.reset(); fill.isAntiAlias = true; fill.color = LOW_COL
             canvas.drawRoundRect(rect, CAPTION_H / 2f, CAPTION_H / 2f, fill)
+        } else {
+            // UX round 3: a neutral dark pill with a hue outline and hue text (hue on hue-tinted glass was 3.5:1)
+            fill.reset(); fill.isAntiAlias = true; fill.color = CAPTION_FILL
+            canvas.drawRoundRect(rect, CAPTION_H / 2f, CAPTION_H / 2f, fill)
+            stroke.reset(); stroke.isAntiAlias = true; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1.5f; stroke.color = withAlpha(hue, 220)
+            canvas.drawRoundRect(rect, CAPTION_H / 2f, CAPTION_H / 2f, stroke)
         }
         setText(tf700, CAPTION_SIZE, aa, Paint.Align.CENTER)
         text.letterSpacing = 0.04f
@@ -1137,7 +1162,7 @@ class GlassWatchface : WatchFace() {
     }
 
     private fun drawFooter(canvas: Canvas, runs: List<GlassFaceLogic.Run>, xs: FloatArray, size: Float, ambient: Boolean, aa: Boolean) {
-        setText(tf500, size, aa)
+        setText(tf500, size, aa) // layoutFooter already applied the physical floor
         val y = baseline(FOOTER_Y)
         val lowBit = ambient && lowBitAmbient
         runs.forEachIndexed { i, run ->
@@ -1245,19 +1270,18 @@ class GlassWatchface : WatchFace() {
             text.style = Paint.Style.STROKE
             text.strokeWidth = 2f
         }
-        canvas.drawText(bgText, hero.bgX, baseline(hero.bgY), text)
+        drawBg(canvas, hero.bgX, hero.bgY)
         if (strike && bgText != "---") {
             line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE; line.strokeWidth = 2f; line.color = c(A_TXT1)
             canvas.drawLine(hero.bgX - bgHalfWidth - 4f, hero.bgY + 2f, hero.bgX + bgHalfWidth + 4f, hero.bgY + 2f, line)
         }
         drawCaption(canvas, ambient = true, lowBit = lowBit)
-        if (staleAgeInChip()) drawStaleAge(canvas, c(A_TXT1), aa)
-        else if (showChip) {
+        if (showChip) {
             stroke.reset(); stroke.isAntiAlias = aa; stroke.style = Paint.Style.STROKE; stroke.strokeWidth = 1f; stroke.color = c(A_TXT3)
             canvas.drawCircle(CHIP_X, hero.chipY, CHIP_R, stroke)
             drawArrow(canvas, c(A_TXT1), aa, maxWidth = 2.5f)
         }
-        if (!staleAgeInChip()) drawMeta(canvas, c(A_TXT2), c(A_TXT3), c(if (ageLevel != Level.NORMAL) A_TXT1 else A_TXT2), aa)
+        drawMeta(canvas, c(A_TXT2), c(A_TXT3), c(if (ageLevel != Level.NORMAL) A_TXT1 else A_TXT2), aa)
 
         // sparkline: no band, no prediction; dashes and now line omitted in low-bit
         if (!lowBit) drawSparkGuides(canvas, A_LINE, A_LINE, aa)
@@ -1394,8 +1418,8 @@ class GlassWatchface : WatchFace() {
         c.save()
         val card = Path().apply { addRoundRect(HERO_X0, HERO_Y0, HERO_X1, HERO_Y1, HERO_R, HERO_R, Path.Direction.CW) }
         c.clipPath(card)
-        blob(c, p, 110f, 100f, 340f, 272f, withAlpha(colour, (110 * k).toInt()), 40f)
-        blob(c, p, 140f, 124f, 270f, 236f, withAlpha(colour, (60 * k).toInt()), 26f)
+        blob(c, p, 110f, 112f, 340f, 284f, withAlpha(colour, (110 * k).toInt()), 40f)
+        blob(c, p, 140f, 136f, 270f, 248f, withAlpha(colour, (60 * k).toInt()), 26f)
         c.restore()
         p.reset()
         p.isAntiAlias = true
@@ -1579,23 +1603,26 @@ class GlassWatchface : WatchFace() {
         private const val CX = 225f
         // UX round 2 geometry (450 grid): card ±150 px with 12 px inner padding, BG 128 px, delta line 28 px under it
         // with the TIEF/HOCH pill, sparkline 44 px with the ball docked left, three content-sized pills, footer 22 px.
-        private const val TIME_Y = 54f
-        private const val TIME_Y_NO_DATE = 70f
+        // UX round 3: the time and date start below y 60 (the Watch5 Pro status icon spans y 23-49), the date is 24 px,
+        // the card is y 120..274, the sparkline 50 px, the pills y 344..380 and the footer 26 px at y 406.
+        private const val TIME_Y = 72f
+        private const val TIME_Y_NO_DATE = 84f
+        private const val TIME_SIZE = 40f
         private const val AM_PM_GAP = 4f
-        private const val DATE_Y = 86f
-        private const val DATE_SIZE = 22f
+        private const val DATE_Y = 101f
+        private const val DATE_SIZE = 24f
+        /** Physical text floor (Halo's [app.aaps.wear.watchfaces.halo.HaloLayout.MIN_TEXT_PX]): 384 px screens keep it. */
+        private const val MIN_TEXT_PX = 18f
         private const val HERO_X0 = 75f
-        private const val HERO_Y0 = 104f
+        private const val HERO_Y0 = GlassFaceLogic.HERO_Y0
         private const val HERO_X1 = 375f
-        private const val HERO_Y1 = 266f
+        private const val HERO_Y1 = GlassFaceLogic.HERO_Y1
         private const val HERO_R = 28f
         private const val HERO_PAD = 12f
         private const val CAPTION_SIZE = 24f
         private const val CAPTION_H = 30f
         private const val CAPTION_PAD = 10f
         private const val CAPTION_GAP = 12f
-        private const val STALE_AGE_SIZE = 30f
-        private const val STALE_AGE_MAX_W = 60f
         private const val CHIP_X = 345f
         private const val CHIP_R = 18f
         private const val ARROW_L = 10f
@@ -1605,9 +1632,9 @@ class GlassWatchface : WatchFace() {
         private const val META_MIN_SIZE = 24f
         private const val META_MAX_WIDTH = 276f
         private const val META_SEP = " · "
-        private const val PILL_Y0 = 340f
-        private const val PILL_Y1 = 376f
-        private const val PILL_Y = 358f
+        private const val PILL_Y0 = GlassFaceLogic.PILL_Y0
+        private const val PILL_Y1 = 380f
+        private const val PILL_Y = 362f
         private const val PILL_R = 18f
         private const val PILL_PAD = 13f
         private const val PILL_GAP = 8f
@@ -1626,7 +1653,7 @@ class GlassWatchface : WatchFace() {
         /** Flavour effects (flavor.client / flavor.pumpcontrol): no predictions; pumpcontrol has no loop pill. */
         private val IS_PUMPCONTROL = BuildConfig.FLAVOR == "pumpcontrol"
         private val IS_CLIENT = BuildConfig.FLAVOR.startsWith("aapsclient")
-        private const val FOOTER_Y = 404f
+        private const val FOOTER_Y = 406f
         private const val FOOTER_SEP = "  ·  "
         private const val BALL_BOX = 44f
         private const val RING_R = 32f
@@ -1638,6 +1665,8 @@ class GlassWatchface : WatchFace() {
         private val HIGH_COL = 0xFFFFB547.toInt()
         private val LOW_COL = 0xFFFF5A6E.toInt()
         private val LOW_TEXT_COL = 0xFFFFD6DC.toInt()
+        private val BADGE_TEXT_COL = 0xFF1A0508.toInt()
+        private val CAPTION_FILL = 0xE00B0D14.toInt()
         private val STALE_COL = 0xFF8A93A8.toInt()
         private val TXT1 = 0xFFEEF1F7.toInt()
         private val TXT2 = 0xFF9AA6C4.toInt()

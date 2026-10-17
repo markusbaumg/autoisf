@@ -345,7 +345,8 @@ class GlassFaceLogicTest {
     @Test fun footerShowsOnlyActiveRuns() {
         assertThat(footer().map { it.text }).containsExactly("0,85 U/h")
         val tt = footer(ttLevel = 2, cob = "24g")
-        assertThat(tt.map { it.text }).containsExactly("TT 5,6", "KH 24g", "0,85 U/h").inOrder()
+        // UX round 3 (26 px footer): three runs no longer fit, KH (keep 40) goes before the basal (50) and the TT (90)
+        assertThat(tt.map { it.text }).containsExactly("TT 5,6", "0,85 U/h").inOrder()
         assertThat(tt[0].tone).isEqualTo(Tone.TT)
         assertThat(footer(cob = "20(30)g").map { it.text }).contains("KH 20(30)g")       // shown as sent
         assertThat(footer(cob = "--g").map { it.text }).contains("KH --")
@@ -393,16 +394,25 @@ class GlassFaceLogicTest {
         )
         val roboto = runs(roboto)
         assertThat(roboto.first().kind).isEqualTo(RunKind.WARNING)          // warnings are never dropped
-        assertThat(roboto.map { it.kind }).containsExactly(RunKind.WARNING, RunKind.TT).inOrder() // TT is the last to go
+        // UX round 3 (26 px footer): every info run goes before the warning would shrink, TT last
+        assertThat(roboto.map { it.kind }).containsExactly(RunKind.WARNING)
         assertThat(GlassFaceLogic.lineWidth(roboto, sep, this.roboto)).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
+        val ttOnly = footer(warnings = listOf(Warning.RES_CRITICAL), res = "5U", resLevel = 2, tt = "5,6", ttLevel = 2, cob = "20(30)g", basal = "12,35U/h", m = this.roboto)
+        assertThat(ttOnly.map { it.kind }).containsExactly(RunKind.WARNING, RunKind.TT).inOrder()
         // at a wider worst-case font even the TT goes, the warning stays
         val wide = runs(measure)
         assertThat(wide.map { it.kind }).containsExactly(RunKind.WARNING)
         assertThat(GlassFaceLogic.lineWidth(wide, sep, measure)).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
     }
 
-    @Test fun footerMaxWidthIsTheChordAt093R() {
-        assertThat(GlassFaceLogic.FOOTER_MAX_WIDTH).isEqualTo(257f)
+    @Test fun footerMaxWidthFitsTheChordAtTheFooter() {
+        // UX round 3: footer centre y 406, 26 px (cap bottom about y 416): the chord there is about 238 px
+        val capBottom = 406f + 0.36f * GlassFaceLogic.FOOTER_SIZE
+        val chord = 2f * kotlin.math.sqrt(225f * 225f - (capBottom - 225f) * (capBottom - 225f))
+        assertThat(GlassFaceLogic.FOOTER_MAX_WIDTH).isAtMost(chord)
+        // warnings stay 22 px or larger (a 1.2 mm cap height on the Watch5 Pro)
+        assertThat(GlassFaceLogic.FOOTER_MIN_SIZE).isAtLeast(22f)
+        assertThat(GlassFaceLogic.FOOTER_SIZE).isAtLeast(26f)
     }
 
     /** Fits [text] as the single W1-W6 owner run and returns the size and the drawn width at that size. */
@@ -420,10 +430,11 @@ class GlassFaceLogicTest {
             assertThat(width).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH + 0.01f)
             assertThat(drawn).isEqualTo(s) // these fit without cutting
         }
-        // "Telefon getrennt · 23 Std" = 250 px: fits at full size
-        assertThat(fitOwner("Telefon getrennt · 23 Std").first).isEqualTo(GlassFaceLogic.FOOTER_SIZE)
+        // "Kein Profil" = 110 px: full size
+        assertThat(fitOwner("Kein Profil").first).isEqualTo(GlassFaceLogic.FOOTER_SIZE)
         // "Téléphone déconnecté · 23 h" = 270 px: shrinks, above the floor
-        assertThat(fitOwner("Téléphone déconnecté · 23 h").first).isWithin(0.01f).of(GlassFaceLogic.FOOTER_SIZE * 257f / 270f)
+        assertThat(fitOwner("Téléphone déconnecté · 23 h").first)
+            .isWithin(0.01f).of(GlassFaceLogic.FOOTER_SIZE * GlassFaceLogic.FOOTER_MAX_WIDTH / 270f)
         // a translation far too long: the floor, then "…"
         val long = "Téléphone déconnecté depuis longtemps · 23 h"
         val (size, drawn, width) = fitOwner(long)
@@ -448,9 +459,12 @@ class GlassFaceLogicTest {
     }
 
     @Test fun worstCaseStatusStringsFit() {
-        // German worst cases at 18 px (8.5 px/char) must fit the 257 px slot without scaling
-        for (s in listOf("Telefon getrennt · 59′", "Keine Daten · 3 Std", "Warte auf AAPS", "Reservoir 120U  ·  12,35 U/h"))
-            assertThat(roboto(s)).isAtMost(GlassFaceLogic.FOOTER_MAX_WIDTH)
+        // German worst cases fit the slot at the floor or above, never cut
+        for (s in listOf("Telefon getrennt · 59′", "Keine Daten · 3 Std", "Warte auf AAPS", "Reservoir 120U  ·  12,35 U/h")) {
+            val fit = GlassFaceLogic.fitFooter(listOf(GlassFaceLogic.Run(s, RunKind.WARNING, Tone.ALERT, 100)), sep, roboto)
+            assertThat(fit.size).isAtLeast(GlassFaceLogic.FOOTER_MIN_SIZE)
+            assertThat(fit.runs.single().text).isEqualTo(s)
+        }
     }
 
     @Test fun fitSize() {
@@ -493,15 +507,17 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.nowX(forecast = false)).isEqualTo(370f)
         assertThat(GlassFaceLogic.sparkX(0f, GlassFaceLogic.SPARK_X0_BALL, forecast = false)).isEqualTo(124f)
         assertThat(GlassFaceLogic.SPARK_X0_BALL).isGreaterThan(GlassFaceLogic.BALL_X + GlassFaceLogic.BALL_R + 8f)
-        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(326f)
+        assertThat(GlassFaceLogic.sparkY(60.0)).isEqualTo(332f)
         assertThat(GlassFaceLogic.sparkY(220.0)).isEqualTo(282f)
-        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(326f)
+        assertThat(GlassFaceLogic.sparkY(20.0)).isEqualTo(332f)
         assertThat(GlassFaceLogic.sparkY(400.0)).isEqualTo(282f)
-        // UX round 2: the band gave its height to the hero; the 70-180 target band keeps 30 px or more
-        assertThat(GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)).isAtLeast(30f)
-        // the docked ball sits in the band's rows: 8 px or more under the card (y 266) and above the pills (y 340)
-        assertThat(GlassFaceLogic.BALL_Y - GlassFaceLogic.BALL_R - 266f).isAtLeast(8f)
-        assertThat(340f - (GlassFaceLogic.BALL_Y + GlassFaceLogic.BALL_R)).isAtLeast(6f)
+        // UX round 3: a 50 px plot (in-range data no longer draws as a flat line); the 70-180 band keeps 34 px or more
+        assertThat(GlassFaceLogic.SPARK_Y1 - GlassFaceLogic.SPARK_Y0).isAtLeast(50f)
+        assertThat(GlassFaceLogic.sparkY(70.0) - GlassFaceLogic.sparkY(180.0)).isAtLeast(34f)
+        assertThat(GlassFaceLogic.SPARK_Y0 - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
+        // the docked ball sits in the band's rows: 8 px or more under the card and 6 px or more above the pills
+        assertThat(GlassFaceLogic.BALL_Y - GlassFaceLogic.BALL_R - GlassFaceLogic.HERO_Y1).isAtLeast(8f)
+        assertThat(GlassFaceLogic.PILL_Y0 - (GlassFaceLogic.BALL_Y + GlassFaceLogic.BALL_R)).isAtLeast(6f)
         assertThat(GlassFaceLogic.lowLine(0.0)).isEqualTo(70.0)
         assertThat(GlassFaceLogic.highLine(0.0, 0.0)).isEqualTo(180.0)
         assertThat(GlassFaceLogic.highLine(80.0, 160.0)).isEqualTo(160.0)
@@ -549,6 +565,9 @@ class GlassFaceLogicTest {
         assertThat(GlassFaceLogic.ballHit(10f, by)).isFalse()       // off the round screen
         assertThat(GlassFaceLogic.ballHit(200f, 170f)).isFalse()    // hero card, BG digits
         assertThat(GlassFaceLogic.ballHit(250f, 300f)).isFalse()    // graph zone
+        // UX round 3: the 48 dp circle stops 2 px above the pill row, a tap on the loop pill never arms a bolus
+        assertThat(GlassFaceLogic.ballHit(bx + 20f, GlassFaceLogic.PILL_Y0 + 2f)).isFalse()
+        assertThat(GlassFaceLogic.ballHit(bx, GlassFaceLogic.BALL_HIT_BOTTOM)).isTrue()
         // the drawn ball keeps 30 px or more to the bezel
         val d = kotlin.math.hypot(bx - 225f, by - 225f) + GlassFaceLogic.BALL_R
         assertThat(225f - d).isAtLeast(30f)
@@ -571,24 +590,53 @@ class GlassFaceLogicTest {
     @Test fun heroReflowsWithoutTheChip() {
         val chip = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = false)
         assertThat(chip.bgX).isEqualTo(200f)
-        assertThat(chip.bgY).isEqualTo(163f)
-        assertThat(chip.chipY).isEqualTo(160f)
+        assertThat(chip.bgY).isEqualTo(174f)
+        assertThat(chip.chipY).isEqualTo(171f)
         // the delta line sits under the digits at full card width
         assertThat(chip.metaCentreX).isEqualTo(225f)
         assertThat(chip.metaY).isEqualTo(GlassFaceLogic.META_Y)
         assertThat(chip.bgMaxWidth).isEqualTo(GlassFaceLogic.BG_MAX_WIDTH)
         // empty meta line: digits and chip centre vertically
         val chipNoMeta = GlassFaceLogic.heroLayout(showChip = true, metaEmpty = true)
-        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(180f to 177f)
+        assertThat(chipNoMeta.bgY to chipNoMeta.chipY).isEqualTo(192f to 189f)
         // the digits' left and right edges (half the budget) keep 12 px card padding and 8 px to the r 18 chip at x 345
         assertThat(chip.bgX - GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtLeast(75f + 12f)
         assertThat(chip.bgX + GlassFaceLogic.BG_MAX_WIDTH / 2f).isAtMost(345f - 18f - 8f)
-        // trend.hidden_pref: BG (225,163), meta under it, 276 px for the digits
+        // trend.hidden_pref: BG (225,174), meta under it, 276 px for the digits
         val noChip = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = false)
         assertThat(listOf(noChip.bgX, noChip.bgY, noChip.metaCentreX, noChip.metaY, noChip.bgMaxWidth))
-            .containsExactly(225f, 163f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
+            .containsExactly(225f, 174f, 225f, GlassFaceLogic.META_Y, GlassFaceLogic.BG_MAX_WIDTH_NO_CHIP).inOrder()
         val noChipNoMeta = GlassFaceLogic.heroLayout(showChip = false, metaEmpty = true)
-        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 180f)
+        assertThat(noChipNoMeta.bgX to noChipNoMeta.bgY).isEqualTo(225f to 192f)
+        // the delta line stays inside the card (28 px text, 8 px padding)
+        assertThat(GlassFaceLogic.META_Y + 14f).isAtMost(GlassFaceLogic.HERO_Y1 - 4f)
+    }
+
+    @Test fun chipOnlyForACurrentReading() {
+        // UX round 3: a struck reading and "---" have no chip (no lone age in the corner, no empty hollow circle)
+        assertThat(GlassFaceLogic.chipShown(pref = true, struck = false, bgText = "6,4")).isTrue()
+        assertThat(GlassFaceLogic.chipShown(pref = true, struck = true, bgText = "6,4")).isFalse()
+        assertThat(GlassFaceLogic.chipShown(pref = true, struck = false, bgText = "---")).isFalse()
+        assertThat(GlassFaceLogic.chipShown(pref = false, struck = false, bgText = "6,4")).isFalse()
+    }
+
+    @Test fun lowDigitsAreRedNeverWhite() {
+        // spec F1 / UX round 3: a fresh low reading (3,4) draws red digits like urgent low; only in range and high are white
+        assertThat(GlassFaceLogic.digitTone(Range.LOW, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.LOW)
+        assertThat(GlassFaceLogic.digitTone(Range.URGENT_LOW, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.LOW)
+        assertThat(GlassFaceLogic.digitTone(Range.IN, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.WHITE)
+        assertThat(GlassFaceLogic.digitTone(Range.HIGH, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.WHITE)
+        assertThat(GlassFaceLogic.digitTone(Range.VERY_HIGH, stale = false)).isEqualTo(GlassFaceLogic.DigitTone.WHITE)
+        assertThat(GlassFaceLogic.digitTone(Range.STALE, stale = true)).isEqualTo(GlassFaceLogic.DigitTone.STALE)
+        assertThat(GlassFaceLogic.digitTone(Range.LOW, stale = true)).isEqualTo(GlassFaceLogic.DigitTone.STALE)
+    }
+
+    @Test fun decimalSeparatorSplit() {
+        assertThat(GlassFaceLogic.splitDecimal("6,4")).isEqualTo(Triple("6", ",", "4"))
+        assertThat(GlassFaceLogic.splitDecimal("12.4")).isEqualTo(Triple("12", ".", "4"))
+        assertThat(GlassFaceLogic.splitDecimal("115")).isNull()
+        assertThat(GlassFaceLogic.splitDecimal("---")).isNull()
+        assertThat(GlassFaceLogic.splitDecimal(",4")).isNull()
     }
 
     @Test fun metaLineEmptyWithoutAReading() {
@@ -660,7 +708,9 @@ class GlassFaceLogicTest {
         assertThat(o(Range.HIGH)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.LINE, false))
         assertThat(o(Range.VERY_HIGH)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A3, false))
         assertThat(o(Range.LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.LINE, false))
-        assertThat(o(Range.URGENT_LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.A3, true))
+        // UX round 3: urgent low is one 2 px line (low: a double thin line), a different SHAPE, not only a grey level
+        assertThat(o(Range.URGENT_LOW)).isEqualTo(GlassFaceLogic.AmbientOutline(OutlineStyle.SOLID, 2f, 0f, AmbTone.A3, true))
+        assertThat(o(Range.URGENT_LOW).style).isNotEqualTo(o(Range.LOW).style)
         for (r in Range.entries) assertThat(o(r).tone).isNotIn(listOf(AmbTone.A1, AmbTone.A2))
         // low-bit keeps every non-in shape (drawn white, AA off)
         for (r in listOf(Range.HIGH, Range.VERY_HIGH, Range.LOW, Range.URGENT_LOW))

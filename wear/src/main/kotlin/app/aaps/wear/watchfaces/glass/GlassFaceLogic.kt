@@ -53,12 +53,19 @@ object GlassFaceLogic {
     /** No Status/SingleBg from the phone for at least this long: data counts as not fresh (phoneLink). */
     const val DATA_FRESH_MS = FaceState.DATA_FRESH_MS
 
-    /** Status slot / footer: widest line (spec §4.8: the chord at 0.93 R, 257 px on the 450 grid). */
-    const val FOOTER_MAX_WIDTH = 257f
+    /**
+     * Status slot / footer: widest line. UX round 3: the footer sits at y 406 (the content block moved down off the
+     * system status icon), where the chord at the cap bottom is about 239 px on the 450 grid.
+     */
+    const val FOOTER_MAX_WIDTH = 236f
 
-    /** Footer text size and the floor a W1-W6 owner text may shrink to before it is ellipsised (UX round 2: 20/17 -> 22/18). */
-    const val FOOTER_SIZE = 22f
-    const val FOOTER_MIN_SIZE = 18f
+    /**
+     * Footer text size and the floor a W1-W6 owner text may shrink to before it is ellipsised (UX round 3: 22/18 ->
+     * 26/22, a 1.4 mm cap height: the footer is Glass's only W-level message). Next to a W7-W9 warning the TT, basal,
+     * reservoir and phone-battery runs are dropped first ([footerRuns]), so the warning keeps its size.
+     */
+    const val FOOTER_SIZE = 26f
+    const val FOOTER_MIN_SIZE = 22f
 
     /** Fallback low/high marks when the phone did not send them. */
     const val DEFAULT_LOW_MGDL = FaceState.DEFAULT_LOW_MGDL
@@ -130,6 +137,27 @@ object GlassFaceLogic {
     }
 
     const val PRIME = "′"
+
+    /**
+     * UX round 3: the decimal separator of the BG ("6,4", "6.4") is set tight: each side loses [SEPARATOR_KERN] em,
+     * so the German comma no longer reads as "6 , 4". Returns (before, separator, after), or null without one.
+     */
+    fun splitDecimal(s: String): Triple<String, String, String>? {
+        val i = s.indexOfFirst { it == ',' || it == '.' }
+        if (i <= 0 || i >= s.length - 1) return null
+        return Triple(s.substring(0, i), s.substring(i, i + 1), s.substring(i + 1))
+    }
+
+    const val SEPARATOR_KERN = 0.06f
+
+    /** Hue of the BG digits (spec §4.1, F1): low and urgent low are red, never white; stale grey; else white. */
+    enum class DigitTone { WHITE, LOW, STALE }
+
+    fun digitTone(range: Range, stale: Boolean): DigitTone = when {
+        stale                                          -> DigitTone.STALE
+        range == Range.LOW || range == Range.URGENT_LOW -> DigitTone.LOW
+        else                                           -> DigitTone.WHITE
+    }
 
     /**
      * BG digits: start size, step, floor and the widest allowed text with and without the trend chip (spec §4.1).
@@ -440,7 +468,7 @@ object GlassFaceLogic {
     const val SPARK_X0_BALL = 124f
     const val SPARK_Y0 = 282f
     const val SPARK_X1 = 370f
-    const val SPARK_Y1 = 326f
+    const val SPARK_Y1 = 332f
     const val SPARK_HISTORY = 36
     const val SPARK_TOTAL = 48
     const val SLOT_MS = 5 * MINUTE_MS
@@ -515,13 +543,16 @@ object GlassFaceLogic {
     /** "+0,5" / "+1,0" with the watch locale's decimal separator. */
     fun bolusAmountText(amount: Double, locale: Locale): String = FaceState.bolusAmountText(amount, locale)
 
-    /** Hit test of the ball (r=[BALL_HIT_R], 24 dp at xhdpi, around the centre) clipped to the round screen (r=225). */
-    fun ballHit(x: Float, y: Float, cx: Float = BALL_X, cy: Float = BALL_Y, r: Float = BALL_HIT_R): Boolean {
+    /**
+     * Hit test of the ball (r=[BALL_HIT_R], 24 dp at xhdpi, around the centre) clipped to the round screen (r=225)
+     * and, UX round 3, cut off at [bottom] (2 px above the pill row): a tap on the loop pill never arms a bolus.
+     */
+    fun ballHit(x: Float, y: Float, cx: Float = BALL_X, cy: Float = BALL_Y, r: Float = BALL_HIT_R, bottom: Float = BALL_HIT_BOTTOM): Boolean {
         val dx = x - cx
         val dy = y - cy
         val sx = x - 225f
         val sy = y - 225f
-        return dx * dx + dy * dy <= r * r && sx * sx + sy * sy <= 225f * 225f
+        return y <= bottom && dx * dx + dy * dy <= r * r && sx * sx + sy * sy <= 225f * 225f
     }
 
     /** Fraction (1..0) of the armed countdown ring still to show. */
@@ -533,8 +564,12 @@ object GlassFaceLogic {
      * 8 px above the pill row, about 40 px from the bezel.
      */
     const val BALL_X = 82f
-    const val BALL_Y = 304f
+    const val BALL_Y = 310f
     const val BALL_R = 28f
+
+    /** Top of the pill row (UX round 3: 344..380) and the lowest y the ball still takes a tap at. */
+    const val PILL_Y0 = 344f
+    const val BALL_HIT_BOTTOM = PILL_Y0 - 2f
 
     /** Hit radius on the 450 grid at xhdpi: 48 px = 24 dp, the family's 48 dp target (the face scales it to stay 24 dp). */
     const val BALL_HIT_R = 48f
@@ -549,13 +584,22 @@ object GlassFaceLogic {
      */
     data class HeroLayout(val bgX: Float, val bgY: Float, val bgMaxWidth: Float, val chipY: Float, val metaCentreX: Float, val metaY: Float)
 
-    const val META_Y = 244f
+    /** UX round 3: the card is y 120..274 (the time and date moved below the system status icon). */
+    const val HERO_Y0 = 120f
+    const val HERO_Y1 = 274f
+    const val META_Y = 256f
 
     fun heroLayout(showChip: Boolean, metaEmpty: Boolean): HeroLayout = when {
-        showChip  -> if (metaEmpty) HeroLayout(200f, 180f, BG_MAX_WIDTH, 177f, 225f, META_Y) else HeroLayout(200f, 163f, BG_MAX_WIDTH, 160f, 225f, META_Y)
-        metaEmpty -> HeroLayout(225f, 180f, BG_MAX_WIDTH_NO_CHIP, 177f, 225f, META_Y)
-        else      -> HeroLayout(225f, 163f, BG_MAX_WIDTH_NO_CHIP, 160f, 225f, META_Y)
+        showChip  -> if (metaEmpty) HeroLayout(200f, 192f, BG_MAX_WIDTH, 189f, 225f, META_Y) else HeroLayout(200f, 174f, BG_MAX_WIDTH, 171f, 225f, META_Y)
+        metaEmpty -> HeroLayout(225f, 192f, BG_MAX_WIDTH_NO_CHIP, 189f, 225f, META_Y)
+        else      -> HeroLayout(225f, 174f, BG_MAX_WIDTH_NO_CHIP, 171f, 225f, META_Y)
     }
+
+    /**
+     * UX round 3: the trend chip is drawn only for a current reading. A struck (stale) reading and "---" centre the
+     * digits with the age under them (as Halo), instead of a lone age in the chip corner or an empty hollow chip.
+     */
+    fun chipShown(pref: Boolean, struck: Boolean, bgText: String): Boolean = pref && !struck && bgText != "---"
 
     /** Which pills are drawn: both; LOOP alone, centred (key_show_iob off); IOB alone, centred (pumpcontrol: no APS). */
     enum class Pills { BOTH, LOOP_ONLY, IOB_ONLY }
@@ -630,6 +674,9 @@ object GlassFaceLogic {
     /**
      * UX round 1: the outline stays a quiet 1 px line (never the brightest thing on the screen); the shape (dashed,
      * double) carries the range, the BG digits and the TIEF/HOCH word carry the weight.
+     * UX round 3: urgent low is ONE 2 px line (the double 1+1 px line plus the boxed TIEF read heavy), so low (double
+     * thin line, plain TIEF word) and urgent low (single heavy line, double-outlined TIEF badge) differ by shape, not
+     * only by grey level; in low-bit both are white.
      */
     fun ambientOutline(range: Range, lowBit: Boolean): AmbientOutline = when (range) {
         Range.IN, Range.STALE -> if (lowBit) AmbientOutline(OutlineStyle.NONE, 0f, 0f, AmbTone.LINE, false)
@@ -637,7 +684,7 @@ object GlassFaceLogic {
         Range.HIGH            -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.LINE, false)
         Range.VERY_HIGH       -> AmbientOutline(OutlineStyle.DASHED, 1f, 0f, AmbTone.A3, false)
         Range.LOW             -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.LINE, false)
-        Range.URGENT_LOW      -> AmbientOutline(OutlineStyle.DOUBLE, 1f, 1f, AmbTone.A3, true)
+        Range.URGENT_LOW      -> AmbientOutline(OutlineStyle.SOLID, 2f, 0f, AmbTone.A3, true)
     }
 
     /** Random burn-in offset in [-4, +4] px from a 0..1 source. */

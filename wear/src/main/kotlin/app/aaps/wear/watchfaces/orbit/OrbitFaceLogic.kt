@@ -30,10 +30,12 @@ object OrbitFaceLogic {
     /**
      * UX round 1: the track grows from r 168 to r 192 (no dead black margin), the satellites sit on r 174 (their
      * shells cover the track, 14 px from the bezel) and grow from r 34 to r 37.
+     * UX round 3: satellites r 34 on r 171, so they keep 20 px (1.5 mm) to the glass edge: the Watch5 Pro's raised
+     * bezel hides about 1 mm at an angle. Their inner edge stays at r 137.
      */
     const val ORBIT_R = 192f
-    const val SAT_R = 174f
-    const val BALL_R = 37f
+    const val SAT_R = 171f
+    const val BALL_R = 34f
     const val BOLUS_HALF = 33f
 
     /** Hit circle radius around the bolus button centre (spec §4.12): 48 px = 24 dp at xhdpi, the family target. */
@@ -82,14 +84,17 @@ object OrbitFaceLogic {
     /** IOB arc is full at this many units. */
     const val IOB_ARC_FULL_U = 6.0
 
-    /** Sparkline: fixed range 2.5..14.0 mmol/L (45..252 mg/dL), box x 125..325 (UX round 2: 200 px, centred), now at x 295. */
+    /**
+     * Sparkline: fixed range 2.5..14.0 mmol/L (45..252 mg/dL). UX round 3: box x 119..331, the full width between the
+     * 4 and 8 o'clock satellites (8 px clear of their shells), now at x 301.
+     */
     const val SPARK_MIN_MGDL = 45.0
     const val SPARK_MAX_MGDL = 252.0
-    const val SPARK_X0 = 125f
-    const val SPARK_X_NOW = 295f
-    const val SPARK_X1 = 325f
-    const val SPARK_Y_TOP = 288f
-    const val SPARK_Y_BOTTOM = 338f
+    const val SPARK_X0 = 119f
+    const val SPARK_X_NOW = 301f
+    const val SPARK_X1 = 331f
+    const val SPARK_Y_TOP = 292f // UX round 3: 4 px lower, a top-clamp chevron keeps clear of a delta row with TIEF/HOCH
+    const val SPARK_Y_BOTTOM = 340f
 
     /**
      * Delta row centre and the pill row under it (its own row, 8 px or more below the delta baseline: never over the
@@ -98,14 +103,36 @@ object OrbitFaceLogic {
     const val DELTA_ROW_Y = 266f
     const val DELTA_SIZE = 26f
     const val SLOT_Y = 306f
-    const val SLOT_H = 32f
+
+    /** UX round 3: status pills 34 px tall with 25 px text (a 1.4 mm cap height: the face's only W-level message). */
+    const val SLOT_H = 34f
+    const val SLOT_TEXT = 25f
+
+    /**
+     * UX round 3: a W1-W3 pill that replaces the delta row sits 6 px lower, so the comma tail of a struck "6,4" never
+     * touches it; the sparkline then moves down into [SPARK_Y_TOP_SLOT]..[SPARK_Y_BOTTOM_SLOT].
+     */
+    const val SLOT_IN_DELTA_Y = DELTA_ROW_Y + 6f
+    const val SPARK_Y_TOP_SLOT = 296f
+    const val SPARK_Y_BOTTOM_SLOT = 344f
 
     /** Width of the pill row between the 4 and 8 o'clock satellites (their shells end at x 111 / 339). */
-    const val PILL_ROW_MAX_WIDTH = 208f
+    const val PILL_ROW_MAX_WIDTH = 216f
 
-    /** With a pill row (status slot or TIEF/HOCH) under the delta row the sparkline moves down into this box. */
+    /** With a status pill under the delta row the sparkline moves down into this box. */
     const val SPARK_Y_TOP_PILL = 332f
     const val SPARK_Y_BOTTOM_PILL = 372f
+
+    /**
+     * UX round 3: the TIEF/HOCH caption follows the delta on the delta row (as Glass), 30 px tall, so a W4-W9 pill
+     * gets the whole pill row (TIEF + "Telefon getrennt · 14′" side by side would not fit between the satellites).
+     */
+    const val CAPTION_H = 30f
+    const val CAPTION_GAP = 10f
+
+    /** Time (UX round 3): 33 px, centred at y 74, below the system status icon (y 23-49 on the Watch5 Pro). */
+    const val TIME_Y = 74f
+    const val TIME_SIZE = 33f
     /** Default sparkline window (key_chart_time_frame, hours). */
     const val DEFAULT_TIME_FRAME_H = 3
     const val SPARK_HISTORY_MS = DEFAULT_TIME_FRAME_H * 60 * 60_000L
@@ -113,12 +140,14 @@ object OrbitFaceLogic {
     const val PREDICTION_STEP_MS = 6 * 60_000L
 
     /** Width budgets (design px) for the worst-case text checks. */
-    const val BALL_VALUE_MAX = 60f
-    const val BALL_VALUE_HARD_MAX = 66f
+    const val BALL_VALUE_MAX = 56f
+    const val BALL_VALUE_HARD_MAX = 60f
     const val HERO_MAX_WIDTH = 200f
     const val DATE_LINE_MAX_WIDTH = 196f
-    const val DELTA_ROW_MAX_WIDTH = 200f
-    const val SLOT_MAX_WIDTH = 230f
+    const val DELTA_ROW_MAX_WIDTH = 212f
+
+    /** UX round 3: 210 (was 230): a delta-row pill keeps clear of the 4 and 8 o'clock satellites. */
+    const val SLOT_MAX_WIDTH = 210f
 
     // ------------------------------------------------------------------ localised words
 
@@ -141,7 +170,6 @@ object OrbitFaceLogic {
         val sentinelLow: String = "TIEF",
         val sentinelHigh: String = "HOCH",
         val weekFormat: String = "KW %d",
-        val pumpOnly: String = "Pumpe",
         val reservoirFormat: String = "Reservoir %s",
         val phoneBatteryFormat: String = "Tel %s %%"
     )
@@ -364,8 +392,8 @@ object OrbitFaceLogic {
         }
 
     /**
-     * LOOP ball. Loop off: amber ring, pause glyph, "AUS". Never looped: dashed grey "--", or "Pumpe" when the
-     * phone clearly runs without APS (pump data but no loop run). Otherwise the age coloured by health.
+     * LOOP ball. Loop off: amber ring, pause glyph, "AUS". Never looped: dashed grey "--" over "LOOP" (UX round 3: also
+     * with pump data but no loop run; "Pumpe" read like a pump alarm). Otherwise the age coloured by health.
      */
     fun loopBall(
         openApsStatus: Long, externalStatus: String, iobSum: String, now: Long, labels: Labels, mode: LoopMode = LoopMode.UNKNOWN,
@@ -378,8 +406,7 @@ object OrbitFaceLogic {
         if (mode == LoopMode.OPEN && health != LoopHealth.NEVER) return Ball(labels.loopOpen, "LOOP", Ring.GREEN, dashed = true)
         val label = if (mode == LoopMode.LGS) labels.loopLgs else "LOOP"
         return when (health) {
-            LoopHealth.NEVER -> if (display(iobSum) != "--") Ball(labels.pumpOnly, "", Ring.DIM)
-                                else Ball("--", "LOOP", Ring.DIM, dashed = true)
+            LoopHealth.NEVER -> Ball("--", "LOOP", Ring.DIM, dashed = true)
             LoopHealth.OK    -> Ball(ageText(age, labels), label, Ring.GREEN)
             LoopHealth.WARN  -> Ball(ageText(age, labels), label, Ring.AMBER)
             LoopHealth.BAD   -> Ball(ageText(age, labels), label, Ring.RED)
@@ -458,17 +485,21 @@ object OrbitFaceLogic {
     const val BALL_VALUE_SMALL = 19f
     const val BALL_LABEL_SIZE = 18f
 
-    /** Value text size: 24 px; wider than 60 px at 24 -> 19 px bold; still too wide -> shrink to fit 66 px. */
+    /** Value text size: 24 px; wider than 56 px at 24 -> 19 px bold; still too wide -> shrink to fit 60 px. */
     fun ballValueSize(widthAt24: Float): Float {
         if (widthAt24 <= BALL_VALUE_MAX) return BALL_VALUE_SIZE
         val small = widthAt24 * BALL_VALUE_SMALL / BALL_VALUE_SIZE
         return if (small <= BALL_VALUE_HARD_MAX) BALL_VALUE_SMALL else BALL_VALUE_SMALL * BALL_VALUE_HARD_MAX / small
     }
 
-    /** Hero group budget (spec §4.2): BG + 14 + a 40 px glyph (both scaled with the BG size) within 240 (UX round 1: clear of the 10 and 2 o'clock satellites). */
-    const val HERO_GROUP_MAX = 240f
-    const val HERO_GLYPH_GAP = 14f
-    const val HERO_GLYPH_W = 40f
+    /**
+     * Hero group budget (spec §4.2): BG + gap + glyph (both scaled with the BG size). UX round 3: 224 (was 240) so a
+     * wide "22,2" + arrow keeps clear of the 10 and 2 o'clock satellites; the glyph sits closer (10 px, 36 px wide), so
+     * BG and arrow read as one group centred on the dial.
+     */
+    const val HERO_GROUP_MAX = 224f
+    const val HERO_GLYPH_GAP = 10f
+    const val HERO_GLYPH_W = 36f
     const val HERO_MIN_SIZE = 60f
 
     /** Hero start size (UX round 1: 108 -> 120, the family's scale). Widths are measured at [HERO_REF] px. */

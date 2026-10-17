@@ -20,7 +20,7 @@ class OrbitFaceLogicTest {
     private val en = OrbitFaceLogic.Labels(
         again = "again", cob = "COB", hoursFormat = "%d h", daysFormat = "%d d", waiting = "Waiting for AAPS",
         phoneLostFormat = "Phone disconnected · %s", noDataFormat = "No data · %s", noProfile = "No profile", loopOff = "Loop off",
-        loopOffShort = "OFF", pumpOnly = "Pump", phoneBatteryFormat = "Phone %s %%"
+        loopOffShort = "OFF", phoneBatteryFormat = "Phone %s %%"
     )
     private val now = 1_760_000_000_000L
     private fun min(m: Long) = m * 60_000L
@@ -242,8 +242,8 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.loopBall(now - min(130), "", "1,25", now, de).value).isEqualTo("2 Std")
         // loop.never: dashed grey "--", never red
         assertThat(OrbitFaceLogic.loopBall(-1L, "", "", now, de)).isEqualTo(OrbitFaceLogic.Ball("--", "LOOP", Ring.DIM, dashed = true))
-        // loop.no_aps: pump data without a loop run
-        assertThat(OrbitFaceLogic.loopBall(-1L, "", "1,25", now, de)).isEqualTo(OrbitFaceLogic.Ball("Pumpe", "", Ring.DIM))
+        // loop.no_aps: pump data without a loop run is "--" over LOOP too (UX round 3: "Pumpe" read like a pump alarm)
+        assertThat(OrbitFaceLogic.loopBall(-1L, "", "1,25", now, de)).isEqualTo(OrbitFaceLogic.Ball("--", "LOOP", Ring.DIM, dashed = true))
         // loop.off: amber pause glyph + "AUS"
         assertThat(OrbitFaceLogic.loopBall(now, "Loop deaktiviert\n", "1,25", now, de))
             .isEqualTo(OrbitFaceLogic.Ball("", "AUS", Ring.AMBER, pause = true))
@@ -434,9 +434,9 @@ class OrbitFaceLogicTest {
         assertThat(OrbitFaceLogic.pointY(168f, 45f)).isWithin(0.1f).of(106.2f)
         assertThat(OrbitFaceLogic.pointX(168f, 270f)).isWithin(0.01f).of(57f)
         assertThat(OrbitFaceLogic.pointY(168f, 180f)).isWithin(0.01f).of(393f)
-        // UX round 1: the track fills the dial (r 192); satellites and the round bolus button keep 14 px to the bezel
-        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R).isAtMost(225f - 14f)
-        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BOLUS_HALF).isAtMost(225f - 14f)
+        // UX round 3: satellites and the round bolus button keep 20 px (1.5 mm) to the raised bezel
+        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R).isAtMost(225f - 20f)
+        assertThat(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BOLUS_HALF).isAtMost(225f - 20f)
         // the satellites cover the track (they sit on it)
         assertThat(OrbitFaceLogic.ORBIT_R).isLessThan(OrbitFaceLogic.SAT_R + OrbitFaceLogic.BALL_R)
         // symmetric layout: LOOP/IOB and COB/BASAL mirror each other, TT and the bolus button are the 3/9 o'clock pair
@@ -450,6 +450,19 @@ class OrbitFaceLogicTest {
         val dateY = OrbitFaceLogic.pointY(OrbitFaceLogic.ORBIT_R, 180f)
         assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM_PILL).isLessThan(dateY - 12f - 11f)
         assertThat(OrbitFaceLogic.SLOT_Y + OrbitFaceLogic.SLOT_H / 2f).isLessThan(OrbitFaceLogic.SPARK_Y_TOP_PILL)
+        // UX round 3: a W1-W3 pill in the delta row sits lower (clear of a struck comma) and the sparkline moves under it
+        assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y - OrbitFaceLogic.SLOT_H / 2f).isAtLeast(OrbitFaceLogic.DELTA_ROW_Y - 12f)
+        assertThat(OrbitFaceLogic.SLOT_IN_DELTA_Y + OrbitFaceLogic.SLOT_H / 2f).isLessThan(OrbitFaceLogic.SPARK_Y_TOP_SLOT)
+        assertThat(OrbitFaceLogic.SPARK_Y_BOTTOM_SLOT).isLessThan(dateY - 12f - 11f)
+        // ... and its widest text plus the warning icon keeps clear of the 4 and 8 o'clock satellites
+        val half = (OrbitFaceLogic.SLOT_MAX_WIDTH + 20f) / 2f + 14f
+        val endX = OrbitFaceLogic.CX - half + OrbitFaceLogic.SLOT_H / 2f
+        val cobX = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB)
+        val cobY = OrbitFaceLogic.pointY(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB)
+        assertThat(kotlin.math.hypot(endX - cobX, OrbitFaceLogic.SLOT_IN_DELTA_Y - cobY))
+            .isAtLeast(OrbitFaceLogic.SLOT_H / 2f + OrbitFaceLogic.BALL_R)
+        // the time sits below the Watch5 Pro status icon (y 23-49): its cap top is below y 58
+        assertThat(OrbitFaceLogic.TIME_Y - 0.36f * OrbitFaceLogic.TIME_SIZE).isAtLeast(58f)
         // the 180 px sparkline stays clear of the lower satellites
         val cobRight = OrbitFaceLogic.pointX(OrbitFaceLogic.SAT_R, OrbitFaceLogic.DEG_COB) + OrbitFaceLogic.BALL_R
         assertThat(OrbitFaceLogic.SPARK_X0 - cobRight).isAtLeast(8f)
@@ -497,9 +510,10 @@ class OrbitFaceLogicTest {
                 }
             }
             assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("22,2+", 108f), true)).isLessThan(OrbitFaceLogic.HERO_SIZE)
-            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("6,4", 108f), true)).isEqualTo(OrbitFaceLogic.HERO_SIZE)
-            // ball values: "20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "Offen", "Pumpe"
-            for (v in listOf("20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "0,85", "Offen", "Pumpe", "2 Std")) {
+            // the conservative estimate may step "6,4" + arrow down one step (the real Roboto width keeps 120)
+            assertThat(OrbitFaceLogic.heroSize(OrbitFaceLogic.estimateWidth("6,4", 108f), true)).isAtLeast(OrbitFaceLogic.HERO_SIZE - 4f)
+            // ball values: "20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "Offen"
+            for (v in listOf("20(30)g", "4,4-5,0", "12,40", "-0,35", "120%", "0,85", "Offen", "2 Std")) {
                 val size = OrbitFaceLogic.ballValueSize(OrbitFaceLogic.estimateWidth(v, 24f))
                 assertThat(OrbitFaceLogic.estimateWidth(v, size)).isAtMost(OrbitFaceLogic.BALL_VALUE_HARD_MAX + 0.01f)
                 assertThat(size * s).isAtLeast(11f)
@@ -551,7 +565,7 @@ class OrbitFaceLogicTest {
         val loop = OrbitFaceLogic.moon(49, gapT, gapD, false, shown)
         assertThat(loop.kind).isEqualTo(MoonKind.RIM)
         assertThat(loop.ball).isEqualTo(OrbitFaceLogic.IDX_LOOP)
-        assertThat(OrbitFaceLogic.BALL_OCCLUDE_DEG).isWithin(0.1f).of(11.6f)
+        assertThat(OrbitFaceLogic.BALL_OCCLUDE_DEG).isWithin(0.1f).of(10.0f)
     }
 
     @Test fun angleDiffWraps() {
