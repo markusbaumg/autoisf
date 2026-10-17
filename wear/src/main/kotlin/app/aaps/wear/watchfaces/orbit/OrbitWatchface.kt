@@ -38,6 +38,7 @@ import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.events.EventWearPreferenceChange
 import app.aaps.wear.interaction.menus.MainMenuActivity
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
+import app.aaps.wear.watchfaces.common.LoopRunTime
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.State
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.TapResult
@@ -439,7 +440,7 @@ class OrbitWatchface : WatchFace() {
             lastPhoneMessage = d.lastUpdateTimestamp,
             bgTimeStamp = d.bgData.timeStamp,
             headless = isHeadless || !isLiveRender,
-            firstStart = OrbitFaceLogic.firstStart(d.bgData.timeStamp, d.statusData.openApsStatus, d.statusData.iobSum)
+            firstStart = OrbitFaceLogic.firstStart(d.bgData.timeStamp, LoopRunTime.of(d.statusData), d.statusData.iobSum)
         )
     }
 
@@ -535,10 +536,10 @@ class OrbitWatchface : WatchFace() {
         deltaRow = OrbitFaceLogic.deltaRow(delta, ageMin, labels, showDelta, showAgo)
 
         // status
-        firstStart = OrbitFaceLogic.firstStart(bg.timeStamp, st.openApsStatus, st.iobSum)
+        firstStart = OrbitFaceLogic.firstStart(bg.timeStamp, LoopRunTime.of(st), st.iobSum)
         val noProfile = OrbitFaceLogic.noProfile(st.externalStatus, st.iobSum)
         val loopOff = OrbitFaceLogic.loopOff(st.externalStatus, st.iobSum)
-        val loopAge = OrbitFaceLogic.loopAgeMinutes(st.openApsStatus, now)
+        val loopAge = OrbitFaceLogic.loopAgeMinutes(LoopRunTime.of(st), now)
         val dataAgeMs = if (d.lastUpdateTimestamp > 0L) now - d.lastUpdateTimestamp else Long.MAX_VALUE
         // the display treats an unknown link as reachable (no "Telefon getrennt" before the first answer);
         // the bolus guard does not (DISABLED until then)
@@ -575,7 +576,7 @@ class OrbitWatchface : WatchFace() {
             else OrbitFaceLogic.loopMode(loopStateNames, loopStatesTimeStamp, d.lastUpdateTimestamp)
             balls[OrbitFaceLogic.IDX_LOOP] =
                 if (OrbitFaceLogic.loopBallShown(showLoop, OrbitFaceLogic.loopHealth(loopAge)))
-                    OrbitFaceLogic.loopBall(st.openApsStatus, st.externalStatus, st.iobSum, now, labels, mode)
+                    OrbitFaceLogic.loopBall(LoopRunTime.of(st), st.externalStatus, st.iobSum, now, labels, mode)
                 else null
             balls[OrbitFaceLogic.IDX_IOB] = if (showIob) OrbitFaceLogic.iobBall(st.iobSum) else null
             balls[OrbitFaceLogic.IDX_BASAL] = if (showBasal) OrbitFaceLogic.basalBall(st.currentBasal, OrbitFaceLogic.tbrRunning(starts, ends, now)) else null

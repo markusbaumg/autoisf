@@ -43,6 +43,7 @@ import app.aaps.wear.watchfaces.common.BolusRequestGuard
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.State
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.TapResult
+import app.aaps.wear.watchfaces.common.LoopRunTime
 import app.aaps.wear.watchfaces.common.BolusRequestPrefs
 import app.aaps.wear.watchfaces.common.BolusTapGesture
 import app.aaps.wear.watchfaces.common.PhoneReachability
@@ -172,7 +173,7 @@ class HaloWatchface : WatchFace() {
     private var drawnAmount = Double.NaN
     private var iobSrc: EventData.Status? = null
     private var iobFrac = 0f
-    /** Last valid loop time (openApsStatus > 0), persisted; the phone sends -1 on runs without a new temp basal. */
+    /** Last valid loop time (LoopRunTime.of(status) > 0), persisted; an older phone sends -1 on runs without a new temp basal. */
     private var loopMemory = HaloFaceLogic.LoopTimeMemory({ 0L }, {})
     private val loopTime get() = loopMemory.time
     private val fm = Paint.FontMetrics()
@@ -191,7 +192,7 @@ class HaloWatchface : WatchFace() {
         watchfaceScope.launch {
             complicationDataRepository.complicationData.collect {
                 data = it
-                loopMemory.onReceived(it.statusData.openApsStatus)
+                loopMemory.onReceived(LoopRunTime.of(it.statusData))
                 invalidate()
             }
         }
@@ -281,7 +282,8 @@ class HaloWatchface : WatchFace() {
         maxBolus = maxBolus(),
         lastPhoneMessage = data.lastUpdateTimestamp,
         bgTimeStamp = data.bgData.timeStamp,
-        headless = headless || !isLiveRender
+        headless = headless || !isLiveRender,
+        firstStart = HaloFaceLogic.firstStart(data.bgData.timeStamp, LoopRunTime.of(data.statusData), data.statusData.iobSum)
     )
 
     /** The ball exists only with the setting on, Wear control allowed, a valid amount, interactive, not in a preview. */
@@ -664,9 +666,9 @@ class HaloWatchface : WatchFace() {
     }
 
     /**
-     * Pill colour from the loop age. The watch only receives EventData.Status.openApsStatus, which the phone fills
-     * with loop.lastRun.lastTBREnact (not the loop run time); see [HaloFaceLogic.loopAgeMinutes]. -1 (a run without
-     * a new temp basal, or a phone restart) keeps the last valid time ([loopTime]); never received is UNKNOWN (grey).
+     * Pill colour from the loop age: the real loop run time (EventData.Status.lastLoopRunAt), or on an older phone
+     * openApsStatus (last temp basal enact), see [LoopRunTime]. -1 / 0 (no run since a phone restart, or an older
+     * phone's run without a new temp basal) keeps the last valid time ([loopTime]); never received is UNKNOWN (grey).
      */
     private fun drawLoopPill(canvas: Canvas, now: Long, ambient: Boolean, pill: HaloLayout.Pill) {
         val lowBit = ambient && lowBitAmbient

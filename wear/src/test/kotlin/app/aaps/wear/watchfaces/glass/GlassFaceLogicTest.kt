@@ -626,4 +626,15 @@ class GlassFaceLogicTest {
         // urgent low never looks like in range
         assertThat(o(Range.URGENT_LOW)).isNotEqualTo(o(Range.IN))
     }
+
+    @Test fun refusalHasOneMessagePerReason() {
+        assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.NO_MAX_BOLUS)).isEqualTo(GlassFaceLogic.Refusal.NO_MAX_BOLUS)
+        assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.OVER_MAX_BOLUS)).isEqualTo(GlassFaceLogic.Refusal.OVER_MAX_BOLUS)
+        assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.NO_WEAR_CONTROL)).isEqualTo(GlassFaceLogic.Refusal.NO_WEAR_CONTROL)
+        assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.NO_PHONE)).isEqualTo(GlassFaceLogic.Refusal.NO_PHONE)
+        assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.STALE_DATA)).isEqualTo(GlassFaceLogic.Refusal.STALE_DATA)
+        assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.PENDING)).isEqualTo(GlassFaceLogic.Refusal.PENDING)
+        assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.NONE)).isNull()
+        assertThat(GlassFaceLogic.refusal(BolusRequestGuard.Reason.FIRST_START)).isNull()
+    }
 }

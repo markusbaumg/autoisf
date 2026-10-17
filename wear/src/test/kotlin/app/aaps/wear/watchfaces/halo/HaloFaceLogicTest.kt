@@ -183,4 +183,22 @@ class HaloFaceLogicTest {
         assertThat(xs.zip(ys).toSet().size).isGreaterThan(3)
         assertThat(HaloFaceLogic.burnInOffsetX(-1)).isEqualTo(HaloFaceLogic.burnInOffsetX(5))
     }
+
+    @Test fun firstStartOnlyBeforeAnyData() {
+        assertThat(HaloFaceLogic.firstStart(0L, -1L, "IOB")).isTrue()
+        assertThat(HaloFaceLogic.firstStart(0L, 0L, "")).isTrue()
+        assertThat(HaloFaceLogic.firstStart(1_000L, -1L, "IOB")).isFalse()
+        assertThat(HaloFaceLogic.firstStart(0L, 1_000L, "IOB")).isFalse()
+        assertThat(HaloFaceLogic.firstStart(0L, -1L, "0.50")).isFalse()
+    }
+
+    @Test fun firstStartHidesTheBolusBall() {
+        val guard = app.aaps.wear.watchfaces.common.BolusRequestGuard(clock = { 1_000_000L })
+        val input = app.aaps.wear.watchfaces.common.BolusRequestGuard.Input(
+            prefOn = true, ambient = false, wearControl = true, amount = 0.5, maxBolus = 5.0, lastPhoneMessage = 0L, bgTimeStamp = 0L,
+            firstStart = HaloFaceLogic.firstStart(0L, -1L, "IOB")
+        )
+        assertThat(guard.check(input).state).isEqualTo(app.aaps.wear.watchfaces.common.BolusRequestGuard.State.HIDDEN)
+        assertThat(guard.check(input).reason).isEqualTo(app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason.FIRST_START)
+    }
 }

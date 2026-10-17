@@ -120,6 +120,17 @@ internal const val WEAR_CONFIRM_TIMEOUT_MS = 60_000L
  */
 internal const val WEAR_DUPLICATE_CONFIRM_WINDOW_MS = 10_000L
 
+/**
+ * Time of the last loop run for EventData.Status.lastLoopRunAt (watch faces' loop age), 0 = unknown.
+ * APS phone: Loop.lastRun.lastAPSRun, the time of the last APS decision (set on every run, whether or not a temp
+ * basal was enacted; lastTBREnact, which openApsStatus carries, is reset to 0 on runs that enact nothing).
+ * Loop.lastBgTriggeredRun is not used: nothing sets it. AAPSClient: the last suggested time from the device status.
+ * Display only; nothing here influences dosing.
+ */
+internal fun wearLastLoopRunAt(isAps: Boolean, lastRun: Loop.LastRun?, clientOpenApsTimestamp: Long): Long =
+    if (isAps) lastRun?.lastAPSRun?.takeIf { it > 0L } ?: 0L
+    else clientOpenApsTimestamp.coerceAtLeast(0L)
+
 @Singleton
 class DataHandlerMobile @Inject constructor(
     private val aapsSchedulers: AapsSchedulers,
@@ -1569,6 +1580,7 @@ class DataHandlerMobile @Inject constructor(
         val openApsStatus =
             if (config.APS) loop.lastRun?.let { if (it.lastTBREnact != 0L) it.lastTBREnact else -1 } ?: -1
             else processedDeviceStatusData.openApsTimestamp
+        val lastLoopRunAt = wearLastLoopRunAt(config.APS, loop.lastRun, if (config.APS) 0L else processedDeviceStatusData.openApsTimestamp)
         // Patient name for followers
         val patientName = preferences.get(StringKey.GeneralPatientName)
         //temptarget
@@ -1623,7 +1635,8 @@ class DataHandlerMobile @Inject constructor(
                     tempTargetLevel = tempTargetLevel,
                     reservoirString = reservoirString,
                     reservoir = reservoir,
-                    reservoirLevel = reservoirLevel
+                    reservoirLevel = reservoirLevel,
+                    lastLoopRunAt = lastLoopRunAt
                 )
             )
         )

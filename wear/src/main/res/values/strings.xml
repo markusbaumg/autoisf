@@ -255,6 +255,8 @@
     <string name="glass_bolus_refused_stale">Data too old: no bolus request</string>
     <string name="glass_bolus_refused_max">Above the phone\'s max bolus</string>
     <string name="glass_bolus_pending">A request is already running</string>
+    <string name="glass_bolus_refused_max_unknown">Max bolus not synced from the phone yet: no bolus request</string>
+    <string name="glass_bolus_refused_wear_control">Wear control is off on the phone: no bolus request</string>
     <string name="orbit_bolus_again">again</string>
     <string name="orbit_cob">COB</string>
     <string name="orbit_minutes">%1$d′</string>

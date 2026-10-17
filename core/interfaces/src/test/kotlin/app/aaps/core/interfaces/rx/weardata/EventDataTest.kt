@@ -224,4 +224,30 @@ class EventDataTest {
             assertThat(EventData.deserialize(onWatchByte.returnCommand!!.serialize())).isEqualTo(returnCommand)
         }
     }
+
+    private fun status(lastLoopRunAt: Long) = EventData.Status(
+        dataset = 0, externalStatus = "ok", iobSum = "1.00", iobDetail = "(1|0)", cob = "10g", currentBasal = "0.5U/h", battery = "80",
+        rigBattery = "", openApsStatus = -1L, bgi = "-1", batteryLevel = 1, patientName = "", tempTarget = "--", tempTargetLevel = 0,
+        reservoirString = "100U", reservoir = 100.0, reservoirLevel = 0, lastLoopRunAt = lastLoopRunAt
+    )
+
+    @Test
+    fun statusLastLoopRunAtRoundTrips() {
+        status(1_700_000_000_000L).let {
+            assertThat((EventData.deserialize(it.serialize()) as EventData.Status).lastLoopRunAt).isEqualTo(1_700_000_000_000L)
+            assertThat((EventData.deserializeByte(it.serializeByte()) as EventData.Status).lastLoopRunAt).isEqualTo(1_700_000_000_000L)
+            assertThat(EventData.deserialize(it.serialize())).isEqualTo(it)
+        }
+    }
+
+    @Test
+    fun statusFromOlderPhoneWithoutLastLoopRunAtDecodesToZero() {
+        // the default (0) is not encoded, so this is exactly what an older phone app sends
+        val json = status(0L).serialize()
+        assertThat(json).doesNotContain("lastLoopRunAt")
+        val decoded = EventData.deserialize(json) as EventData.Status
+        assertThat(decoded.lastLoopRunAt).isEqualTo(0L)
+        assertThat(decoded.openApsStatus).isEqualTo(-1L)
+        assertThat((EventData.deserializeByte(status(0L).serializeByte()) as EventData.Status).lastLoopRunAt).isEqualTo(0L)
+    }
 }

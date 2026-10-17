@@ -596,6 +596,23 @@ object GlassFaceLogic {
         BolusRequestGuard.State.IDLE     -> if (armed) BallState.ARMED else BallState.IDLE
     }
 
+    /** Message of a refused bolus tap (a toast); one per guard reason, so the user learns what to fix. */
+    enum class Refusal { PENDING, NO_PHONE, STALE_DATA, OVER_MAX_BOLUS, NO_MAX_BOLUS, NO_WEAR_CONTROL }
+
+    /**
+     * Toast for a REFUSED tap, or null when the reason never refuses a tap on a drawn ball (HIDDEN reasons, NONE).
+     * "Max bolus not synced" and "Wear control off" get their own text: "above the max bolus" would be wrong there.
+     */
+    fun refusal(reason: BolusRequestGuard.Reason): Refusal? = when (reason) {
+        BolusRequestGuard.Reason.PENDING         -> Refusal.PENDING
+        BolusRequestGuard.Reason.NO_PHONE        -> Refusal.NO_PHONE
+        BolusRequestGuard.Reason.STALE_DATA      -> Refusal.STALE_DATA
+        BolusRequestGuard.Reason.OVER_MAX_BOLUS  -> Refusal.OVER_MAX_BOLUS
+        BolusRequestGuard.Reason.NO_MAX_BOLUS    -> Refusal.NO_MAX_BOLUS
+        BolusRequestGuard.Reason.NO_WEAR_CONTROL -> Refusal.NO_WEAR_CONTROL
+        else                                     -> null
+    }
+
     /** "+0,5" / "+1,0" with the watch locale's decimal separator. */
     fun bolusAmountText(amount: Double, locale: Locale): String {
         val tenths = Math.round(abs(amount) * 10).toInt()

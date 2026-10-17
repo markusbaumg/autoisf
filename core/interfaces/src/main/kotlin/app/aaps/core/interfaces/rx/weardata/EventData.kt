@@ -368,7 +368,13 @@ sealed class EventData : Event() {
         val tempTargetLevel: Int,
         val reservoirString: String,
         val reservoir: Double,
-        val reservoirLevel: Int
+        val reservoirLevel: Int,
+        /**
+         * Time of the last loop run (APS decision, Loop.lastRun.lastAPSRun; on AAPSClient the last suggested time),
+         * 0 = unknown (no run since app start, or an older phone app). Unlike [openApsStatus] (last temp basal enact,
+         * -1 on runs that enact nothing) it moves on every loop run. Kept last with a default for older data.
+         */
+        val lastLoopRunAt: Long = 0
     ) : EventData(), EventDataSet
 
     @Serializable

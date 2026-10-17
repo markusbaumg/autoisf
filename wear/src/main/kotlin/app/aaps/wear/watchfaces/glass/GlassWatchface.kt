@@ -51,6 +51,7 @@ import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Sentinel
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Tone
 import app.aaps.wear.watchfaces.glass.GlassFaceLogic.Trend
 import app.aaps.wear.watchfaces.common.BolusRequestGuard
+import app.aaps.wear.watchfaces.common.LoopRunTime
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.Reason
 import app.aaps.wear.watchfaces.common.BolusRequestGuard.TapResult
 import app.aaps.wear.watchfaces.common.BolusRequestPrefs
@@ -435,7 +436,7 @@ class GlassWatchface : WatchFace() {
         }
 
         // signals
-        firstStart = GlassFaceLogic.firstStart(bg.timeStamp, st.openApsStatus, st.iobSum)
+        firstStart = GlassFaceLogic.firstStart(bg.timeStamp, LoopRunTime.of(st), st.iobSum)
         link = GlassFaceLogic.phoneLink(guard.phoneReach, data.lastUpdateTimestamp, now)
         val age = GlassFaceLogic.ageMinutes(bg.timeStamp, now)
         bgAge = GlassFaceLogic.bgAge(age)
@@ -480,7 +481,7 @@ class GlassWatchface : WatchFace() {
         layoutMeta()
 
         // loop / IOB
-        val loopAge = GlassFaceLogic.loopAgeMinutes(st.openApsStatus, now)
+        val loopAge = GlassFaceLogic.loopAgeMinutes(LoopRunTime.of(st), now)
         val run = GlassFaceLogic.loopRun(st.externalStatus)
         val noProfile = GlassFaceLogic.noProfile(run, st.iobSum, firstStart)
         val (states, listTs) = loopStates()
@@ -1277,14 +1278,15 @@ class GlassWatchface : WatchFace() {
             TapResult.REFUSED   -> {
                 disarm()
                 if (outcome.reason == Reason.NO_PHONE) refreshPhoneReachable()
-                toast(
-                    when (outcome.reason) {
-                        Reason.PENDING    -> R.string.glass_bolus_pending
-                        Reason.NO_PHONE   -> R.string.glass_bolus_refused_no_phone
-                        Reason.STALE_DATA -> R.string.glass_bolus_refused_stale
-                        else              -> R.string.glass_bolus_refused_max
-                    }
-                )
+                when (GlassFaceLogic.refusal(outcome.reason)) {
+                    GlassFaceLogic.Refusal.PENDING         -> R.string.glass_bolus_pending
+                    GlassFaceLogic.Refusal.NO_PHONE        -> R.string.glass_bolus_refused_no_phone
+                    GlassFaceLogic.Refusal.STALE_DATA      -> R.string.glass_bolus_refused_stale
+                    GlassFaceLogic.Refusal.OVER_MAX_BOLUS  -> R.string.glass_bolus_refused_max
+                    GlassFaceLogic.Refusal.NO_MAX_BOLUS    -> R.string.glass_bolus_refused_max_unknown
+                    GlassFaceLogic.Refusal.NO_WEAR_CONTROL -> R.string.glass_bolus_refused_wear_control
+                    null                                   -> null
+                }?.let { toast(it) }
                 dirty = true
                 invalidate()
                 return

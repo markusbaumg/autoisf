@@ -32,6 +32,15 @@ object HaloFaceLogic {
         return RING_START + (f * RING_SWEEP).toFloat()
     }
 
+    // ------------------------------------------------------------------ first start
+
+    /**
+     * First start: nothing has arrived from the phone yet (no BG, no loop time, IOB placeholder). The bolus ball stays
+     * hidden then, like on Glass and Orbit.
+     */
+    fun firstStart(bgTimeStamp: Long, loopTime: Long, iobSum: String): Boolean =
+        bgTimeStamp <= 0L && loopTime <= 0L && iobSum.trim().let { it == "IOB" || it.isEmpty() }
+
     // ------------------------------------------------------------------ loop
 
     /** UNKNOWN: no loop time was ever received (grey, not red: nothing is known to be wrong). */
@@ -49,10 +58,8 @@ object HaloFaceLogic {
     /**
      * Loop age in whole minutes, or null when there is no loop status (-1).
      *
-     * Note: the only loop time the watch receives is EventData.Status.openApsStatus. On an APS phone that is
-     * loop.lastRun.lastTBREnact (the last time a temp basal was enacted), not lastRun.lastAPSRun; there is no
-     * other field with the loop run time in the watch data. The stock AAPS faces use the same value. Showing the
-     * real loop run age needs a phone-side change (a new field in EventData.Status).
+     * The caller passes LoopRunTime.of(status): the real loop run time (EventData.Status.lastLoopRunAt) or, from an
+     * older phone app, openApsStatus (loop.lastRun.lastTBREnact, the last temp basal enact).
      */
     fun loopAgeMinutes(openApsStatus: Long, now: Long): Long? =
         if (openApsStatus <= 0L) null else max(0L, (now - openApsStatus) / 60000L)
@@ -83,8 +90,9 @@ object HaloFaceLogic {
 
     /**
      * <= 12' OK, 13..19' WARN, >= 20' STALE, never received UNKNOWN. OK and red come later than on the stock faces
-     * (> 14' red), because the age is the last temp-basal enact, not the last loop run: a stable loop that keeps its
-     * temp basal enacts nothing new for a while and is not broken, so it must not sit in amber for much of the day.
+     * (> 14' red). With an older phone app the age is the last temp-basal enact, not the last loop run: a stable loop
+     * that keeps its temp basal enacts nothing new for a while and is not broken, so it must not sit in amber for much
+     * of the day. With lastLoopRunAt (real run time) a working loop stays at 0..5'.
      */
     fun loopState(ageMinutes: Long?): LoopState = when {
         ageMinutes == null               -> LoopState.UNKNOWN
