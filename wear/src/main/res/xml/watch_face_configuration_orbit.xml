@@ -22,7 +22,7 @@
         android:summary="%s"
         android:title="@string/pref_face_bolus_request_amount" />
 
-    <!-- Orbit only, watch-only keys (strings_face_bolus.xml, BolusRequestPrefs): "fixed" keeps today's double tap that
+    <!-- Shared with Halo and Glass, watch-only keys (strings_face_bolus.xml, BolusRequestPrefs): "fixed" keeps today's double tap that
          sends the amount above; "picker" makes the same double tap open the quick-bolus picker. The shared switch above
          stays the master switch. -->
     <ListPreference

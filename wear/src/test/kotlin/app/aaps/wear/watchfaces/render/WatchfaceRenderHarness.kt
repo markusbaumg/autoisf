@@ -92,7 +92,7 @@ class WatchfaceRenderHarness {
     enum class Face(val id: String) { HALO("halo"), GLASS("glass"), ORBIT("orbit") }
 
     /** Faces whose bolus ball has the "Auswahl" mode (quick-bolus picker). */
-    private val PICKER_FACES = setOf(Face.ORBIT, Face.HALO)
+    private val PICKER_FACES = setOf(Face.ORBIT, Face.HALO, Face.GLASS)
 
     enum class Ball { OFF, IDLE, ARMED, SENT, DISABLED }
 

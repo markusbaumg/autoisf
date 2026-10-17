@@ -18,7 +18,7 @@ object BolusRequestPrefs {
     const val KEY_LAST_SENT_AT = "face_bolus_request_last_sent_at"
     const val DEFAULT_AMOUNT = "0.5"
 
-    /** Orbit's bolus ball mode: "fixed" (default, today's double tap sends) or "picker" (double tap opens the picker). */
+    /** The bolus ball mode (Orbit, Halo, Glass): "fixed" (default, today's double tap sends) or "picker" (double tap opens the picker). */
     const val KEY_MODE = "face_bolus_request_mode"
     const val MODE_FIXED = "fixed"
     const val MODE_PICKER = "picker"

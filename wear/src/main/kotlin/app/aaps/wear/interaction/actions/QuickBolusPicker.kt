@@ -12,7 +12,7 @@ import java.util.Locale
 import kotlin.math.abs
 
 /**
- * State machine of the quick-bolus picker (QuickBolusActivity), opened by Orbit's "+ U" ball in "Auswahl" mode.
+ * State machine of the quick-bolus picker (QuickBolusActivity), opened by the "+ U" ball (Orbit, Halo, Glass) in "Auswahl" mode.
  * Pure logic with an injected clock, unit tested; the activity only draws [screen] and feeds taps and ticks in.
  *
  * - Nothing is preselected and nothing is remembered: every picker starts in [Phase.CHOOSING].

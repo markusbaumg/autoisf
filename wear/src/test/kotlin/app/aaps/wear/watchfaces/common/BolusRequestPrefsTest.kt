@@ -158,25 +158,31 @@ class BolusRequestPrefsTest {
         assertThat(xml).contains("<item>${BolusRequestPrefs.MODE_PICKER}</item>")
     }
 
-    @Test fun pickerFacesOfferTheModeAndTheSwitchWithSafeDefaults() {
-        for (face in PICKER_FACES) {
-            val xml = File("src/main/res/xml/watch_face_configuration_$face.xml").readText()
-            val mode = xml.substringBefore("android:key=\"@string/key_face_bolus_request_mode\"").substringAfterLast("<ListPreference")
-            assertThat(mode).contains("android:defaultValue=\"fixed\"")
-            assertThat(mode).contains("android:dependency=\"@string/key_face_bolus_request_enabled\"")
-            val allow = xml.substringBefore("android:key=\"@string/key_face_bolus_request_allow_1_5\"").substringAfterLast("<CheckBoxPreference")
-            assertThat(allow).contains("android:defaultValue=\"false\"")
-        }
-        // the faces without the picker in this build
-        for (face in listOf("halo", "glass", "orbit") - PICKER_FACES) {
-            val other = File("src/main/res/xml/watch_face_configuration_$face.xml").readText()
-            assertThat(other).doesNotContain("key_face_bolus_request_mode")
-            assertThat(other).doesNotContain("key_face_bolus_request_allow_1_5")
-        }
+    @Test fun orbitOffersTheModeAndTheSwitchWithSafeDefaults() = assertPickerSettings("orbit")
+
+    @Test fun haloOffersTheModeAndTheSwitchWithSafeDefaults() = assertPickerSettings("halo")
+
+    @Test fun glassOffersTheModeAndTheSwitchWithSafeDefaults() = assertPickerSettings("glass")
+
+    @Test fun everyAapsFaceHasThePicker() {
+        assertThat(PICKER_FACES).containsExactly("orbit", "halo", "glass")
+    }
+
+    private fun assertPickerSettings(face: String) {
+        val xml = File("src/main/res/xml/watch_face_configuration_$face.xml").readText()
+        // the shared master switch stays first
+        assertThat(xml.indexOf("key_face_bolus_request_enabled\"")).isAtLeast(0)
+        assertThat(xml.indexOf("key_face_bolus_request_enabled\"")).isLessThan(xml.indexOf("key_face_bolus_request_mode\""))
+        assertThat(xml.indexOf("key_face_bolus_request_mode\"")).isLessThan(xml.indexOf("key_face_bolus_request_allow_1_5\""))
+        val mode = xml.substringBefore("android:key=\"@string/key_face_bolus_request_mode\"").substringAfterLast("<ListPreference")
+        assertThat(mode).contains("android:defaultValue=\"fixed\"")
+        assertThat(mode).contains("android:dependency=\"@string/key_face_bolus_request_enabled\"")
+        val allow = xml.substringBefore("android:key=\"@string/key_face_bolus_request_allow_1_5\"").substringAfterLast("<CheckBoxPreference")
+        assertThat(allow).contains("android:defaultValue=\"false\"")
     }
 
     private companion object {
         /** Faces whose bolus ball has the "Auswahl" mode (quick-bolus picker). */
-        val PICKER_FACES = setOf("orbit", "halo")
+        val PICKER_FACES = setOf("orbit", "halo", "glass")
     }
 }

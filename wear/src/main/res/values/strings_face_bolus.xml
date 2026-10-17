@@ -18,7 +18,7 @@
         <item>1.0</item>
     </string-array>
 
-    <!-- Orbit only: bolus ball mode and the quick-bolus picker (QuickBolusActivity). Watch-only keys, mirrored in
+    <!-- Orbit, Halo and Glass: bolus ball mode and the quick-bolus picker (QuickBolusActivity). Watch-only keys, mirrored in
          BolusRequestPrefs (KEY_MODE, KEY_ALLOW_1_5) and checked by a unit test. -->
     <string name="key_face_bolus_request_mode" translatable="false">face_bolus_request_mode</string>
     <string name="key_face_bolus_request_allow_1_5" translatable="false">face_bolus_request_allow_1_5</string>
