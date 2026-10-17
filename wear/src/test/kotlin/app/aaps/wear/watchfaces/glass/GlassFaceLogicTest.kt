@@ -999,7 +999,8 @@ class GlassFaceLogicTest {
         val (ulo, uhi) = GlassFaceLogic.sparkRange(mg(2.6), mg(7.0), nowMgdl = mg(2.6), keepMaxMgdl = mg(3.9))
         assertThat(GlassFaceLogic.sparkY(mg(2.6), ulo, uhi) - GlassFaceLogic.sparkYRaw(low, ulo, uhi)).isAtLeast(10f)
         // a low after a meal peak 2 h ago (180 / 250 then down to 61 / 47 / 39 mg/dL now, the last 30 min at most 100):
-        // same fixed window, same distances; the old peak is clamped (drawn faded with a chevron)
+        // same fixed window, same distances; the old peak is clamped (drawn as off-scale chevrons; round 8: far beyond
+        // the tolerance, so not included)
         for (peak in listOf(180.0, 250.0)) {
             val (plo, phi) = GlassFaceLogic.sparkRange(39.0, peak, nowMgdl = 39.0, keepMaxMgdl = 100.0)
             assertThat(plo to phi).isEqualTo(lo to hi)
@@ -1015,19 +1016,33 @@ class GlassFaceLogicTest {
     }
 
     /**
+     * Glass polish round 7: a clamped run is a row of up-chevrons, at least one, as many as fit at the pitch.
+     * Glass polish round 8: a 28 px pitch (the gap wider than the 10 px chevron) and at most 5 per run, spread over it.
+     */
+    @Test fun offChevronCount() {
+        assertThat(GlassFaceLogic.offChevronCount(2f, 10f, 28f)).isEqualTo(1)   // a lone point off the top
+        assertThat(GlassFaceLogic.offChevronCount(10f, 10f, 28f)).isEqualTo(1)
+        assertThat(GlassFaceLogic.offChevronCount(37f, 10f, 28f)).isEqualTo(1)
+        assertThat(GlassFaceLogic.offChevronCount(38f, 10f, 28f)).isEqualTo(2)
+        assertThat(GlassFaceLogic.offChevronCount(94f, 10f, 28f)).isEqualTo(4)
+        assertThat(GlassFaceLogic.offChevronCount(200f, 10f, 28f)).isEqualTo(5) // capped (7 would fit)
+        assertThat(GlassFaceLogic.offChevronCount(200f, 10f, 28f, maxCount = 3)).isEqualTo(3)
+        assertThat(GlassFaceLogic.offChevronCount(200f, 10f, 28f, maxCount = 0)).isEqualTo(1) // never none
+        // the step: the pitch while uncapped, spread over the run when capped; the gap is always >= the chevron width
+        assertThat(GlassFaceLogic.offChevronStep(94f, 10f, 28f, 4)).isEqualTo(28f)
+        assertThat(GlassFaceLogic.offChevronStep(200f, 10f, 28f, 5)).isWithin(0.01f).of(47.5f)
+        for (w in listOf(38f, 60f, 120f, 200f, 300f)) {
+            val n = GlassFaceLogic.offChevronCount(w, 10f, 28f)
+            assertThat(GlassFaceLogic.offChevronStep(w, 10f, 28f, n) - 10f).isAtLeast(10f)
+            assertThat((n - 1) * GlassFaceLogic.offChevronStep(w, 10f, 28f, n) + 10f).isAtMost(w + 0.01f) // inside the run
+        }
+    }
+
+    /**
      * Glass polish round 6 (safety, strict panel): a rebound high after a low (ball_tt_very_high: 2,2 an hour ago,
      * 22,2 now) was drawn as a flat green line at the plot top. Now the top covers the current reading, the high edge
      * is drawn and the current dot is never clamped.
      */
-    /** Glass polish round 7: a clamped run is a row of up-chevrons, at least one, as many as fit at the pitch. */
-    @Test fun offChevronCount() {
-        assertThat(GlassFaceLogic.offChevronCount(2f, 10f, 15f)).isEqualTo(1)   // a lone point off the top
-        assertThat(GlassFaceLogic.offChevronCount(10f, 10f, 15f)).isEqualTo(1)
-        assertThat(GlassFaceLogic.offChevronCount(24f, 10f, 15f)).isEqualTo(1)
-        assertThat(GlassFaceLogic.offChevronCount(25f, 10f, 15f)).isEqualTo(2)
-        assertThat(GlassFaceLogic.offChevronCount(200f, 10f, 15f)).isEqualTo(13) // 13 marks span 190 px
-    }
-
     @Test
     fun sparkReboundHighIsNeverClamped() {
         val low = GlassFaceLogic.DEFAULT_LOW_MGDL
@@ -1065,6 +1080,33 @@ class GlassFaceLogicTest {
         // and a high reading with a forecast dip: also nothing clamped
         val (hlo, hhi) = GlassFaceLogic.sparkRange(65.0, 260.0, nowMgdl = 250.0, keepMaxMgdl = 260.0)
         assertThat(hlo to hhi).isEqualTo(40.0 to 260.0)
+    }
+
+    /**
+     * Glass polish round 8: a trivial overshoot (urgent_low: 7,0 = 126 mg/dL an hour ago against a 120 top) is not
+     * "far off the scale": the top rises to include it while 3,5 / 2,6 / 2,2 keep 3 / 10 / 15 px under the low edge.
+     * A larger overshoot is still clamped (the round-5 meal-peak case).
+     */
+    @Test
+    fun sparkSmallOvershootIsIncludedWhenTheHypoSpacingHolds() {
+        val low = GlassFaceLogic.DEFAULT_LOW_MGDL
+        val (lo, hi) = GlassFaceLogic.sparkRange(47.0, 126.0, nowMgdl = 47.0, keepMaxMgdl = 70.0)
+        assertThat(lo).isEqualTo(40.0)
+        assertThat(hi).isWithin(0.01).of(126.0)
+        // no off-scale run
+        val xs = floatArrayOf(0f, 10f, 20f, 30f)
+        assertThat(GlassFaceLogic.offScaleRuns(xs, doubleArrayOf(110.0, 126.0, 90.0, 47.0), 4, hi, FloatArray(9))).isEqualTo(0)
+        val edge = GlassFaceLogic.sparkYRaw(low, lo, hi)
+        assertThat(GlassFaceLogic.sparkY(63.0, lo, hi) - edge).isAtLeast(3f)
+        assertThat(GlassFaceLogic.sparkY(47.0, lo, hi) - edge).isAtLeast(10f)
+        assertThat(GlassFaceLogic.sparkY(39.0, lo, hi) - edge).isAtLeast(15f)
+        assertThat(GlassFaceLogic.hypoSeparationsHold(lo, hi, low)).isTrue()
+        // the base window holds the spacing; a 135 top (within the tolerance) would not, so 135 is clamped
+        assertThat(GlassFaceLogic.hypoSeparationsHold(40.0, 120.0, low)).isTrue()
+        assertThat(GlassFaceLogic.hypoSeparationsHold(40.0, 135.0, low)).isFalse()
+        assertThat(GlassFaceLogic.sparkRange(47.0, 135.0, nowMgdl = 47.0, keepMaxMgdl = 70.0)).isEqualTo(40.0 to 120.0)
+        // beyond the tolerance: clamped as before
+        assertThat(GlassFaceLogic.sparkRange(47.0, 180.0, nowMgdl = 47.0, keepMaxMgdl = 70.0)).isEqualTo(40.0 to 120.0)
     }
 
     /** Glass polish round 6: only OLDER history is clamped; its runs are found with linear crossings. */

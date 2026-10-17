@@ -1136,8 +1136,12 @@ class GlassWatchface : WatchFace() {
         )
         if (predDotCount > 0) {
             fill.reset(); fill.isAntiAlias = true
-            fill.color = withAlpha(PRED_COL, PRED_ALPHA)
-            for (i in 0 until predDotCount) canvas.drawCircle(predDotXY[2 * i], predDotXY[2 * i + 1], PRED_DOT / 2f, fill)
+            // Glass polish round 8: dots under the low edge in the low colour (a predicted hypo is hard to miss)
+            for (i in 0 until predDotCount) {
+                val y = predDotXY[2 * i + 1]
+                fill.color = withAlpha(if (lowEdge && y > lowY + 0.5f) LOW_COL else PRED_COL, PRED_ALPHA)
+                canvas.drawCircle(predDotXY[2 * i], y, PRED_DOT / 2f, fill)
+            }
         }
         if (hasHistory) {
             line.reset(); line.isAntiAlias = true; line.style = Paint.Style.STROKE
@@ -1148,7 +1152,7 @@ class GlassWatchface : WatchFace() {
             line.shader = null
             line.clearShadowLayer()
             // Glass polish round 6: clamped older history faded in the colour of its real value, with an up-chevron
-            drawOffScale(canvas, aa = true) { peak ->
+            drawOffScale(canvas, aa = true, stroke = OFF_CHEVRON_STROKE) { peak ->
                 withAlpha(if (stale) STALE_COL else if (peak > highMgdl) HIGH_COL else IN_COL, OFF_SCALE_ALPHA)
             }
         }
@@ -1348,27 +1352,35 @@ class GlassWatchface : WatchFace() {
      * a line at all: the trace stops where it leaves the plot and the run is a row of up-chevrons ([OFF_CHEVRON_W] x
      * [OFF_CHEVRON_H] px, 2 px stroke, every [OFF_CHEVRON_PITCH] px) in [colourOf] (the colour of its REAL peak): "off
      * the scale, higher than shown". Clipped to the plot.
+     * Glass polish round 8 (strict panel): the 15 px pitch left a 5 px gap, so a run read as a zigzag ('^^^^^', a noisy
+     * signal) and in ambient 13 marks at 2 px outweighed the 1.5 px trace. Now every [OFF_CHEVRON_PITCH] px at least
+     * (the gap is wider than a chevron), at most [GlassFaceLogic.OFF_CHEVRON_MAX] per run spread over it, with a
+     * [stroke] no heavier than the trace in ambient and low-bit, and about 43 % alpha in interactive.
      */
-    private fun drawOffScale(canvas: Canvas, aa: Boolean, colourOf: (Float) -> Int) {
+    private fun drawOffScale(canvas: Canvas, aa: Boolean, stroke: Float, colourOf: (Float) -> Int) {
         if (offCount == 0) return
         val top = GlassFaceLogic.SPARK_Y0 + GlassFaceLogic.SPARK_INSET
         val save = canvas.save()
         canvas.clipRect(sparkX0, GlassFaceLogic.SPARK_Y0, sparkEndX, GlassFaceLogic.SPARK_Y1)
         line.reset(); line.isAntiAlias = aa; line.style = Paint.Style.STROKE
         line.strokeCap = if (aa) Paint.Cap.ROUND else Paint.Cap.SQUARE; line.strokeJoin = Paint.Join.MITER
-        line.strokeWidth = OFF_CHEVRON_STROKE
+        line.strokeWidth = stroke
         // apex 3 px over the clamped level, base 3 px under it: the row sits where the trace left the plot
         val apex = top - OFF_CHEVRON_H / 2f
         val base = top + OFF_CHEVRON_H / 2f
         for (i in 0 until offCount) {
-            val x0 = offRuns[3 * i]
-            val x1 = offRuns[3 * i + 1]
+            // the visible part of the run (a run that starts before the plot is marked where it can be seen)
+            var x0 = max(offRuns[3 * i], sparkX0)
+            var x1 = max(x0, min(offRuns[3 * i + 1], sparkEndX))
+            // round 8: the row keeps clear of the points where the trace leaves and re-enters the plot
+            if (x1 - x0 >= OFF_CHEVRON_W + 2f * OFF_CHEVRON_END_GAP) { x0 += OFF_CHEVRON_END_GAP; x1 -= OFF_CHEVRON_END_GAP }
             line.color = colourOf(offRuns[3 * i + 2])
             val n = GlassFaceLogic.offChevronCount(x1 - x0, OFF_CHEVRON_W, OFF_CHEVRON_PITCH)
-            val first = (x0 + x1) / 2f - (n - 1) * OFF_CHEVRON_PITCH / 2f
+            val step = GlassFaceLogic.offChevronStep(x1 - x0, OFF_CHEVRON_W, OFF_CHEVRON_PITCH, n)
+            val first = (x0 + x1) / 2f - (n - 1) * step / 2f
             chevron.rewind()
             for (k in 0 until n) {
-                val cx = first + k * OFF_CHEVRON_PITCH
+                val cx = first + k * step
                 chevron.moveTo(cx - OFF_CHEVRON_W / 2f, base)
                 chevron.lineTo(cx, apex)
                 chevron.lineTo(cx + OFF_CHEVRON_W / 2f, base)
@@ -1638,7 +1650,8 @@ class GlassWatchface : WatchFace() {
             drawTrace(canvas, line)
             // Glass polish round 7: clamped older history as a row of up-chevrons in the trace's grey (A_LINE was the low
             // edge's grey: the two read as one pair of rules); low-bit: white, full alpha, no AA
-            drawOffScale(canvas, aa = aa) { c(A_HIST) }
+            // Glass polish round 8: no heavier than the trace (1.5 px; low-bit 1 px), at most OFF_CHEVRON_MAX per run
+            drawOffScale(canvas, aa = aa, stroke = if (lowBit) OFF_CHEVRON_STROKE_LOWBIT else OFF_CHEVRON_STROKE_AMBIENT) { c(A_HIST) }
         }
         if (hasCurrent) {
             fill.reset(); fill.isAntiAlias = aa; fill.color = Color.BLACK
@@ -2031,7 +2044,8 @@ class GlassWatchface : WatchFace() {
         // Glass polish round 3: back to 24 / 30, the word that stands in for colour does not shrink in a layout pass
         private const val CAPTION_SIZE = 24f
         private const val CAPTION_H = 26f // Glass polish round 6: 30 -> 26 (the word stays 24 px), 12 px to the card's bottom
-        private const val CAPTION_H_AMBIENT_BADGE = 30f
+        // Glass polish round 8: 30 -> 28, 10 px from the outer stroke to the card's inner stroke edge
+        private const val CAPTION_H_AMBIENT_BADGE = 28f
         private const val CAPTION_PAD = 10f
         private const val CAPTION_GAP = 12f
         // UX round 4: chip r 18 -> 24 and a 30 px arrow with a 3.4 px stroke (the double arrow reads at arm's length)
@@ -2107,12 +2121,17 @@ class GlassWatchface : WatchFace() {
         /**
          * Glass polish round 7: clamped older history is a row of up-chevrons, 10 x 6 px with a 2 px stroke (the round-6
          * 7 x 3 px mark was about 0.5 mm on the wrist) every 15 px, at about 60 % in the real colour (full white in low-bit).
+         * Glass polish round 8: every 28 px at least (an 18 px gap, wider than the chevron), at most 5 per run, about
+         * 43 % in interactive (quieter than the 100 % trace); 1.5 px in ambient and 1 px in low-bit (the trace's weight).
          */
-        private const val OFF_SCALE_ALPHA = 153
+        private const val OFF_SCALE_ALPHA = 110
         private const val OFF_CHEVRON_W = 10f
         private const val OFF_CHEVRON_H = 6f
         private const val OFF_CHEVRON_STROKE = 2f
-        private const val OFF_CHEVRON_PITCH = 15f
+        private const val OFF_CHEVRON_STROKE_AMBIENT = 1.5f
+        private const val OFF_CHEVRON_STROKE_LOWBIT = 1f
+        private const val OFF_CHEVRON_PITCH = 28f
+        private const val OFF_CHEVRON_END_GAP = 6f
         private const val OFF_CLIP = 12f
         /** In-range digits (Glass/Orbit UX round 2): a pale mint, the family's green at Glass's calmer strength. */
         private val IN_DIGIT_COL = 0xFFCFF5E4.toInt()

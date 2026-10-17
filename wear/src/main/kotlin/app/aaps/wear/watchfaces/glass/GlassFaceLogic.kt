@@ -607,8 +607,17 @@ object GlassFaceLogic {
      * [SPARK_KEEP_MARGIN_MGDL]; only OLDER history may be clamped, and only while the current reading itself is below
      * the low line (the round-5 case: a low NOW after a meal peak 2 h ago). With the current reading in range or high
      * the top covers every visible value and the high line + margin (both band edges inside, as in range).
+     * Glass polish round 8: a trivial overshoot no longer gets the off-scale treatment (urgent_low: a 126 mg/dL peak
+     * against a 120 top was a row of chevrons saying "far off the scale"). When the older peak is at most
+     * [SPARK_OFF_TOLERANCE_MGDL] over the hypo top, the top rises to include it, but only while [hypoSeparationsHold]
+     * (3,5 / 2,6 / 2,2 at least 3 / 10 / 15 px under the low edge). With the default band that allows about 8 mg/dL
+     * (2,2 reaches 15 px at a top of about 128); a larger overshoot is clamped as before.
      */
     const val SPARK_BAND_MARGIN_MGDL = 15.0
+    const val SPARK_OFF_TOLERANCE_MGDL = 18.0
+    private const val SEP_35_MGDL = 63.0
+    private const val SEP_26_MGDL = 47.0
+    private const val SEP_22_MGDL = 40.0
     const val SPARK_KEEP_MARGIN_MGDL = 10.0
     const val SPARK_KEEP_MS = 30 * MINUTE_MS
     const val SPARK_HYPO_LOW_HEADROOM_MGDL = 50.0
@@ -635,7 +644,11 @@ object GlassFaceLogic {
                 // low NOW: the top is the low line + headroom, so an older peak (e.g. a meal 2 h ago) cannot squeeze the
                 // low values together; it rises only for what must stay true (now, the last 30 min, the forecast)
                 val keep = if (keepMaxMgdl.isNaN()) maxMgdl else keepMaxMgdl
-                max(lowMgdl + SPARK_HYPO_LOW_HEADROOM_MGDL, keep + SPARK_KEEP_MARGIN_MGDL)
+                val top = max(lowMgdl + SPARK_HYPO_LOW_HEADROOM_MGDL, keep + SPARK_KEEP_MARGIN_MGDL)
+                // round 8: an older peak only just over the top is included when the hypo spacing still holds
+                if (maxMgdl > top && maxMgdl <= top + SPARK_OFF_TOLERANCE_MGDL &&
+                    hypoSeparationsHold(SPARK_FLOOR_MGDL, maxMgdl.coerceAtMost(SPARK_CEIL_MGDL), lowMgdl)) maxMgdl
+                else top
             } else {
                 // in range or high now (a rebound, or only the history / the forecast dips): nothing is clamped and the
                 // high line stays inside the plot
@@ -653,6 +666,17 @@ object GlassFaceLogic {
             if (hi > SPARK_CEIL_MGDL) { lo -= hi - SPARK_CEIL_MGDL; hi = SPARK_CEIL_MGDL }
         }
         return lo to hi
+    }
+
+    /**
+     * Glass polish round 8: on the plot [lo]..[hi], 3,5 / 2,6 / 2,2 mmol/l sit at least 3 / 10 / 15 px under the low
+     * edge [lowMgdl] (the round-5 hypo spacing).
+     */
+    fun hypoSeparationsHold(lo: Double, hi: Double, lowMgdl: Double): Boolean {
+        val edge = sparkYRaw(lowMgdl, lo, hi)
+        return sparkY(SEP_35_MGDL, lo, hi) - edge >= 3f &&
+            sparkY(SEP_26_MGDL, lo, hi) - edge >= 10f &&
+            sparkY(SEP_22_MGDL, lo, hi) - edge >= 15f
     }
 
     /**
@@ -682,9 +706,18 @@ object GlassFaceLogic {
     /**
      * Glass polish round 7: how many up-chevrons ([width] px wide, every [pitch] px) mark a clamped run [runWidth] px
      * long: as many as fit, and always at least one (a short excursion off the top is still marked).
+     * Glass polish round 8: at most [maxCount] (13 marks at a 15 px pitch read as a sawtooth, a noisy signal, and in
+     * ambient were the heaviest ink in the plot); the caller spreads a capped row over the run ([offChevronStep]).
      */
-    fun offChevronCount(runWidth: Float, width: Float, pitch: Float): Int =
-        if (runWidth <= width || pitch <= 0f) 1 else ((runWidth - width) / pitch).toInt() + 1
+    fun offChevronCount(runWidth: Float, width: Float, pitch: Float, maxCount: Int = OFF_CHEVRON_MAX): Int =
+        (if (runWidth <= width || pitch <= 0f) 1 else ((runWidth - width) / pitch).toInt() + 1).coerceIn(1, max(1, maxCount))
+
+    /** Glass polish round 8: centre-to-centre step of [count] chevrons over a run: [pitch], wider for a capped row. */
+    fun offChevronStep(runWidth: Float, width: Float, pitch: Float, count: Int): Float =
+        if (count <= 1) pitch else max(pitch, (runWidth - width) / (count - 1))
+
+    /** Glass polish round 8: at most this many off-scale chevrons per clamped run. */
+    const val OFF_CHEVRON_MAX = 5
 
     /**
      * x of slot [slot] (fractional), "now" is slot 35; with [forecast] the [SPARK_FORECAST] future slots follow up to
