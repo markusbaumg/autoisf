@@ -1,5 +1,6 @@
 package app.aaps.ui.widget
 
+import app.aaps.core.data.model.TrendArrow
 import app.aaps.ui.widget.WidgetLogic.BgRange
 import app.aaps.ui.widget.WidgetLogic.Block
 import app.aaps.ui.widget.WidgetLogic.BolusInput
@@ -170,14 +171,48 @@ class WidgetLogicTest {
 
     @Test
     fun `glass tint alpha keeps a floor and reaches full`() {
-        assertThat(WidgetLogic.glassTintAlpha(0)).isEqualTo(133)
+        // floor 36 %: 30 % at the top of the 85 % -> 100 % drawable
+        assertThat(WidgetLogic.glassTintAlpha(0)).isEqualTo(92)
         assertThat(WidgetLogic.glassTintAlpha(255)).isEqualTo(255)
-        assertThat(WidgetLogic.glassTintAlpha(-5)).isEqualTo(133)
-        // default setting = recipe "smoke": 44 % at the top of the 78 % -> 100 % drawable
-        assertThat(WidgetLogic.glassTintAlpha(25)).isEqualTo(145)
+        assertThat(WidgetLogic.glassTintAlpha(-5)).isEqualTo(92)
+        assertThat(WidgetLogic.glassTintAlpha(300)).isEqualTo(255)
+        // default setting: lighter than R2 (145), more wallpaper shows through
+        assertThat(WidgetLogic.glassTintAlpha(25)).isEqualTo(108)
         // bright wallpaper: at least "dense"
-        assertThat(WidgetLogic.glassTintAlpha(0, brightWallpaper = true)).isEqualTo(204)
-        assertThat(WidgetLogic.glassTintAlpha(25, brightWallpaper = true)).isEqualTo(204)
+        assertThat(WidgetLogic.glassTintAlpha(0, brightWallpaper = true)).isEqualTo(184)
+        assertThat(WidgetLogic.glassTintAlpha(25, brightWallpaper = true)).isEqualTo(184)
         assertThat(WidgetLogic.glassTintAlpha(255, brightWallpaper = true)).isEqualTo(255)
+    }
+
+    @Test
+    fun `glass tint percent shown at the slider`() {
+        assertThat(WidgetLogic.glassTintPercent(0)).isEqualTo(36)
+        assertThat(WidgetLogic.glassTintPercent(25)).isEqualTo(42)
+        assertThat(WidgetLogic.glassTintPercent(128)).isEqualTo(68)
+        assertThat(WidgetLogic.glassTintPercent(255)).isEqualTo(100)
+    }
+
+    @Test
+    fun `trend arrow uses the calculated arrow and falls back to the glucose value`() {
+        // calculated (overview) arrow wins
+        assertThat(WidgetLogic.trendArrow(TrendArrow.FLAT, TrendArrow.FORTY_FIVE_DOWN)).isEqualTo(TrendArrow.FLAT)
+        // no bucketed data yet: arrow of the newest glucose value (the 4,6 FORTY_FIVE_DOWN case)
+        assertThat(WidgetLogic.trendArrow(null, TrendArrow.FORTY_FIVE_DOWN)).isEqualTo(TrendArrow.FORTY_FIVE_DOWN)
+        assertThat(WidgetLogic.trendArrow(TrendArrow.NONE, TrendArrow.FORTY_FIVE_DOWN)).isEqualTo(TrendArrow.FORTY_FIVE_DOWN)
+        assertThat(WidgetLogic.trendArrow(TrendArrow.TRIPLE_UP, TrendArrow.DOUBLE_UP)).isEqualTo(TrendArrow.DOUBLE_UP)
+        // nothing usable
+        assertThat(WidgetLogic.trendArrow(null, null)).isNull()
+        assertThat(WidgetLogic.trendArrow(TrendArrow.NONE, TrendArrow.NONE)).isNull()
+    }
+
+    @Test
+    fun `every real trend has a widget arrow icon`() {
+        val shown = TrendArrow.entries.filter { WidgetLogic.arrowIcon(it) != null }
+        assertThat(shown).containsExactly(
+            TrendArrow.DOUBLE_DOWN, TrendArrow.SINGLE_DOWN, TrendArrow.FORTY_FIVE_DOWN, TrendArrow.FLAT,
+            TrendArrow.FORTY_FIVE_UP, TrendArrow.SINGLE_UP, TrendArrow.DOUBLE_UP
+        )
+        assertThat(WidgetLogic.arrowIcon(TrendArrow.FORTY_FIVE_DOWN)).isEqualTo(app.aaps.ui.R.drawable.widget_arrow_forty_five_down)
+        assertThat(shown.map { WidgetLogic.arrowIcon(it) }.toSet()).hasSize(7)
     }
 }

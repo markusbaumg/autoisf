@@ -1,6 +1,8 @@
 package app.aaps.ui.widget
 
 import app.aaps.core.data.configuration.Constants
+import app.aaps.core.data.model.TrendArrow
+import app.aaps.ui.R
 import java.util.Locale
 import kotlin.math.abs
 
@@ -108,18 +110,50 @@ object WidgetLogic {
     fun amountText(u: Double): String =
         if (abs(u * 10 - Math.round(u * 10)) < 0.001) decimal(u, 1) else decimal(u, 2)
 
+    /** Lightest tint the slider allows: widget_glass_tint.xml top 85 % x 0.36 = 30 %, the recipe's hard floor */
+    const val TINT_FLOOR = 0.36
+
+    /** On a bright wallpaper the tint never goes below this, otherwise the secondary labels lose their contrast */
+    private const val DENSE_TINT = 0.72
+
     /**
-     * Alpha (0..255) of the glass smoke tint for the WidgetOpacity setting (0..255).
-     * widget_glass_tint.xml runs 78 % -> 100 %, so the default setting (25) gives the recipe's "smoke" 44 % -> 56 %.
-     * Never below 0.52 (top 41 %), the recipe's hard floor is 30 %. On a bright wallpaper the recipe's "dense" tier
-     * (66 % -> 76 %) is the minimum, otherwise the secondary labels lose their contrast.
+     * Strength (0..1) of the glass smoke tint for the WidgetOpacity setting (0..255), linear from [TINT_FLOOR] to 1.
+     * widget_glass_tint.xml runs 85 % -> 100 %, so the default setting (25) gives a light smoke of 36 % -> 42 %
+     * (R2 had 44 % -> 56 %): more wallpaper shows through, the text shadows keep the contrast.
      */
-    fun glassTintAlpha(opacity: Int, brightWallpaper: Boolean = false): Int {
-        val fraction = 0.52 + 0.48 * opacity.coerceIn(0, 255) / 255.0
-        return Math.round((if (brightWallpaper) maxOf(fraction, DENSE_TINT) else fraction) * 255).toInt()
+    fun glassTintFraction(opacity: Int, brightWallpaper: Boolean = false): Double {
+        val fraction = TINT_FLOOR + (1.0 - TINT_FLOOR) * opacity.coerceIn(0, 255) / 255.0
+        return if (brightWallpaper) maxOf(fraction, DENSE_TINT) else fraction
     }
 
-    private const val DENSE_TINT = 0.80
+    /** Alpha (0..255) for setImageAlpha of the tint layer */
+    fun glassTintAlpha(opacity: Int, brightWallpaper: Boolean = false): Int =
+        Math.round(glassTintFraction(opacity, brightWallpaper) * 255).toInt()
+
+    /** Tint strength shown next to the configuration slider, "42 %" */
+    fun glassTintPercent(opacity: Int): Int = Math.round(glassTintFraction(opacity) * 100).toInt()
+
+    // ---------------------------------------------------------------- trend arrow
+
+    /**
+     * Arrow to show: the one the overview shows (TrendCalculator on the bucketed data), or, while that is not
+     * available (no bucketed data yet, NONE), the arrow delivered with the newest glucose value.
+     * null = no arrow. TRIPLE_* / NONE have no arrow icon (the overview shows its "invalid" icon there).
+     */
+    fun trendArrow(calculated: TrendArrow?, lastBgArrow: TrendArrow?): TrendArrow? =
+        listOf(calculated, lastBgArrow).firstOrNull { it != null && arrowIcon(it) != null }
+
+    /** Widget arrow drawables: white fill, tinted in Widget.kt (the core icons use a theme attribute the launcher cannot resolve) */
+    fun arrowIcon(arrow: TrendArrow): Int? = when (arrow) {
+        TrendArrow.DOUBLE_DOWN     -> R.drawable.widget_arrow_double_down
+        TrendArrow.SINGLE_DOWN     -> R.drawable.widget_arrow_single_down
+        TrendArrow.FORTY_FIVE_DOWN -> R.drawable.widget_arrow_forty_five_down
+        TrendArrow.FLAT            -> R.drawable.widget_arrow_flat
+        TrendArrow.FORTY_FIVE_UP   -> R.drawable.widget_arrow_forty_five_up
+        TrendArrow.SINGLE_UP       -> R.drawable.widget_arrow_single_up
+        TrendArrow.DOUBLE_UP       -> R.drawable.widget_arrow_double_up
+        TrendArrow.TRIPLE_DOWN, TrendArrow.TRIPLE_UP, TrendArrow.NONE -> null
+    }
 
     fun centiUnitsToUnits(cu: Int): Double = cu / 100.0
 

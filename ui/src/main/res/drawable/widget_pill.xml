@@ -6,11 +6,11 @@
             <corners android:radius="15dp" />
             <gradient
                 android:angle="270"
-                android:endColor="#14FFFFFF"
-                android:startColor="#22FFFFFF" />
+                android:endColor="#1AFFFFFF"
+                android:startColor="#2EFFFFFF" />
             <stroke
                 android:width="1dp"
-                android:color="#1AFFFFFF" />
+                android:color="#21FFFFFF" />
         </shape>
     </item>
     <!-- brighter top: the rim again, clipped to the upper half (Widget.kt sets the level) -->
@@ -23,7 +23,7 @@
                 <solid android:color="@android:color/transparent" />
                 <stroke
                     android:width="1dp"
-                    android:color="#33FFFFFF" />
+                    android:color="#4DFFFFFF" />
             </shape>
         </clip>
     </item>

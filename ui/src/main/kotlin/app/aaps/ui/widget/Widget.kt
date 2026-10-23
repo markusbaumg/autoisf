@@ -36,7 +36,6 @@ import app.aaps.core.interfaces.utils.TrendCalculator
 import app.aaps.core.keys.BooleanComposedKey
 import app.aaps.core.keys.IntComposedKey
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.objects.extensions.directionToIcon
 import app.aaps.core.objects.extensions.round
 import app.aaps.ui.R
 import app.aaps.ui.widget.WidgetLogic.BgRange
@@ -87,8 +86,12 @@ class Widget : AppWidgetProvider() {
 
     private val intentAction = "OpenApp"
 
+    /** Application context for the widget texts, see [gs] */
+    private lateinit var appContext: Context
+
     override fun onReceive(context: Context, intent: Intent?) {
         (context.applicationContext as HasAndroidInjector).androidInjector().inject(this)
+        appContext = context.applicationContext
         aapsLogger.debug(LTag.WIDGET, "onReceive ${intent?.extras?.getString("from")}")
         super.onReceive(context, intent)
     }
@@ -108,6 +111,12 @@ class Widget : AppWidgetProvider() {
     }
 
     private fun color(id: Int) = rh.gc(id)
+
+    /**
+     * Widget texts in the system language, like the labels the launcher resolves from widget_layout.xml ("KH", "7 T").
+     * rh.gs() follows the AAPS language setting instead, which mixed English ("Target", "now") into a German widget.
+     */
+    private fun gs(id: Int, vararg args: Any?): String = appContext.getString(id, *args)
 
     /** Glass recipe "auto tier": a wallpaper that supports dark text is bright and needs the denser tint. No permission needed. */
     private fun brightWallpaper(context: Context): Boolean =
@@ -131,7 +140,7 @@ class Widget : AppWidgetProvider() {
 
         // Glass: the opacity setting scales the smoke tint, "use black" turns it into dark glass
         // Rim: the bright top layer of the film / pills is a <clip>; levels are 0..10000 of the height
-        views.setInt(R.id.glass_film, "setImageLevel", 2500)
+        views.setInt(R.id.glass_film, "setImageLevel", 3500)
         views.setInt(R.id.bolus1_bg, "setImageLevel", 5000)
         views.setInt(R.id.bolus2_bg, "setImageLevel", 5000)
         views.setImageViewResource(R.id.glass_tint, if (useBlack) R.drawable.widget_glass_tint_black else R.drawable.widget_glass_tint)
@@ -149,7 +158,7 @@ class Widget : AppWidgetProvider() {
                 val bg = lastBgData.lastBg()
                 val range = WidgetLogic.bgRange(bg?.recalculated, bg?.timestamp, now)
                 updateHeader(views, now)
-                updateBg(views, range, bg?.recalculated, bg?.timestamp, now)
+                updateBg(views, range, bg?.recalculated, bg?.timestamp, bg?.trendArrow, now)
                 updateTir(views, range)
                 updateBottom(views, range)
                 updateBolusButtons(context, views, appWidgetId, bg?.recalculated, bg?.timestamp, now)
@@ -166,7 +175,7 @@ class Widget : AppWidgetProvider() {
         val targetMgdl = persistenceLayer.getTemporaryTargetActiveAt(now)?.let { (it.lowTarget + it.highTarget) / 2.0 }
             ?: profileFunction.getProfile()?.getTargetMgdl()
         if (targetMgdl != null) {
-            views.setTextViewText(R.id.target, rh.gs(R.string.widget_target, WidgetLogic.glucose(targetMgdl, isMmol())))
+            views.setTextViewText(R.id.target, gs(R.string.widget_target, WidgetLogic.glucose(targetMgdl, isMmol())))
             views.setViewVisibility(R.id.target, View.VISIBLE)
         } else views.setViewVisibility(R.id.target, View.GONE)
     }
@@ -180,14 +189,17 @@ class Widget : AppWidgetProvider() {
         }
     )
 
-    private fun updateBg(views: RemoteViews, range: BgRange, bgMgdl: Double?, bgTimestamp: Long?, now: Long) {
+    private fun updateBg(views: RemoteViews, range: BgRange, bgMgdl: Double?, bgTimestamp: Long?, lastBgArrow: TrendArrow?, now: Long) {
         val col = rangeColor(range)
-        views.setTextViewText(R.id.bg, bgMgdl?.let { WidgetLogic.glucose(it, isMmol()) } ?: rh.gs(app.aaps.core.ui.R.string.value_unavailable_short))
+        views.setTextViewText(R.id.bg, bgMgdl?.let { WidgetLogic.glucose(it, isMmol()) } ?: gs(app.aaps.core.ui.R.string.value_unavailable_short))
         views.setTextColor(R.id.bg, col)
 
-        val arrow = if (range == BgRange.STALE || range == BgRange.NONE) null else trendCalculator.getTrendArrow(iobCobCalculator.ads)?.takeIf { it != TrendArrow.NONE }
-        if (arrow != null) {
-            views.setImageViewResource(R.id.arrow, arrow.directionToIcon())
+        // Same arrow as the overview; the newest glucose value's own arrow while the bucketed data is not there yet
+        val arrow = if (range == BgRange.STALE || range == BgRange.NONE) null
+        else WidgetLogic.trendArrow(trendCalculator.getTrendArrow(iobCobCalculator.ads), lastBgArrow)
+        val arrowIcon = arrow?.let { WidgetLogic.arrowIcon(it) }
+        if (arrowIcon != null) {
+            views.setImageViewResource(R.id.arrow, arrowIcon)
             views.setInt(R.id.arrow, "setColorFilter", col)
             views.setViewVisibility(R.id.arrow, View.VISIBLE)
         } else views.setViewVisibility(R.id.arrow, View.GONE)
@@ -196,9 +208,9 @@ class Widget : AppWidgetProvider() {
         views.setTextViewText(
             R.id.age, when {
                 age == null -> ""
-                age < 1     -> rh.gs(R.string.widget_age_now)
-                age < 60    -> rh.gs(R.string.widget_age_min, age.toInt())
-                else        -> rh.gs(R.string.widget_age_hours, (age / 60).toInt())
+                age < 1     -> gs(R.string.widget_age_now)
+                age < 60    -> gs(R.string.widget_age_min, age.toInt())
+                else        -> gs(R.string.widget_age_hours, (age / 60).toInt())
             }
         )
         views.setTextColor(R.id.age, color(if (range == BgRange.STALE) R.color.widget_glass_high else R.color.widget_glass_txt2))
@@ -227,25 +239,25 @@ class Widget : AppWidgetProvider() {
             views.setInt(meterFills[i], "setColorFilter", fillColor)
             views.setInt(meterFills[i], "setImageAlpha", if (stale) 150 else 255)
             views.setInt(meterFills[i], "setImageLevel", (pct ?: 0).coerceIn(0, 100) * 100)
-            views.setTextViewText(meterTexts[i], withUnit(pct?.toString() ?: rh.gs(app.aaps.core.ui.R.string.value_unavailable_short), "%", 0.76f))
+            views.setTextViewText(meterTexts[i], withUnit(pct?.toString() ?: gs(app.aaps.core.ui.R.string.value_unavailable_short), "%", 0.76f))
             views.setTextColor(meterTexts[i], color(if (stale) R.color.widget_glass_txt2 else R.color.widget_glass_txt1))
-            views.setContentDescription(meterTexts[i], rh.gs(R.string.widget_tir_description, rh.gs(labels[i]), pct?.let { "$it %" } ?: "--"))
+            views.setContentDescription(meterTexts[i], gs(R.string.widget_tir_description, gs(labels[i]), pct?.let { "$it %" } ?: "--"))
         }
     }
 
     private fun updateBottom(views: RemoteViews, range: BgRange) {
         val stale = range == BgRange.STALE || range == BgRange.NONE
-        val unitU = rh.gs(R.string.widget_unit_insulin)
+        val unitU = gs(R.string.widget_unit_insulin)
         val iob = iobCobCalculator.calculateIobFromBolus().round().iob + iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().round().basaliob
         views.setTextViewText(R.id.iob, withUnit(WidgetLogic.decimal(iob, 2), unitU))
         val cob = iobCobCalculator.getCobInfo("Widget COB").displayCob
-        views.setTextViewText(R.id.cob, withUnit(cob?.let { WidgetLogic.decimal(it, 0) } ?: rh.gs(app.aaps.core.ui.R.string.value_unavailable_short), rh.gs(R.string.widget_unit_carbs)))
+        views.setTextViewText(R.id.cob, withUnit(cob?.let { WidgetLogic.decimal(it, 0) } ?: gs(app.aaps.core.ui.R.string.value_unavailable_short), gs(R.string.widget_unit_carbs)))
         val valueColor = color(if (stale) R.color.widget_glass_txt2 else R.color.widget_glass_txt1)
         views.setTextColor(R.id.iob, valueColor)
         views.setTextColor(R.id.cob, valueColor)
         // TDD is history, not "now": one step quieter
         val tdd = statsCache.stats.tdd24h
-        views.setTextViewText(R.id.tdd, withUnit(tdd?.let { WidgetLogic.decimal(it, 1) } ?: rh.gs(app.aaps.core.ui.R.string.value_unavailable_short), unitU))
+        views.setTextViewText(R.id.tdd, withUnit(tdd?.let { WidgetLogic.decimal(it, 1) } ?: gs(app.aaps.core.ui.R.string.value_unavailable_short), unitU))
         views.setTextColor(R.id.tdd, color(R.color.widget_glass_txt2))
     }
 
@@ -268,7 +280,7 @@ class Widget : AppWidgetProvider() {
                 now = now
             )
         )
-        val unitU = rh.gs(R.string.widget_unit_insulin)
+        val unitU = gs(R.string.widget_unit_insulin)
         listOf(
             Triple(1, R.id.bolus1, IntComposedKey.WidgetBolusAmount1),
             Triple(2, R.id.bolus2, IntComposedKey.WidgetBolusAmount2)
@@ -283,8 +295,8 @@ class Widget : AppWidgetProvider() {
             views.setTextColor(textId, if (block == null) color(R.color.widget_glass_txt1) else 0x8096A2BE.toInt())
             views.setContentDescription(
                 id,
-                if (block == null) rh.gs(R.string.widget_bolus_request, amountText)
-                else rh.gs(R.string.widget_bolus_locked) + ": " + rh.gs(WidgetBolusActivity.blockText(block))
+                if (block == null) gs(R.string.widget_bolus_request, amountText)
+                else gs(R.string.widget_bolus_locked) + ": " + gs(WidgetBolusActivity.blockText(block))
             )
             // Also when locked: the activity then only explains why (never offers OK)
             views.setOnClickPendingIntent(id, WidgetBolusActivity.pendingIntent(context, appWidgetId, slot))

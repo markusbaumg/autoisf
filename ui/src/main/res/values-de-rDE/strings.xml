@@ -159,5 +159,7 @@
     <string name="widget_bolus_amount_1">Bolus-Knopf 1 (U)</string>
     <string name="widget_bolus_amount_2">Bolus-Knopf 2 (U)</string>
     <string name="widget_opacity">Glas-Tönung</string>
+    <string name="widget_configuration">Widget-Einstellungen</string>
+    <string name="use_black_color">Schwarz verwenden</string>
 
 </resources>

@@ -37,6 +37,8 @@ class WidgetConfigureActivity : DaggerActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar) {}
             override fun onStartTrackingTouch(seekBar: SeekBar) {}
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                binding.opacityValue.text = getString(R.string.widget_percent, WidgetLogic.glassTintPercent(progress))
+                if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return
                 // Write the prefix to the SharedPreferences object for this widget
                 preferences.put(IntComposedKey.WidgetOpacity, appWidgetId, value = progress)
                 Widget.updateWidget(this@WidgetConfigureActivity, "WidgetConfigure")
@@ -85,6 +87,8 @@ class WidgetConfigureActivity : DaggerActivity() {
         }
 
         binding.seekBar.progress = preferences.get(IntComposedKey.WidgetOpacity, appWidgetId)
+        // onProgressChanged is not called for progress 0
+        binding.opacityValue.text = getString(R.string.widget_percent, WidgetLogic.glassTintPercent(binding.seekBar.progress))
         binding.useBlack.isChecked = preferences.get(BooleanComposedKey.WidgetUseBlack, appWidgetId)
         binding.bolus1Seek.progress = amountToProgress(preferences.get(IntComposedKey.WidgetBolusAmount1, appWidgetId))
         binding.bolus2Seek.progress = amountToProgress(preferences.get(IntComposedKey.WidgetBolusAmount2, appWidgetId))

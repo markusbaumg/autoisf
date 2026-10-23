@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Glass film over the tint: frost lift (L3), sheen (L4), 1 dp rim (L6) and the brighter top specular line (L7) -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- frost lift, white 6 % to 1.5 % -->
+    <!-- frost lift, white 10 % to 2.5 % -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="24dp" />
             <gradient
                 android:angle="270"
-                android:endColor="#04FFFFFF"
-                android:startColor="#0FFFFFFF" />
+                android:endColor="#06FFFFFF"
+                android:startColor="#1AFFFFFF" />
         </shape>
     </item>
     <!-- sheen from the top left -->
@@ -19,23 +19,23 @@
                 android:centerX="0.15"
                 android:centerY="0.0"
                 android:endColor="#00FFFFFF"
-                android:gradientRadius="70%p"
-                android:startColor="#17FFFFFF"
+                android:gradientRadius="80%p"
+                android:startColor="#2EFFFFFF"
                 android:type="radial" />
         </shape>
     </item>
-    <!-- rim, the dim bottom value (recipe L6 bottom ~6 %) -->
+    <!-- rim, the dim bottom value (~10 %) -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="24dp" />
             <solid android:color="@android:color/transparent" />
             <stroke
                 android:width="1dp"
-                android:color="#12FFFFFF" />
+                android:color="#1AFFFFFF" />
         </shape>
     </item>
-    <!-- rim brighter at the top (L6 top ~26 %): the same rim again, clipped to the top quarter.
-         Widget.kt sets the clip with setImageLevel(WIDGET_RIM_LEVEL); without it only the dim rim shows. -->
+    <!-- rim brighter at the top (~40 %): the same rim again, clipped to the top third.
+         Widget.kt sets the clip with setImageLevel(3500); without it only the dim rim shows. -->
     <item>
         <clip
             android:clipOrientation="vertical"
@@ -45,7 +45,7 @@
                 <solid android:color="@android:color/transparent" />
                 <stroke
                     android:width="1dp"
-                    android:color="#33FFFFFF" />
+                    android:color="#66FFFFFF" />
             </shape>
         </clip>
     </item>
@@ -59,7 +59,7 @@
         <shape android:shape="rectangle">
             <gradient
                 android:angle="0"
-                android:centerColor="#73FFFFFF"
+                android:centerColor="#B3FFFFFF"
                 android:endColor="#00FFFFFF"
                 android:startColor="#00FFFFFF" />
         </shape>

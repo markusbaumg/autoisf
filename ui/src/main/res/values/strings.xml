@@ -220,5 +220,6 @@
     <string name="widget_bolus_amount_1">Bolus button 1 (U)</string>
     <string name="widget_bolus_amount_2">Bolus button 2 (U)</string>
     <string name="widget_opacity">Glass tint</string>
+    <string name="widget_percent" translatable="false">%1$d %%</string>
 
 </resources>
