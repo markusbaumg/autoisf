@@ -38,6 +38,7 @@ import app.aaps.ui.dialogs.WizardDialog
 import app.aaps.ui.dialogs.WizardInfoDialog
 import app.aaps.ui.services.AlarmSoundService
 import app.aaps.ui.widget.Widget
+import app.aaps.ui.widget.WidgetBolusActivity
 import app.aaps.ui.widget.WidgetConfigureActivity
 
 @Module
@@ -48,6 +49,7 @@ abstract class UiModule {
 
     @ContributesAndroidInjector abstract fun contributesWidget(): Widget
     @ContributesAndroidInjector abstract fun contributesWidgetConfigureActivity(): WidgetConfigureActivity
+    @ContributesAndroidInjector abstract fun contributesWidgetBolusActivity(): WidgetBolusActivity
 
     @ContributesAndroidInjector abstract fun contributesWizardDialog(): WizardDialog
     @ContributesAndroidInjector abstract fun contributesCalibrationDialog(): CalibrationDialog

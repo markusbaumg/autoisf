@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Range bloom behind the BG digits (recipe L2). There is no bloom for low: red digits on a red glow fail contrast. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <gradient
+        android:endColor="#008A93A8"
+        android:gradientRadius="50%p"
+        android:startColor="#148A93A8"
+        android:type="radial" />
+</shape>

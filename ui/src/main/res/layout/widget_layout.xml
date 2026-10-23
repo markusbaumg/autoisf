@@ -1,374 +1,477 @@
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AAPS home-screen widget, design R2 "Luft": glass card, BG + age, TIR meters 24 h / 7 d / 30 d, IOB / COB / TDD, two quick-bolus pills -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    style="@style/Widget.AndroidAPS.AppWidget.Container"
     android:id="@+id/widget_layout"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@color/black"
-    android:theme="@style/AppTheme.Launcher.AppWidgetContainer">
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:id="@+id/glass_tint"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_glass_tint" />
+
+    <ImageView
+        android:id="@+id/bloom"
+        android:layout_width="170dp"
+        android:layout_height="130dp"
+        android:layout_gravity="start|center_vertical"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_glass_bloom_in" />
+
+    <ImageView
+        android:id="@+id/glass_film"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_glass_film" />
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <TextView
-            android:id="@+id/active_profile"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_weight="1"
-            android:gravity="center_vertical|center_horizontal"
-            android:text="n/a"
-            android:textColor="@color/white"
-            android:textSize="12sp"
-            tools:ignore="HardcodedText" />
-
-        <TextView
-            android:id="@+id/temp_target"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_weight="1"
-            android:gravity="center_vertical|center_horizontal"
-            android:text="n/a"
-            android:textColor="@color/white"
-            android:textSize="12sp"
-            tools:ignore="HardcodedText" />
-
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <TextView
-            android:id="@+id/bg"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="00.0"
-            android:textSize="60sp"
-            android:textStyle="bold"
-            tools:ignore="HardcodedText" />
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="22dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="22dp"
+        android:paddingBottom="8dp">
 
         <LinearLayout
-            android:id="@+id/arrows_layout"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_weight="1"
-            android:focusable="true"
-            android:gravity="center"
-            android:orientation="vertical"
-            tools:ignore="UseCompoundDrawables">
-
-            <ImageView
-                android:id="@+id/arrow"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:contentDescription="@string/trend_arrow"
-                android:src="@drawable/ic_flat" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
             <TextView
-                android:id="@+id/time_ago"
+                android:id="@+id/profile"
+                style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:text="n/a"
-                android:textColor="@color/white"
-                android:textSize="12sp"
-                tools:ignore="HardcodedText" />
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
+                android:maxWidth="190dp"
+                android:textSize="12.5sp"
+                tools:text="Lyumjev FCL" />
 
+            <TextView
+                android:id="@+id/target"
+                style="@style/WidgetGlassText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:textSize="12.5sp"
+                tools:text="Ziel 5,0" />
         </LinearLayout>
 
         <LinearLayout
-            android:id="@+id/deltas_layout"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
             android:layout_weight="1"
-            android:gravity="end|center_vertical"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/bg"
+                    style="@style/WidgetGlassText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="-1.5dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="@color/widget_glass_in"
+                    android:textSize="44sp"
+                    tools:text="6,5" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:orientation="vertical">
+
+                    <ImageView
+                        android:id="@+id/arrow"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitCenter" />
+
+                    <TextView
+                        android:id="@+id/age"
+                        style="@style/WidgetGlassText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:textSize="12sp"
+                        tools:text="vor 1′" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="142dp"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="17dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tir1_label"
+                    style="@style/WidgetGlassText"
+                    android:layout_width="32dp"
+                    android:layout_height="wrap_content"
+                    android:text="@string/widget_tir_24h"
+                    android:textSize="11.5sp" />
+
+                <FrameLayout
+                    android:layout_width="0dp"
+                    android:layout_height="9dp"
+                    android:layout_weight="1">
+
+                    <ImageView
+                        android:layout_width="match_parent"
+                        android:layout_height="4dp"
+                        android:layout_gravity="center_vertical"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitXY"
+                        android:src="@drawable/widget_meter_track" />
+
+                    <ImageView
+                        android:id="@+id/tir1_fill"
+                        android:layout_width="match_parent"
+                        android:layout_height="4dp"
+                        android:layout_gravity="center_vertical"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitXY"
+                        android:src="@drawable/widget_meter_fill" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal">
+
+                        <FrameLayout
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="90" />
+
+                        <ImageView
+                            android:layout_width="1.2dp"
+                            android:layout_height="match_parent"
+                            android:importantForAccessibility="no"
+                            android:scaleType="fitXY"
+                            android:src="@drawable/widget_meter_tick" />
+
+                        <FrameLayout
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="10" />
+                    </LinearLayout>
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/tir1"
+                    style="@style/WidgetGlassText"
+                    android:layout_width="40dp"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="end"
+                    android:textColor="@color/widget_glass_txt1"
+                    android:textSize="12.5sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="17dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tir2_label"
+                    style="@style/WidgetGlassText"
+                    android:layout_width="32dp"
+                    android:layout_height="wrap_content"
+                    android:text="@string/widget_tir_7d"
+                    android:textSize="11.5sp" />
+
+                <FrameLayout
+                    android:layout_width="0dp"
+                    android:layout_height="9dp"
+                    android:layout_weight="1">
+
+                    <ImageView
+                        android:layout_width="match_parent"
+                        android:layout_height="4dp"
+                        android:layout_gravity="center_vertical"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitXY"
+                        android:src="@drawable/widget_meter_track" />
+
+                    <ImageView
+                        android:id="@+id/tir2_fill"
+                        android:layout_width="match_parent"
+                        android:layout_height="4dp"
+                        android:layout_gravity="center_vertical"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitXY"
+                        android:src="@drawable/widget_meter_fill" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal">
+
+                        <FrameLayout
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="90" />
+
+                        <ImageView
+                            android:layout_width="1.2dp"
+                            android:layout_height="match_parent"
+                            android:importantForAccessibility="no"
+                            android:scaleType="fitXY"
+                            android:src="@drawable/widget_meter_tick" />
+
+                        <FrameLayout
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="10" />
+                    </LinearLayout>
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/tir2"
+                    style="@style/WidgetGlassText"
+                    android:layout_width="40dp"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="end"
+                    android:textColor="@color/widget_glass_txt1"
+                    android:textSize="12.5sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="17dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tir3_label"
+                    style="@style/WidgetGlassText"
+                    android:layout_width="32dp"
+                    android:layout_height="wrap_content"
+                    android:text="@string/widget_tir_30d"
+                    android:textSize="11.5sp" />
+
+                <FrameLayout
+                    android:layout_width="0dp"
+                    android:layout_height="9dp"
+                    android:layout_weight="1">
+
+                    <ImageView
+                        android:layout_width="match_parent"
+                        android:layout_height="4dp"
+                        android:layout_gravity="center_vertical"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitXY"
+                        android:src="@drawable/widget_meter_track" />
+
+                    <ImageView
+                        android:id="@+id/tir3_fill"
+                        android:layout_width="match_parent"
+                        android:layout_height="4dp"
+                        android:layout_gravity="center_vertical"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitXY"
+                        android:src="@drawable/widget_meter_fill" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal">
+
+                        <FrameLayout
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="90" />
+
+                        <ImageView
+                            android:layout_width="1.2dp"
+                            android:layout_height="match_parent"
+                            android:importantForAccessibility="no"
+                            android:scaleType="fitXY"
+                            android:src="@drawable/widget_meter_tick" />
+
+                        <FrameLayout
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="10" />
+                    </LinearLayout>
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/tir3"
+                    style="@style/WidgetGlassText"
+                    android:layout_width="40dp"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="end"
+                    android:textColor="@color/widget_glass_txt1"
+                    android:textSize="12.5sp" />
+            </LinearLayout>
+
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="66dp"
+            android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <LinearLayout
+            <TextView
+                style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:focusable="true"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:contentDescription="last delta"
-                    android:text="Δ: "
-                    android:textAlignment="textEnd"
-                    android:textColor="@color/white"
-                    android:textSize="12sp"
-                    tools:ignore="HardcodedText" />
-
-                <TextView
-                    android:id="@+id/delta"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:text="n/a"
-                    android:textAlignment="textEnd"
-                    android:textColor="@color/white"
-                    android:textSize="12sp"
-                    tools:ignore="HardcodedText" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:focusable="true"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:contentDescription="15 minutes delta"
-                    android:text="15m Δ: "
-                    android:textAlignment="textEnd"
-                    android:textColor="@color/white"
-                    android:textSize="12sp"
-                    tools:ignore="HardcodedText" />
-
-                <TextView
-                    android:id="@+id/avg_delta"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:text="n/a"
-                    android:textAlignment="textEnd"
-                    android:textColor="@color/white"
-                    android:textSize="12sp"
-                    tools:ignore="HardcodedText" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:focusable="true"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:contentDescription="40 minutes delta"
-                    android:text="40m Δ: "
-                    android:textAlignment="textEnd"
-                    android:textColor="@color/white"
-                    android:textSize="12sp"
-                    tools:ignore="HardcodedText" />
-
-                <TextView
-                    android:id="@+id/long_avg_delta"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:text="n/a"
-                    android:textAlignment="textEnd"
-                    android:textColor="@color/white"
-                    android:textSize="12sp"
-                    tools:ignore="HardcodedText" />
-
-            </LinearLayout>
-
-        </LinearLayout>
-
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:baselineAligned="false"
-        android:orientation="horizontal">
-
-        <LinearLayout
-            android:id="@+id/iob_layout"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="5dp"
-            android:layout_weight="1"
-            android:gravity="center_horizontal"
-            android:orientation="vertical"
-            tools:ignore="UseCompoundDrawables">
-
-            <ImageView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:contentDescription="@string/iob"
-                android:src="@drawable/ic_bolus" />
+                android:text="@string/widget_iob"
+                android:textSize="11sp" />
 
             <TextView
                 android:id="@+id/iob"
+                style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:paddingTop="3dp"
-                android:paddingBottom="3dp"
-                android:text="n/a"
-                android:textColor="@color/white"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                tools:ignore="HardcodedText" />
-
+                android:layout_marginTop="4dp"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/widget_glass_txt1"
+                android:textSize="16sp" />
         </LinearLayout>
 
         <LinearLayout
-            android:id="@+id/cob_layout"
-            android:layout_width="wrap_content"
+            android:layout_width="58dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:focusable="true"
-            android:gravity="center_horizontal"
-            android:orientation="vertical"
-            tools:ignore="UseCompoundDrawables">
+            android:orientation="vertical">
 
-            <ImageView
-                android:id="@+id/carbs_icon"
+            <TextView
+                style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:background="@drawable/anim_carbs"
-                android:contentDescription="@string/cob" />
+                android:text="@string/widget_cob"
+                android:textSize="11sp" />
 
             <TextView
                 android:id="@+id/cob"
+                style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:paddingTop="3dp"
-                android:paddingBottom="3dp"
-                android:text="n/a"
-                android:textColor="@color/white"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                tools:ignore="HardcodedText" />
-
+                android:layout_marginTop="4dp"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/widget_glass_txt1"
+                android:textSize="16sp" />
         </LinearLayout>
 
         <LinearLayout
-            android:id="@+id/basal_layout"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center_horizontal"
-            android:orientation="vertical"
-            tools:ignore="UseCompoundDrawables">
-
-            <ImageView
-                android:id="@+id/base_basal_icon"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:contentDescription="@string/basal"
-                android:src="@drawable/ic_cp_basal_no_tbr" />
+            android:orientation="vertical">
 
             <TextView
-                android:id="@+id/base_basal"
+                style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:paddingTop="3dp"
-                android:paddingBottom="3dp"
-                android:text="n/a"
-                android:textColor="@color/white"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                tools:ignore="HardcodedText" />
+                android:text="@string/widget_tdd"
+                android:textSize="11sp" />
 
+            <TextView
+                android:id="@+id/tdd"
+                style="@style/WidgetGlassText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/widget_glass_txt1"
+                android:textSize="14.5sp" />
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/extended_layout"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center_horizontal"
-            android:orientation="vertical"
-            tools:ignore="UseCompoundDrawables">
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
+
+        <FrameLayout
+            android:id="@+id/bolus1"
+            android:layout_width="64dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="0dp">
 
             <ImageView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:contentDescription="@string/extended_bolus"
-                android:src="@drawable/ic_actions_start_extended_bolus" />
+                android:id="@+id/bolus1_bg"
+                android:layout_width="match_parent"
+                android:layout_height="30dp"
+                android:layout_gravity="center"
+                android:importantForAccessibility="no"
+                android:scaleType="fitXY"
+                android:src="@drawable/widget_pill" />
 
             <TextView
-                android:id="@+id/extended_bolus"
+                android:id="@+id/bolus1_text"
+                style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:paddingTop="3dp"
-                android:paddingBottom="3dp"
-                android:text="n/a"
-                android:textColor="@color/white"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                tools:ignore="HardcodedText" />
+                android:layout_gravity="center"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/widget_glass_txt1"
+                android:textSize="14sp" />
+        </FrameLayout>
 
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/as_layout"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:focusable="true"
-            android:gravity="center_horizontal"
-            android:orientation="vertical"
-            tools:ignore="UseCompoundDrawables">
+        <FrameLayout
+            android:id="@+id/bolus2"
+            android:layout_width="64dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp">
 
             <ImageView
-                android:id="@+id/sensitivity_icon"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:contentDescription="@string/a11y_autosens_label"
-                android:src="@drawable/ic_swap_vert_black_48dp_green" />
+                android:id="@+id/bolus2_bg"
+                android:layout_width="match_parent"
+                android:layout_height="30dp"
+                android:layout_gravity="center"
+                android:importantForAccessibility="no"
+                android:scaleType="fitXY"
+                android:src="@drawable/widget_pill" />
 
             <TextView
-                android:id="@+id/sensitivity"
+                android:id="@+id/bolus2_text"
+                style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:paddingTop="3dp"
-                android:paddingBottom="3dp"
-                android:text="n/a"
-                android:textColor="@color/white"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                tools:ignore="HardcodedText" />
-
-            <TextView
-                android:id="@+id/variable_sensitivity"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="-9dp"
-                android:gravity="center_horizontal"
-                android:paddingBottom="3dp"
-                android:text="n/a"
-                android:textColor="@color/white"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:visibility="visible"
-                tools:ignore="HardcodedText" />
+                android:layout_gravity="center"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/widget_glass_txt1"
+                android:textSize="14sp" />
+        </FrameLayout>
 
         </LinearLayout>
-
     </LinearLayout>
-
-</LinearLayout>
+</FrameLayout>
