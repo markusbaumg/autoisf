@@ -113,16 +113,26 @@ object WidgetLogic {
     /** Lightest tint the slider allows: widget_glass_tint.xml top 85 % x 0.36 = 30 %, the recipe's hard floor */
     const val TINT_FLOOR = 0.36
 
+    /** Tint at the default WidgetOpacity setting: 42 % -> 50 % (R2 had 44 % -> 56 %), a step lighter without losing the BG contrast */
+    const val TINT_DEFAULT = 0.50
+
+    /** Default of IntComposedKey.WidgetOpacity, kept so stored settings keep their meaning */
+    const val OPACITY_DEFAULT = 25
+
     /** On a bright wallpaper the tint never goes below this, otherwise the secondary labels lose their contrast */
     private const val DENSE_TINT = 0.72
 
     /**
-     * Strength (0..1) of the glass smoke tint for the WidgetOpacity setting (0..255), linear from [TINT_FLOOR] to 1.
-     * widget_glass_tint.xml runs 85 % -> 100 %, so the default setting (25) gives a light smoke of 36 % -> 42 %
-     * (R2 had 44 % -> 56 %): more wallpaper shows through, the text shadows keep the contrast.
+     * Strength (0..1) of the glass smoke tint for the WidgetOpacity setting (0..255).
+     * Two linear pieces: 0 -> [TINT_FLOOR], [OPACITY_DEFAULT] -> [TINT_DEFAULT], 255 -> 1.
+     * widget_glass_tint.xml runs 85 % -> 100 %, so the default gives a smoke of 42 % -> 50 %; the slider reaches
+     * 30 % -> 36 % (lighter) and 85 % -> 100 % (denser) at its ends.
      */
     fun glassTintFraction(opacity: Int, brightWallpaper: Boolean = false): Double {
-        val fraction = TINT_FLOOR + (1.0 - TINT_FLOOR) * opacity.coerceIn(0, 255) / 255.0
+        val o = opacity.coerceIn(0, 255)
+        val fraction =
+            if (o <= OPACITY_DEFAULT) TINT_FLOOR + (TINT_DEFAULT - TINT_FLOOR) * o / OPACITY_DEFAULT
+            else TINT_DEFAULT + (1.0 - TINT_DEFAULT) * (o - OPACITY_DEFAULT) / (255.0 - OPACITY_DEFAULT)
         return if (brightWallpaper) maxOf(fraction, DENSE_TINT) else fraction
     }
 
@@ -130,7 +140,7 @@ object WidgetLogic {
     fun glassTintAlpha(opacity: Int, brightWallpaper: Boolean = false): Int =
         Math.round(glassTintFraction(opacity, brightWallpaper) * 255).toInt()
 
-    /** Tint strength shown next to the configuration slider, "42 %" */
+    /** Tint strength shown next to the configuration slider, "50 %" */
     fun glassTintPercent(opacity: Int): Int = Math.round(glassTintFraction(opacity) * 100).toInt()
 
     // ---------------------------------------------------------------- trend arrow

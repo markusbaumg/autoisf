@@ -176,8 +176,8 @@ class WidgetLogicTest {
         assertThat(WidgetLogic.glassTintAlpha(255)).isEqualTo(255)
         assertThat(WidgetLogic.glassTintAlpha(-5)).isEqualTo(92)
         assertThat(WidgetLogic.glassTintAlpha(300)).isEqualTo(255)
-        // default setting: lighter than R2 (145), more wallpaper shows through
-        assertThat(WidgetLogic.glassTintAlpha(25)).isEqualTo(108)
+        // default setting: a step lighter than R2 (145), more wallpaper shows through
+        assertThat(WidgetLogic.glassTintAlpha(25)).isEqualTo(128)
         // bright wallpaper: at least "dense"
         assertThat(WidgetLogic.glassTintAlpha(0, brightWallpaper = true)).isEqualTo(184)
         assertThat(WidgetLogic.glassTintAlpha(25, brightWallpaper = true)).isEqualTo(184)
@@ -187,8 +187,9 @@ class WidgetLogicTest {
     @Test
     fun `glass tint percent shown at the slider`() {
         assertThat(WidgetLogic.glassTintPercent(0)).isEqualTo(36)
-        assertThat(WidgetLogic.glassTintPercent(25)).isEqualTo(42)
-        assertThat(WidgetLogic.glassTintPercent(128)).isEqualTo(68)
+        assertThat(WidgetLogic.glassTintPercent(12)).isEqualTo(43)
+        assertThat(WidgetLogic.glassTintPercent(25)).isEqualTo(50)
+        assertThat(WidgetLogic.glassTintPercent(140)).isEqualTo(75)
         assertThat(WidgetLogic.glassTintPercent(255)).isEqualTo(100)
     }
 
