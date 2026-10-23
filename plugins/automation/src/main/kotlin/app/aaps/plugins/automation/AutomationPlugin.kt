@@ -27,6 +27,7 @@ import app.aaps.core.interfaces.queue.Callback
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.AapsSchedulers
 import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventAutosensCalculationFinished
 import app.aaps.core.interfaces.rx.events.EventBTChange
 import app.aaps.core.interfaces.rx.events.EventChargingState
 import app.aaps.core.interfaces.rx.events.EventNetworkChange
@@ -140,7 +141,22 @@ class AutomationPlugin @Inject constructor(
 
     private val automationEvents = ArrayList<AutomationEventObject>()
     var executionLog: MutableList<String> = ArrayList()
-    var btConnects: MutableList<EventBTChange> = ArrayList()
+
+    /** BT connect/disconnect events accumulated between processActions() runs. Read by TriggerBTDevice
+     *  via [recentBtConnects]. Guarded by itself: the BT subscription adds on one thread while a run
+     *  reads and trims on another. */
+    private val btConnects: MutableList<EventBTChange> = ArrayList()
+
+    fun recentBtConnects(): List<EventBTChange> = synchronized(btConnects) { ArrayList(btConnects) }
+
+    /**
+     * One [processActions] run at a time. A rule's lastRun is set only after all of its actions were
+     * started and the sleeps in [processEvent] passed, so two overlapping runs (timer, calculation,
+     * BT/network/location events, the menu) would both see the rule as due and execute it twice.
+     * A dedicated lock, not the instance monitor: the UI and the list edits take that one, and a run
+     * holds the lock for seconds while actions execute.
+     */
+    private val processActionsLock = Any()
 
     private var handler: Handler? = null
     private var refreshLoop: Runnable
@@ -212,9 +228,17 @@ class AutomationPlugin @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.AUTOMATION, "Grabbed new BT event: $it")
-                           btConnects.add(it)
+                           synchronized(btConnects) { btConnects.add(it) }
                            processActions()
                        }, fabricPrivacy::logException)
+        // New BG data. Every new reading ends in a calculation that sends this event, in the background
+        // too. The 150 s handler above runs on uptime, which stops in deep sleep, so with the screen off
+        // time and BG rules were checked late or their window closed unchecked. The handler stays as
+        // a fallback for when no BG arrives.
+        disposable += rxBus
+            .toObservable(EventAutosensCalculationFinished::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ processActions() }, fabricPrivacy::logException)
     }
 
     override fun onStop() {
@@ -268,7 +292,22 @@ class AutomationPlugin @Inject constructor(
     }
 
     internal fun processActions() {
+        synchronized(processActionsLock) { processActionsLocked() }
+    }
+
+    /**
+     * Adds a status line that every run repeats while the state lasts (loop suspended, loop not enabled,
+     * a constraint). Skipped when it is already among the last few entries: runs come with every
+     * calculation, and a suspended loop would otherwise fill the log.
+     */
+    private fun addStatusToLog(text: String) {
+        if (executionLog.takeLast(3).none { it == text }) executionLog.add(text)
+    }
+
+    private fun processActionsLocked() {
         if (!config.appInitialized) return
+        // BT events this run is responsible for; see the end of the run.
+        val seenBtConnects = synchronized(btConnects) { btConnects.size }
         /**
          * Changed to false if some condition prevents automation from running.
          * In this case only system automations are enabled.
@@ -279,7 +318,7 @@ class AutomationPlugin @Inject constructor(
          */
         if (loop.runningMode.isSuspended() || !loop.runningMode.isLoopRunning()) {
             aapsLogger.debug(LTag.AUTOMATION, "Loop suspended")
-            executionLog.add(rh.gs(app.aaps.core.ui.R.string.loopsuspended))
+            addStatusToLog(rh.gs(app.aaps.core.ui.R.string.loopsuspended))
             rxBus.send(EventAutomationUpdateGui())
             commonEventsEnabled = false
         }
@@ -288,7 +327,7 @@ class AutomationPlugin @Inject constructor(
          */
         if (!(loop as PluginBase).isEnabled()) {
             aapsLogger.debug(LTag.AUTOMATION, "Loop not enabled")
-            executionLog.add(rh.gs(app.aaps.core.ui.R.string.disconnected))
+            addStatusToLog(rh.gs(app.aaps.core.ui.R.string.disconnected))
             rxBus.send(EventAutomationUpdateGui())
             commonEventsEnabled = false
         }
@@ -297,8 +336,7 @@ class AutomationPlugin @Inject constructor(
          */
         val enabled = constraintChecker.isAutomationEnabled()
         if (!enabled.value()) {
-            val reason = enabled.getMostLimitedReasons()
-            if (executionLog.lastOrNull() != reason) executionLog.add(reason)
+            addStatusToLog(enabled.getMostLimitedReasons())
             rxBus.send(EventAutomationUpdateGui())
             commonEventsEnabled = false
         }
@@ -319,8 +357,11 @@ class AutomationPlugin @Inject constructor(
          * So, let's collect all connection/disconnections between 2 runs of processActions()
          * TriggerBTDevice can pick up and process these events
          * after processing clear events to prevent repeated actions
+         *
+         * Only the events that were there when this run started. One that arrived during the run
+         * belongs to the run waiting behind this one on processActionsLock.
          */
-        btConnects.clear()
+        synchronized(btConnects) { btConnects.subList(0, seenBtConnects).clear() }
 
         // lastRun is not serialized; only persist when a run changed the stored rules (e.g. autoRemove)
         storeToSP()
