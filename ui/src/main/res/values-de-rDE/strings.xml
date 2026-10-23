@@ -135,6 +135,10 @@
     <string name="widget_tir_30d">30 T</string>
     <string name="widget_cob">KH</string>
     <string name="widget_tir_description">Zeit im Zielbereich %1$s: %2$s</string>
+    <string name="widget_tir_days">%1$d T</string>
+    <string name="widget_mean_glucose">Ø Glukose</string>
+    <string name="widget_mean_glucose_description">Durchschnittliche Glukose, 14 Tage: %1$s %2$s</string>
+    <string name="widget_hba1c_description">Geschätztes HbA1c, 14 Tage: %1$s Prozent</string>
     <string name="widget_bolus_request">Bolus %1$s U anfragen</string>
     <string name="widget_bolus_locked">Bolus gesperrt</string>
     <string name="widget_bolus_title">Widget-Bolus</string>
@@ -156,8 +160,7 @@
     <string name="widget_bolus_block_constrained">Begrenzung erlaubt keinen Bolus</string>
     <string name="widget_bolus_expired">Bestätigung abgelaufen</string>
     <string name="widget_bolus_changed">Daten haben sich inzwischen geändert</string>
-    <string name="widget_carbs_pill">KH</string>
-    <string name="widget_carbs_description">Bolus-Rechner öffnen</string>
+    <string name="widget_carbs_description">Bolus-Rechner</string>
     <string name="widget_wizard_not_opened">Bolus-Rechner nicht geöffnet: %1$s</string>
     <string name="widget_wizard_block_no_profile">Kein Profil</string>
     <string name="widget_wizard_block_pump_suspended">Pumpe pausiert oder getrennt</string>

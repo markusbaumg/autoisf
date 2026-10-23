@@ -243,14 +243,55 @@ class WidgetLogicTest {
     }
 
     @Test
-    fun `carbs pill only where the bottom row has room`() {
-        assertThat(WidgetLogic.showCarbsPill(406f, 2)).isTrue()
-        assertThat(WidgetLogic.showCarbsPill(396f, 2)).isTrue()
-        assertThat(WidgetLogic.showCarbsPill(395f, 2)).isFalse()
-        assertThat(WidgetLogic.showCarbsPill(360f, 2)).isFalse()
-        // "Carbs" needs more room than "KH"
-        assertThat(WidgetLogic.showCarbsPill(406f, 5)).isFalse()
-        assertThat(WidgetLogic.showCarbsPill(420f, 5)).isTrue()
+    fun `carbs pill only where the bottom row has room, in any language`() {
+        assertThat(WidgetLogic.showCarbsPill(406f)).isTrue()
+        assertThat(WidgetLogic.showCarbsPill(396f)).isTrue()
+        assertThat(WidgetLogic.showCarbsPill(395f)).isFalse()
+        assertThat(WidgetLogic.showCarbsPill(360f)).isFalse()
+    }
+
+    @Test
+    fun `meter labels show the real day count`() {
+        val zone = java.time.ZoneId.of("Europe/Zurich")
+        fun midnight(d: String) = java.time.LocalDate.parse(d).atStartOfDay(zone).toInstant().toEpochMilli()
+        val today = midnight("2026-10-24")
+        // first data 15 days ago -> "15 T" on the 30 d meter, "7 T" on the 7 d meter
+        val span = WidgetLogic.dataSpanDays(midnight("2026-10-09"), today, zone)
+        assertThat(span).isEqualTo(15)
+        assertThat(WidgetLogic.meterDays(span, 30)).isEqualTo(15)
+        assertThat(WidgetLogic.meterDays(span, 7)).isEqualTo(7)
+        // across the DST change (25 Oct 2026): still whole days
+        assertThat(WidgetLogic.dataSpanDays(midnight("2026-10-24"), midnight("2026-10-27"), zone)).isEqualTo(3)
+        // long history is capped
+        assertThat(WidgetLogic.meterDays(WidgetLogic.dataSpanDays(midnight("2026-08-01"), today, zone), 30)).isEqualTo(30)
+        // yesterday only
+        assertThat(WidgetLogic.meterDays(WidgetLogic.dataSpanDays(midnight("2026-10-23"), today, zone), 7)).isEqualTo(1)
+        // no data -> the nominal label
+        assertThat(WidgetLogic.dataSpanDays(null, today, zone)).isNull()
+        assertThat(WidgetLogic.meterDays(null, 30)).isEqualTo(30)
+        assertThat(WidgetLogic.meterDays(null, 7)).isEqualTo(7)
+    }
+
+    @Test
+    fun `long-term rows need mean, HbA1c and 7 days, both or none`() {
+        assertThat(WidgetLogic.showLongTerm(128.4, 6.1, 14)).isTrue()
+        assertThat(WidgetLogic.showLongTerm(128.4, 6.1, 7)).isTrue()
+        assertThat(WidgetLogic.showLongTerm(128.4, 6.1, 6)).isFalse()
+        assertThat(WidgetLogic.showLongTerm(null, 6.1, 14)).isFalse()
+        assertThat(WidgetLogic.showLongTerm(128.4, null, 14)).isFalse()
+        assertThat(WidgetLogic.longTermFits(206f)).isTrue()
+        assertThat(WidgetLogic.longTermFits(170f)).isFalse()
+    }
+
+    @Test
+    fun `mean glucose and HbA1c texts`() {
+        // HbA1c 6,1 <-> mean 128,4 mg/dL: 7,1 mmol/L or 128 mg/dL
+        val mean = 6.1 * 28.7 - 46.7
+        assertThat(WidgetLogic.glucose(mean, true)).isEqualTo("7,1")
+        assertThat(WidgetLogic.glucose(mean, false)).isEqualTo("128")
+        // AAPS converts with 1/18 (Constants.MGDL_TO_MMOLL) like the BG itself: mean 134,1 mg/dL -> 7,45 -> "7,5"
+        assertThat(WidgetLogic.glucose(6.3 * 28.7 - 46.7, true)).isEqualTo("7,5")
+        assertThat(WidgetLogic.decimal(6.1, 1)).isEqualTo("6,1")
     }
 
     @Test

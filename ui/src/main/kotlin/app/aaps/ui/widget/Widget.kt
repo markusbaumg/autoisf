@@ -48,7 +48,8 @@ import javax.inject.Inject
 
 /**
  * Home-screen widget, design R2 "Luft" (glass card).
- * Shows BG + trend + data age, time in range 24 h / 7 d / 30 d, IOB / COB / TDD and two quick-bolus pills.
+ * Shows BG + trend + data age, time in range 24 h / 7 d / 30 d, 14 day mean glucose + HbA1c, IOB / COB / TDD,
+ * a calculator pill (bolus wizard) and two quick-bolus pills.
  * The pills never bolus: they open [WidgetBolusActivity], which asks for protection and an extra confirmation.
  */
 class Widget : AppWidgetProvider() {
@@ -86,6 +87,10 @@ class Widget : AppWidgetProvider() {
 
         private val meterFills = intArrayOf(R.id.tir1_fill, R.id.tir2_fill, R.id.tir3_fill)
         private val meterTexts = intArrayOf(R.id.tir1, R.id.tir2, R.id.tir3)
+
+        /** widget_glass_txt3 #96A2BE at 50 % / 40 %: text and unit of a locked bolus pill */
+        private const val DISABLED_TEXT_COLOR = 0x8096A2BE.toInt()
+        private const val DISABLED_UNIT_COLOR = 0x6696A2BE
     }
 
     private val intentAction = "OpenApp"
@@ -169,6 +174,7 @@ class Widget : AppWidgetProvider() {
                 updateHeader(views, now)
                 updateBg(views, range, bg?.recalculated, bg?.timestamp, bg?.trendArrow, now)
                 updateTir(views, range)
+                updateLongTerm(views)
                 updateBottom(views, range)
                 updateBolusButtons(context, views, appWidgetId, bg?.recalculated, bg?.timestamp, now)
                 updateCarbsButton(context, views, appWidgetId)
@@ -237,7 +243,14 @@ class Widget : AppWidgetProvider() {
     private fun updateTir(views: RemoteViews, range: BgRange) {
         val stats = statsCache.stats
         val stale = range == BgRange.STALE || range == BgRange.NONE
-        val labels = intArrayOf(R.string.widget_tir_24h, R.string.widget_tir_7d, R.string.widget_tir_30d)
+        // 7 / 30 d labels show the days really covered ("15 T" with 15 days of history), the nominal days without data
+        val labelTexts = listOf(
+            gs(R.string.widget_tir_24h),
+            gs(R.string.widget_tir_days, WidgetLogic.meterDays(stats.spanDays, 7)),
+            gs(R.string.widget_tir_days, WidgetLogic.meterDays(stats.spanDays, 30))
+        )
+        views.setTextViewText(R.id.tir2_label, labelTexts[1])
+        views.setTextViewText(R.id.tir3_label, labelTexts[2])
         listOf(stats.tir24h, stats.tir7d, stats.tir30d).forEachIndexed { i, pct ->
             val level = WidgetLogic.meterLevel(pct)
             val fillColor = when {
@@ -251,9 +264,38 @@ class Widget : AppWidgetProvider() {
             views.setInt(meterFills[i], "setImageLevel", (pct ?: 0).coerceIn(0, 100) * 100)
             views.setTextViewText(meterTexts[i], withUnit(pct?.toString() ?: gs(app.aaps.core.ui.R.string.value_unavailable_short), "%", 0.76f))
             views.setTextColor(meterTexts[i], color(if (stale) R.color.widget_glass_txt2 else R.color.widget_glass_txt1))
-            views.setContentDescription(meterTexts[i], gs(R.string.widget_tir_description, gs(labels[i]), pct?.let { "$it %" } ?: "--"))
+            views.setContentDescription(meterTexts[i], gs(R.string.widget_tir_description, labelTexts[i], pct?.let { "$it %" } ?: "--"))
         }
     }
+
+    /**
+     * 14 day mean glucose and HbA1c (statistics screen numbers). Long-term values: never range coloured, not dimmed when stale.
+     * Both rows or none; [applySize] hides them again where the widget is too low.
+     */
+    private fun updateLongTerm(views: RemoteViews) {
+        val stats = statsCache.stats
+        val mean = stats.meanMgdl
+        val a1c = stats.hbA1c
+        val show = WidgetLogic.showLongTerm(mean, a1c, stats.longTermDays)
+        setLongTermVisible(views, show)
+        if (show && mean != null && a1c != null) {
+            val meanText = WidgetLogic.glucose(mean, isMmol())   // "7,1" / "128", no visible unit like the BG
+            val unitText = gs(if (isMmol()) app.aaps.core.ui.R.string.mmol else app.aaps.core.ui.R.string.mgdl)
+            views.setTextViewText(R.id.mean_value, meanText)
+            views.setContentDescription(R.id.mean_row, gs(R.string.widget_mean_glucose_description, meanText, unitText))
+            val a1cText = WidgetLogic.decimal(a1c, 1)
+            views.setTextViewText(R.id.a1c_value, withUnit(a1cText, "%", 0.76f))
+            views.setContentDescription(R.id.a1c_row, gs(R.string.widget_hba1c_description, a1cText))
+        }
+    }
+
+    /** Group visible: the 5-line history block moves down 5 dp so the air above and below it is equal */
+    private fun setLongTermVisible(views: RemoteViews, show: Boolean) {
+        views.setViewVisibility(R.id.longterm_group, if (show) View.VISIBLE else View.GONE)
+        views.setViewPadding(R.id.history_block, 0, if (show) dp(5f) else 0, 0, 0)
+    }
+
+    private fun dp(value: Float): Int = Math.round(value * appContext.resources.displayMetrics.density)
 
     private fun updateBottom(views: RemoteViews, range: BgRange) {
         val stale = range == BgRange.STALE || range == BgRange.NONE
@@ -300,9 +342,11 @@ class Widget : AppWidgetProvider() {
             val textId = if (slot == 1) R.id.bolus1_text else R.id.bolus2_text
             val amountText = WidgetLogic.amountText(amount)
             views.setViewVisibility(id, View.VISIBLE)
+            // Locked (stale, low, no pump ...): visibly disabled, txt3 at reduced alpha on a faint flat pill
             views.setImageViewResource(bgId, if (block == null) R.drawable.widget_pill else R.drawable.widget_pill_disabled)
-            views.setTextViewText(textId, withUnit("+$amountText", unitU, 0.79f, if (block == null) null else 0x6696A2BE))
-            views.setTextColor(textId, if (block == null) color(R.color.widget_glass_txt1) else 0x8096A2BE.toInt())
+            views.setInt(bgId, "setImageAlpha", if (block == null) 255 else 150)
+            views.setTextViewText(textId, withUnit("+$amountText", unitU, 0.79f, if (block == null) null else DISABLED_UNIT_COLOR))
+            views.setTextColor(textId, if (block == null) color(R.color.widget_glass_txt1) else DISABLED_TEXT_COLOR)
             views.setContentDescription(
                 id,
                 if (block == null) gs(R.string.widget_bolus_request, amountText)
@@ -322,11 +366,13 @@ class Widget : AppWidgetProvider() {
         val block = widgetWizard.block()
         views.setInt(R.id.carbs_bg, "setImageLevel", 5000)
         views.setImageViewResource(R.id.carbs_bg, if (block == null) R.drawable.widget_pill else R.drawable.widget_pill_disabled)
-        views.setTextColor(R.id.carbs_text, if (block == null) color(R.color.widget_glass_txt2) else 0x8096A2BE.toInt())
+        views.setInt(R.id.carbs_bg, "setImageAlpha", 255)
+        // Calculator glyph in txt2; never locked by a stale or low BG (only by the overview calculator button's conditions)
+        views.setInt(R.id.carbs_icon, "setColorFilter", if (block == null) color(R.color.widget_glass_txt2) else DISABLED_TEXT_COLOR)
         views.setContentDescription(
             R.id.carbs,
-            if (block == null) rh.gs(R.string.widget_carbs_description)
-            else rh.gs(R.string.widget_wizard_not_opened, rh.gs(WidgetWizard.blockText(block)))
+            if (block == null) gs(R.string.widget_carbs_description)
+            else gs(R.string.widget_wizard_not_opened, gs(WidgetWizard.blockText(block)))
         )
         // Also when blocked: MainActivity then only says why
         views.setOnClickPendingIntent(R.id.carbs, WidgetWizardActivity.pendingIntent(context, appWidgetId))
@@ -358,7 +404,9 @@ class Widget : AppWidgetProvider() {
         views.setTextViewTextSize(R.id.age, TypedValue.COMPLEX_UNIT_DIP, 12f * scale)
         views.setViewLayoutWidth(R.id.arrow, 22f * scale, TypedValue.COMPLEX_UNIT_DIP)
         views.setViewLayoutHeight(R.id.arrow, 22f * scale, TypedValue.COMPLEX_UNIT_DIP)
-        if (config.APS) views.setViewVisibility(R.id.carbs, if (WidgetLogic.showCarbsPill(widthDp, rh.gs(R.string.widget_carbs_pill).length)) View.VISIBLE else View.GONE)
+        if (config.APS) views.setViewVisibility(R.id.carbs, if (WidgetLogic.showCarbsPill(widthDp)) View.VISIBLE else View.GONE)
+        // Too low for the two long-term rows: hide them, the meters stay centred
+        if (!WidgetLogic.longTermFits(heightDp)) setLongTermVisible(views, false)
     }
 
     /** "3,85 U": value in the view's colour, unit smaller and quieter */

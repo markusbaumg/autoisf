@@ -196,6 +196,11 @@
     <!-- the owner wants "U" on the widget in every language (core insulin_unit_shortname is "IE" in German) -->
     <string name="widget_unit_insulin" translatable="false">U</string>
     <string name="widget_tir_description">Time in range %1$s: %2$s</string>
+    <string name="widget_tir_days">%1$d d</string>
+    <string name="widget_mean_glucose">Ø Glucose</string>
+    <string name="widget_hba1c" translatable="false">HbA1c</string>
+    <string name="widget_mean_glucose_description">Average glucose, 14 days: %1$s %2$s</string>
+    <string name="widget_hba1c_description">Estimated HbA1c, 14 days: %1$s percent</string>
     <string name="widget_bolus_request">Request bolus of %1$s U</string>
     <string name="widget_bolus_locked">Bolus locked</string>
     <string name="widget_bolus_title">Widget bolus</string>
@@ -217,8 +222,7 @@
     <string name="widget_bolus_block_constrained">Constraints allow no bolus</string>
     <string name="widget_bolus_expired">Confirmation expired</string>
     <string name="widget_bolus_changed">Data changed in the meantime</string>
-    <string name="widget_carbs_pill">Carbs</string>
-    <string name="widget_carbs_description">Open bolus wizard</string>
+    <string name="widget_carbs_description">Bolus calculator</string>
     <string name="widget_wizard_not_opened">Bolus wizard not opened: %1$s</string>
     <string name="widget_wizard_block_no_profile">No profile</string>
     <string name="widget_wizard_block_pump_suspended">Pump suspended or disconnected</string>

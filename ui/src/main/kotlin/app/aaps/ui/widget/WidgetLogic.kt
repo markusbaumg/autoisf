@@ -3,6 +3,9 @@ package app.aaps.ui.widget
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.ui.R
+import java.time.Instant
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.abs
 
@@ -90,6 +93,32 @@ object WidgetLogic {
         }
         return TirCounts(below, inRange, above)
     }
+
+    /**
+     * Whole calendar days from the first day with readings ([firstDayMidnight]) to the last midnight ([todayMidnight]),
+     * i.e. the days the 7 d / 30 d meters really cover. null without data. Counted in local dates, so DST days count as one.
+     */
+    fun dataSpanDays(firstDayMidnight: Long?, todayMidnight: Long, zone: ZoneId = ZoneId.systemDefault()): Int? {
+        if (firstDayMidnight == null) return null
+        val days = ChronoUnit.DAYS.between(
+            Instant.ofEpochMilli(firstDayMidnight).atZone(zone).toLocalDate(),
+            Instant.ofEpochMilli(todayMidnight).atZone(zone).toLocalDate()
+        ).toInt()
+        return if (days > 0) days else null
+    }
+
+    /** Day count in a meter label ("15 T"): the real span, at most the meter's [maxDays]; [maxDays] without data */
+    fun meterDays(spanDays: Int?, maxDays: Int): Int = spanDays?.coerceAtMost(maxDays) ?: maxDays
+
+    /** Days of data needed before the widget shows the 14 day mean glucose and HbA1c */
+    const val LONG_TERM_MIN_DAYS = 7
+
+    /** Mean glucose and HbA1c rows: both or none, never "--" */
+    fun showLongTerm(meanMgdl: Double?, hbA1c: Double?, longTermDays: Int): Boolean =
+        meanMgdl != null && hbA1c != null && longTermDays >= LONG_TERM_MIN_DAYS
+
+    /** Height the history column needs with the two long-term rows (3 x 17 + 7 + 2 x 16 + 5 padding) on top of the chrome */
+    fun longTermFits(heightDp: Float): Boolean = heightDp >= CHROME_HEIGHT_DP + 95f
 
     /** Rolling window: readings with timestamp in (now - 24 h, now] */
     fun rolling24hStart(now: Long): Long = now - 24 * 60 * 60 * 1000L
@@ -270,12 +299,11 @@ object WidgetLogic {
     }
 
     /**
-     * The carbs pill only shows when the bottom row has room for it, so the bolus pills are never clipped.
-     * Row content: IOB 66 + COB 58 + TDD ~40 + bolus pills 64 + 8 + 64 + carbs pill ~42 + 6 = 348 dp, plus 44 dp padding.
-     * A longer label than "KH" needs ~8 dp per extra character.
+     * The carbs pill (calculator glyph, no text) only shows when the bottom row has room for it, so the bolus pills are never clipped.
+     * Row content: IOB 66 + COB 58 + TDD ~40 + bolus pills 64 + 8 + 64 + carbs pill 42 + 6 = 348 dp, plus 44 dp padding.
+     * The glyph has the same width in every language.
      */
-    fun showCarbsPill(widthDp: Float, labelChars: Int): Boolean =
-        widthDp >= 396f + 8f * (labelChars - 2).coerceAtLeast(0)
+    fun showCarbsPill(widthDp: Float): Boolean = widthDp >= 396f
 
     // ---------------------------------------------------------------- carbs pill -> bolus wizard
 

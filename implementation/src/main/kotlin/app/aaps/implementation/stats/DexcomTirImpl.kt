@@ -73,12 +73,18 @@ class DexcomTirImpl : DexcomTIR {
         return sqrt(standardDeviation / count)
     }
 
+    override fun meanMgdl(): Double? = if (count == 0) null else mean()
+
+    override fun hbA1cPercent(): Double? =
+        meanMgdl()?.let { (10 * (it + 46.7) / 28.7).roundToInt() / 10.0 }
+
     override fun toHbA1cView(context: Context): TextView =
         TextView(context).apply {
+            val hbA1c = hbA1cPercent()
             text =
-                if (count == 0) ""
+                if (hbA1c == null) ""
                 else context.getString(R.string.hba1c) + " " +
-                    (10 * (mean() + 46.7) / 28.7).roundToInt() / 10.0 + "%" +
+                    hbA1c + "%" +
                     " (" +
                     (((mean() + 46.7) / 28.7 - 2.15) * 10.929).roundToInt() +
                     " mmol/mol)"
