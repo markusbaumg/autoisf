@@ -391,6 +391,16 @@ class WidgetLogicTest {
     }
 
     @Test
+    fun `tbr percent is rounded and safe without a profile basal`() {
+        // 0,60 / 0,50 = 119,99.. % truncated before: must reach the 120 % chip
+        assertThat(WidgetLogic.tbrPercent(true, 0.6, 0.5)).isEqualTo(120)
+        assertThat(WidgetLogic.tbrPercent(false, 250.0, 0.5)).isEqualTo(250)
+        assertThat(WidgetLogic.tbrPercent(true, 0.5, 0.0)).isNull()
+        // a zero temp while the profile basal itself is 0 equals the profile: nothing shown
+        assertThat(WidgetLogic.basalState(idle.copy(profileBasal = 0.0, tempBasal = true, rate = 0.0, pct = null))).isEqualTo(BasalState.None)
+    }
+
+    @Test
     fun `zero streak walks back over contiguous zero TBRs`() {
         // zero TBRs re-issued every 5 min since now - 25 min, a normal basal before
         val starts = (0..5).map { now - 25 * min + it * 5 * min }
@@ -399,6 +409,15 @@ class WidgetLogicTest {
         assertThat(WidgetLogic.zeroStreakStart(now) { null }).isNull()
         // endless zero: capped at 4 h
         assertThat(WidgetLogic.zeroStreakStart(now) { t -> t - t % (5 * min) }).isEqualTo(now - 4 * 60 * min)
+        // cancel + set (DASH): the old zero TBR ends some seconds before the new one starts, still one streak
+        val gapLookup: (Long) -> Long? = { t ->
+            when {
+                t >= now - 10 * min           -> now - 10 * min
+                t in (now - 20 * min) until (now - 10 * min - 15_000L) -> now - 20 * min
+                else                          -> null
+            }
+        }
+        assertThat(WidgetLogic.zeroStreakStart(now, gapLookup)).isEqualTo(now - 20 * min)
         // a lookup that does not move back ends the walk
         assertThat(WidgetLogic.zeroStreakStart(now) { now - min }).isEqualTo(now - min)
     }
@@ -452,7 +471,13 @@ class WidgetLogicTest {
         val busy = WidgetLogic.headerFit(362f, "Lyumjev FCL 80 %", "8,3", "noch 35′", "4,6", "×0,89", "0 U/h seit 25′", true)
         assertThat(busy.showFactor).isFalse()
         val narrow = WidgetLogic.headerFit(200f, "Lyumjev FCL 80 %", "8,3", "noch 35′", "4,6", "×0,89", "Pausiert noch 20′", true)
-        assertThat(narrow).isEqualTo(WidgetLogic.HeaderFit(showFactor = false, showTtSuffix = false))
+        assertThat(narrow).isEqualTo(WidgetLogic.HeaderFit(showFactor = false, showTtSuffix = false, showIsf = false))
+        // long profile + temp target + pause chip at 406 dp (362 dp inside): the ISF gives way, the chip stays whole
+        val paused = WidgetLogic.headerFit(362f, "Lyumjev FCL Sport 80 %", "8,3", "noch 1:40", "4,6", "×0,89", "Pausiert noch 1:40", true)
+        assertThat(paused.showIsf).isFalse()
+        // a larger font scale drops parts earlier
+        assertThat(WidgetLogic.headerFit(362f, "Lyumjev FCL", "5,0", null, "4,1", "×1,15", null, false, fontScale = 1f).showFactor).isTrue()
+        assertThat(WidgetLogic.headerFit(362f, "Lyumjev FCL", "5,0", null, "4,1", "×1,15", "0 U/h seit 25′", true, fontScale = 1.3f).showFactor).isFalse()
         // no factor without an ISF
         assertThat(WidgetLogic.headerFit(362f, "A", "5,0", null, null, "×1,15", null, false).showFactor).isFalse()
     }

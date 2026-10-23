@@ -44,7 +44,6 @@ import app.aaps.core.keys.BooleanComposedKey
 import app.aaps.core.keys.IntComposedKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.extensions.convertedToAbsolute
-import app.aaps.core.objects.extensions.convertedToPercent
 import app.aaps.core.objects.extensions.round
 import app.aaps.ui.R
 import app.aaps.ui.widget.WidgetLogic.BasalState
@@ -250,7 +249,10 @@ class Widget : AppWidgetProvider() {
         val basal = if (config.APS) basalState(profile, now) else BasalState.None
         val basalPlain = basalText(basal)
 
-        val fit = WidgetLogic.headerFit(availableDp, profileText.toString(), targetText, ttSuffix, isfText, factorText, basalPlain, basal.chip)
+        val fit = WidgetLogic.headerFit(
+            availableDp, profileText.toString(), targetText, ttSuffix, isfText, factorText, basalPlain, basal.chip,
+            appContext.resources.configuration.fontScale
+        )
 
         // Target view
         views.setViewVisibility(R.id.target_icon, View.VISIBLE)
@@ -263,7 +265,7 @@ class Widget : AppWidgetProvider() {
         views.setContentDescription(R.id.target, gs(R.string.widget_target, targetText + (ttSuffix?.let { ", $it" } ?: "")))
 
         // ISF view
-        if (isfText != null) {
+        if (isfText != null && fit.showIsf) {
             val sb = SpannableStringBuilder()
             appendStyled(sb, gs(R.string.widget_isf) + " ", txt3)
             appendStyled(sb, isfText, if (stale) txt3 else txt2, medium = true)
@@ -294,7 +296,7 @@ class Widget : AppWidgetProvider() {
                 suspendMinutesLeft = loop.minutesToEndOfSuspend(),
                 tempBasal = tb != null,
                 rate = rate,
-                pct = tb?.convertedToPercent(now, profile),
+                pct = tb?.let { WidgetLogic.tbrPercent(it.isAbsolute, it.rate, profile.getBasal(now)) },
                 profileBasal = profile.getBasal(now),
                 zeroSince = zeroSince,
                 smbAmount = smb?.amount,

@@ -289,8 +289,8 @@ object WidgetLogic {
     const val BG_MAX_DP = 64f
     const val BG_MIN_DP = 30f
 
-    /** widget_layout.xml: padding 12 + 4, header line ~17, bottom row 48 (spacers take only the rest) */
-    private const val CHROME_HEIGHT_DP = 81f
+    /** widget_layout.xml: padding 12 + 4, header line 20, bottom row 48 (spacers take only the rest) */
+    private const val CHROME_HEIGHT_DP = 84f
 
     /** widget_layout.xml: padding 22 + 22, TIR column 142 */
     private const val CHROME_WIDTH_DP = 186f
@@ -409,16 +409,23 @@ object WidgetLogic {
     const val ZERO_STREAK_MAX_MS = 4 * 60 * 60 * 1000L
 
     /**
+     * Gap between two zero TBRs that still counts as one streak: drivers like Omnipod DASH cancel the running TBR
+     * and then set the new one, so the old record ends some seconds before the new one starts.
+     */
+    const val ZERO_STREAK_GAP_MS = 90 * 1000L
+
+    /**
      * Start of the zero-temp streak (how long the loop has held the basal at 0, not the 30 min TBR that is
      * re-issued every 5 minutes). [zeroTbStartAt] returns the start of the zero TBR running at a time, or null
-     * when no zero TBR runs then. Walks back TBR by TBR (contiguous TBRs: the next one starts where the previous ended).
+     * when no zero TBR runs then. Walks back TBR by TBR (the next one starts where the previous ended, or up to
+     * [ZERO_STREAK_GAP_MS] later after a cancel + set).
      */
     fun zeroStreakStart(now: Long, zeroTbStartAt: (Long) -> Long?): Long? {
         var start = zeroTbStartAt(now) ?: return null
         val limit = now - ZERO_STREAK_MAX_MS
         repeat(ZERO_STREAK_MAX_STEPS) {
             if (start <= limit) return limit
-            val previous = zeroTbStartAt(start - 1000L) ?: return start
+            val previous = zeroTbStartAt(start - 1000L) ?: zeroTbStartAt(start - ZERO_STREAK_GAP_MS) ?: return start
             if (previous >= start) return start
             start = previous
         }
@@ -471,14 +478,25 @@ object WidgetLogic {
             mode == RM.Mode.DISCONNECTED_PUMP                                        -> BasalState.Disconnected(i.suspendMinutesLeft.coerceAtLeast(0))
             mode == RM.Mode.SUSPENDED_BY_USER || mode == RM.Mode.SUSPENDED_BY_DST ||
                 mode == RM.Mode.SUPER_BOLUS                                          -> BasalState.Paused(i.suspendMinutesLeft.coerceAtLeast(0))
-            rate != null && rate < ZERO_RATE                                         ->
+            // a zero temp during a zero profile basal equals the profile: nothing (falls through to SMB / None)
+            rate != null && rate < ZERO_RATE && !(i.profileBasal != null && i.profileBasal < ZERO_RATE) ->
                 BasalState.Zero(((i.now - (i.zeroSince ?: i.now)).coerceAtLeast(0)) / 60000L)
             rate != null && pct != null && pct >= HIGH_TEMP_PCT                      -> BasalState.High(rate, pct)
             smbAt != null && smbRecent(smbAt, i.now) && i.smbAmount != null && i.smbAmount > 0.0 ->
                 BasalState.Smb(i.smbAmount, ((i.now - smbAt).coerceAtLeast(0)) / 60000L)
-            rate != null && pct != null && !equalsProfile                            -> BasalState.Quiet(rate, pct, lower = pct < 100)
+            rate != null && pct != null && !equalsProfile && rate >= ZERO_RATE      -> BasalState.Quiet(rate, pct, lower = pct < 100)
             else                                                                     -> BasalState.None
         }
+    }
+
+    /**
+     * Percentage of the profile basal a TBR runs at, rounded (TB.convertedToPercent truncates, so an absolute
+     * 0,60 U/h on a 0,50 U/h profile came out as 119 % and missed the high-temp chip). null without a profile basal.
+     */
+    fun tbrPercent(isAbsolute: Boolean, tbrRate: Double, profileBasal: Double): Int? = when {
+        !isAbsolute         -> Math.round(tbrRate).toInt()
+        profileBasal <= 0.0 -> null
+        else                -> Math.round(tbrRate / profileBasal * 100).toInt()
     }
 
     /** SMB younger than [SMB_SHOW_MS] (a reading up to 1 min in the future counts as now) */
@@ -492,17 +510,20 @@ object WidgetLogic {
     private const val HEADER_GAP_DP = 12f
     private const val HEADER_PROFILE_MAX_DP = 110f
 
-    data class HeaderFit(val showFactor: Boolean, val showTtSuffix: Boolean)
+    data class HeaderFit(val showFactor: Boolean, val showTtSuffix: Boolean, val showIsf: Boolean = true)
 
     /**
      * The header is one line: profile, target, ISF, basal. When the estimated width exceeds [availableDp], the AutoISF
-     * factor goes first, then the temp-target remaining time. The profile name is capped by maxWidth (ellipsized).
+     * factor goes first, then the temp-target remaining time, then the ISF, so the basal chip (pump paused / zero temp)
+     * at the right end is never squeezed out. The profile name is capped by maxWidth (ellipsized). [fontScale] = the
+     * system font scale (the texts are sp, the estimate is per dp at scale 1).
      */
     fun headerFit(
         availableDp: Float, profileText: String, targetText: String, ttSuffix: String?,
-        isfText: String?, factorText: String?, basalText: String?, basalChip: Boolean
+        isfText: String?, factorText: String?, basalText: String?, basalChip: Boolean, fontScale: Float = 1f
     ): HeaderFit {
-        fun w(s: String) = s.length * HEADER_DP_PER_CHAR
+        val scale = fontScale.takeIf { it > 0f } ?: 1f
+        fun w(s: String) = s.length * HEADER_DP_PER_CHAR * scale
         val profile = minOf(w(profileText), HEADER_PROFILE_MAX_DP)
         val target = 15f + w(targetText)
         val suffix = ttSuffix?.let { 4f + w(it) * 0.88f } ?: 0f
@@ -513,7 +534,8 @@ object WidgetLogic {
         return when {
             base + suffix + factor <= availableDp -> HeaderFit(showFactor = factor > 0f, showTtSuffix = suffix > 0f)
             base + suffix <= availableDp           -> HeaderFit(showFactor = false, showTtSuffix = suffix > 0f)
-            else                                   -> HeaderFit(showFactor = false, showTtSuffix = false)
+            base <= availableDp                    -> HeaderFit(showFactor = false, showTtSuffix = false)
+            else                                   -> HeaderFit(showFactor = false, showTtSuffix = false, showIsf = false)
         }
     }
 }
