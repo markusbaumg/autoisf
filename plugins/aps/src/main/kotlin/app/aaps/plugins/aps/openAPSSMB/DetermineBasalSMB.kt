@@ -32,8 +32,8 @@ class DetermineBasalSMB @Inject constructor(
     private val profileFunction: ProfileFunction
 ) {
 
-    private val consoleError = mutableListOf<String>()
-    private val consoleLog = mutableListOf<String>()
+    private var consoleError = mutableListOf<String>()
+    private var consoleLog = mutableListOf<String>()
 
     private fun Double.toFixed2(): String = DecimalFormat("0.00#").format(round(this, 2))
 
@@ -156,8 +156,8 @@ class DetermineBasalSMB @Inject constructor(
         glucose_status: GlucoseStatus, currenttemp: CurrentTemp, iob_data_array: Array<IobTotal>, profile: OapsProfile, autosens_data: AutosensResult, meal_data: MealData,
         microBolusAllowed: Boolean, currentTime: Long, flatBGsDetected: Boolean, dynIsfMode: Boolean
     ): RT {
-        consoleError.clear()
-        consoleLog.clear()
+        consoleError = mutableListOf()
+        consoleLog = mutableListOf()
         var rT = RT(
             algorithm = APSResult.Algorithm.SMB,
             runningDynamicIsf = dynIsfMode,

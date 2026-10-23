@@ -20,7 +20,6 @@ import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.AutosensResult
 import app.aaps.core.interfaces.aps.CurrentTemp
 import app.aaps.core.interfaces.aps.GlucoseStatus
-import app.aaps.core.interfaces.aps.GlucoseStatusSMB
 import app.aaps.core.interfaces.aps.OapsProfile
 import app.aaps.core.interfaces.bgQualityCheck.BgQualityCheck
 import app.aaps.core.interfaces.configuration.Config
@@ -275,7 +274,7 @@ open class OpenAPSSMBPlugin @Inject constructor(
         // DynamicISF specific
         // without these values DynISF doesn't work properly
         // Current implementation is fallback to SMB if TDD history is not available. Thus calculated here
-        val glucoseStatus = glucoseStatusProvider.glucoseStatusData as GlucoseStatusSMB?
+        val glucoseStatus = glucoseStatusCalculatorSMB.getGlucoseStatusData(allowOldData = false)
         dynIsfResult.tdd1D = tddCalculator.averageTDD(tddCalculator.calculate(1, allowMissingDays = false))?.data?.totalAmount
         tddCalculator.averageTDD(tddCalculator.calculate(7, allowMissingDays = false))?.let {
             dynIsfResult.tdd7D = it.data.totalAmount
