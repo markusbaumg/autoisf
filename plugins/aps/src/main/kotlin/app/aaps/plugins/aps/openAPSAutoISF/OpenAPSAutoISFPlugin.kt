@@ -195,7 +195,7 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
             val variableSens = it.variableSens ?: return@forEach
             val timestamp = it.date
             val key = timestamp - timestamp % T.mins(minutesClass).msecs() + glucose.toLong()
-            if (variableSens > 0) autoIsfCache.put(key, variableSens)
+            if (variableSens > 0) synchronized(autoIsfCache) { autoIsfCache.put(key, variableSens) }
             count++
         }
         aapsLogger.debug(LTag.APS, "Loaded $count variable sensitivity values from database")
@@ -223,10 +223,12 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
         var count = 0
         var sum = 0.0
         val start = timestamp - T.hours(24).msecs()
-        autoIsfCache.forEach { key, value ->
-            if (key in start..timestamp) {
-                count++
-                sum += value
+        synchronized(autoIsfCache) {
+            autoIsfCache.forEach { key, value ->
+                if (key in start..timestamp) {
+                    count++
+                    sum += value
+                }
             }
         }
         val sensitivity = if (count == 0) null else sum / count
@@ -281,8 +283,10 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
         if (sensitivity > 0) {
             // can default to 0, e.g. for the first 2-3 loops in a virgin setup
             aapsLogger.debug(LTag.AUTOISF, "calculateVariableIsf CALC ${dateUtil.dateAndTimeAndSecondsString(timestamp)} $sensitivity")
-            autoIsfCache.put(key, sensitivity)
-            if (autoIsfCache.size() > 1000) autoIsfCache.clear()
+            synchronized(autoIsfCache) {
+                autoIsfCache.put(key, sensitivity)
+                if (autoIsfCache.size() > 1000) autoIsfCache.clear()
+            }
         }
         // this return is mandatory, otherwise it messed up the AutoISF algo.
         return Pair("OFF", null)
