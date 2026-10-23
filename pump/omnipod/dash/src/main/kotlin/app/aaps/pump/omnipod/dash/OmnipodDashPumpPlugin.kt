@@ -1,6 +1,7 @@
 package app.aaps.pump.omnipod.dash
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
@@ -1323,7 +1324,8 @@ class OmnipodDashPumpPlugin @Inject constructor(
         Completable.complete()
     }
 
-    private fun handleCommandConfirmation(confirmation: CommandConfirmed) {
+    @VisibleForTesting
+    internal fun handleCommandConfirmation(confirmation: CommandConfirmed) {
         val command = confirmation.command
         val historyEntry = history.getById(command.historyId)
         aapsLogger.debug(LTag.PUMPCOMM, "handling command confirmation: $confirmation ${historyEntry.commandType}")
@@ -1366,13 +1368,18 @@ class OmnipodDashPumpPlugin @Inject constructor(
                 }
             }
 
-            OmnipodCommandType.SET_BASAL_PROFILE      -> {
+            // Setting the time is the same pod command as a profile change: suspend, then a new basal program.
+            // The suspend also starts a "pump suspended" temp basal and the pod's "delivery suspended" alert
+            // (20 min), so both must be ended here too. Without SET_TIME the pod beeped about 20 min after
+            // every time change while basal was running again (upstream #2982).
+            OmnipodCommandType.SET_BASAL_PROFILE,
+            OmnipodCommandType.SET_TIME               -> {
                 if (confirmation.success) {
                     podStateManager.basalProgram = command.basalProgram
                     if (podStateManager.basalProgram == null) {
                         aapsLogger.warn(LTag.PUMP, "Saving null basal profile")
                     }
-                    if (!commandQueue.isRunning(Command.CommandType.BASAL_PROFILE)) {
+                    if (historyEntry.commandType == OmnipodCommandType.SET_BASAL_PROFILE && !commandQueue.isRunning(Command.CommandType.BASAL_PROFILE)) {
                         // we are late-confirming this command. before that, we answered with success:false
                         rxBus.send(EventProfileSwitchChanged())
                     }
