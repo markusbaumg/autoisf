@@ -1236,7 +1236,10 @@ class DataHandlerMobile @Inject constructor(
 
         val pump = activePlugin.activePump
         val pumpDescription = pump.pumpDescription
-        if (loop.runningMode.isSuspended()) return
+        // Only the modes the user cannot leave from the watch. A user suspend or a pump disconnect must
+        // still get a list, or the watch cannot resume / reconnect (every tap says "please try again").
+        val runningMode = loop.runningMode
+        if (runningMode == RM.Mode.SUSPENDED_BY_PUMP || runningMode == RM.Mode.SUSPENDED_BY_DST) return
         if (!profileFunction.isProfileValid("WearDataHandler_LoopChangeState")) return
 
         val disconnectDurs = arrayListOf<Int>()
@@ -1259,8 +1262,13 @@ class DataHandlerMobile @Inject constructor(
             }
 
         val states = loop.allowedNextModes().mapNotNull { mapMode(it) }
-        lastAuthorizedLoopStateChangeTS = System.currentTimeMillis()
-        lastLoopStates = states
+        // Only rotate the timestamp when the available states actually change.
+        // Keeping the old TS when the states are identical lets in-flight tile taps (e.g. from a
+        // just-woken watch) succeed without a "please try again" race against the tile's refresh request.
+        if (states != lastLoopStates || lastAuthorizedLoopStateChangeTS == null) {
+            lastAuthorizedLoopStateChangeTS = System.currentTimeMillis()
+            lastLoopStates = states
+        }
         rxBus.send(
             EventMobileToWear(
                 EventData.LoopStatesList(lastAuthorizedLoopStateChangeTS!!, states)
@@ -1341,6 +1349,9 @@ class DataHandlerMobile @Inject constructor(
                 return sendError(rh.gs(R.string.wear_action_loop_state_invalid))
             }
         }
+        // Push the states for the new mode right away: the confirmation consumed the timestamp, and
+        // without a fresh list the tile stays stale and its next tap is rejected.
+        handleAvailableLoopStates()
     }
 
     private fun QuickWizardEntry.toWear(): EventData.QuickWizard.QuickWizardEntry =
