@@ -8,6 +8,9 @@
     <color name="widget_glass_high">#FFB547</color>
     <color name="widget_glass_low">#FF5A6E</color>
     <color name="widget_glass_stale">#8A93A8</color>
+    <!-- header: temp target icon, temp basal icons (AAPS temp-basal violet) -->
+    <color name="widget_glass_tt">#7CC4FF</color>
+    <color name="widget_glass_tbr">#CF8BFE</color>
     <color name="widget_glass_text_shadow">#8C000000</color>
     <color name="widget_glass_tint_aapsclient1">#E8C50C</color>
     <color name="widget_glass_tint_aapsclient2">#0FBBE0</color>

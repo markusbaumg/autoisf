@@ -229,6 +229,27 @@
     <string name="widget_bolus_amount_1">Bolus button 1 (U)</string>
     <string name="widget_bolus_amount_2">Bolus button 2 (U)</string>
     <string name="widget_opacity">Glass tint</string>
+    <string name="widget_isf" translatable="false">ISF</string>
+    <string name="widget_tt_left">%1$s left</string>
+    <string name="widget_unit_rate" translatable="false">U/h</string>
+    <string name="widget_since">for %1$s</string>
+    <string name="widget_paused">Paused</string>
+    <string name="widget_disconnected">Disconnected</string>
+    <string name="widget_pump_stopped">Pump stopped</string>
+    <string name="widget_smb_ago">SMB %1$s U · %2$d′ ago</string>
+    <string name="widget_smb_now">SMB %1$s U · now</string>
+    <string name="widget_isf_description">Sensitivity %1$s</string>
+    <string name="widget_basal_description">Basal %1$s</string>
+    <string name="widget_age_stale">stale</string>
+    <string name="widget_bolus_locked_reason">Bolus locked · %1$s</string>
+    <string name="widget_lock_low">low</string>
+    <string name="widget_lock_stale">data old</string>
+    <string name="widget_lock_no_bg">no data</string>
+    <string name="widget_lock_paused">paused</string>
+    <string name="widget_lock_pump">pump</string>
+    <string name="widget_lock_running">bolus running</string>
+    <string name="widget_lock_starting">starting</string>
+    <string name="widget_lock_recent">just bolused</string>
     <string name="widget_percent" translatable="false">%1$d %%</string>
 
 </resources>

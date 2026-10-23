@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lowered temp basal (shallow dip). White, tinted in Widget.kt (setColorFilter). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="11dp"
+    android:height="11dp"
+    android:viewportWidth="12"
+    android:viewportHeight="12">
+    <path android:pathData="M0.8,3.4H3.6V7.4H8.4V3.4H11.2" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineJoin="round" android:strokeLineCap="round" android:fillColor="#00000000" />
+</vector>

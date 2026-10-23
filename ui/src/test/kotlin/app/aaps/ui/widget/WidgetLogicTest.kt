@@ -1,6 +1,10 @@
 package app.aaps.ui.widget
 
+import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TrendArrow
+import app.aaps.ui.R
+import app.aaps.ui.widget.WidgetLogic.BasalInput
+import app.aaps.ui.widget.WidgetLogic.BasalState
 import app.aaps.ui.widget.WidgetLogic.BgRange
 import app.aaps.ui.widget.WidgetLogic.Block
 import app.aaps.ui.widget.WidgetLogic.BolusInput
@@ -317,5 +321,159 @@ class WidgetLogicTest {
         assertThat(WidgetLogic.wizardRequestValid(t, t + WidgetLogic.WIZARD_REQUEST_TTL_MS)).isTrue()
         assertThat(WidgetLogic.wizardRequestValid(t, t + WidgetLogic.WIZARD_REQUEST_TTL_MS + 1)).isFalse()
         assertThat(WidgetLogic.wizardRequestValid(t, t - 1)).isFalse()
+    }
+
+    // ---------------------------------------------------------------- header: basal slot
+
+    private val idle = BasalInput(now = now, mode = RM.Mode.CLOSED_LOOP, pumpSuspended = false, suspendMinutesLeft = 0, tempBasal = false, profileBasal = 0.62)
+
+    @Test
+    fun `basal slot is empty when the running basal equals the profile`() {
+        assertThat(WidgetLogic.basalState(idle)).isEqualTo(BasalState.None)
+        // a TBR at 100 % or with the profile rate is no deviation
+        assertThat(WidgetLogic.basalState(idle.copy(tempBasal = true, rate = 0.62, pct = 100))).isEqualTo(BasalState.None)
+        assertThat(WidgetLogic.basalState(idle.copy(tempBasal = true, rate = 0.62, pct = 99))).isEqualTo(BasalState.None)
+        // rate / pct without a running TBR are ignored
+        assertThat(WidgetLogic.basalState(idle.copy(rate = 0.0, pct = 0))).isEqualTo(BasalState.None)
+    }
+
+    @Test
+    fun `zero temp chip counts from the start of the streak`() {
+        val s = WidgetLogic.basalState(idle.copy(tempBasal = true, rate = 0.0, pct = 0, zeroSince = now - 25 * min - 30_000))
+        assertThat(s).isEqualTo(BasalState.Zero(25))
+        assertThat(s.chip).isTrue()
+        // 0.04 U/h is shown as zero, 0.05 is not
+        assertThat(WidgetLogic.basalState(idle.copy(tempBasal = true, rate = 0.04, pct = 6))).isEqualTo(BasalState.Zero(0))
+        assertThat(WidgetLogic.basalState(idle.copy(tempBasal = true, rate = 0.05, pct = 8))).isEqualTo(BasalState.Quiet(0.05, 8, lower = true))
+    }
+
+    @Test
+    fun `high temp chip from 120 percent, below it quiet`() {
+        val high = WidgetLogic.basalState(idle.copy(tempBasal = true, rate = 1.85, pct = 250))
+        assertThat(high).isEqualTo(BasalState.High(1.85, 250))
+        assertThat(high.chip).isTrue()
+        assertThat(WidgetLogic.basalState(idle.copy(tempBasal = true, rate = 0.74, pct = 120))).isEqualTo(BasalState.High(0.74, 120))
+        val q = WidgetLogic.basalState(idle.copy(tempBasal = true, rate = 0.73, pct = 119))
+        assertThat(q).isEqualTo(BasalState.Quiet(0.73, 119, lower = false))
+        assertThat(q.chip).isFalse()
+        val low = WidgetLogic.basalState(idle.copy(tempBasal = true, rate = 0.35, pct = 56))
+        assertThat(low).isEqualTo(BasalState.Quiet(0.35, 56, lower = true))
+        assertThat(low.chip).isFalse()
+    }
+
+    @Test
+    fun `pump and loop pauses win over every temp`() {
+        val zero = idle.copy(tempBasal = true, rate = 0.0, pct = 0)
+        assertThat(WidgetLogic.basalState(zero.copy(pumpSuspended = true))).isEqualTo(BasalState.PumpStopped)
+        assertThat(WidgetLogic.basalState(zero.copy(mode = RM.Mode.SUSPENDED_BY_PUMP))).isEqualTo(BasalState.PumpStopped)
+        assertThat(WidgetLogic.basalState(zero.copy(mode = RM.Mode.DISCONNECTED_PUMP, suspendMinutesLeft = 40))).isEqualTo(BasalState.Disconnected(40))
+        assertThat(WidgetLogic.basalState(zero.copy(mode = RM.Mode.SUSPENDED_BY_USER, suspendMinutesLeft = 20))).isEqualTo(BasalState.Paused(20))
+        assertThat(WidgetLogic.basalState(zero.copy(mode = RM.Mode.SUSPENDED_BY_DST, suspendMinutesLeft = -3))).isEqualTo(BasalState.Paused(0))
+        assertThat(WidgetLogic.basalState(zero.copy(mode = RM.Mode.SUPER_BOLUS, suspendMinutesLeft = 5))).isEqualTo(BasalState.Paused(5))
+        assertThat(WidgetLogic.basalState(zero.copy(mode = null))).isEqualTo(BasalState.Zero(0))
+    }
+
+    @Test
+    fun `smb hint shows for 5 minutes, a basal chip wins`() {
+        val smb = idle.copy(smbAmount = 0.35, smbAt = now - 3 * min - 10_000)
+        assertThat(WidgetLogic.basalState(smb)).isEqualTo(BasalState.Smb(0.35, 3))
+        assertThat(WidgetLogic.basalState(smb).chip).isFalse()
+        assertThat(WidgetLogic.basalState(smb.copy(smbAt = now - 5 * min))).isEqualTo(BasalState.Smb(0.35, 5))
+        assertThat(WidgetLogic.basalState(smb.copy(smbAt = now - 5 * min - 1))).isEqualTo(BasalState.None)
+        assertThat(WidgetLogic.basalState(smb.copy(smbAt = now + 30_000))).isEqualTo(BasalState.Smb(0.35, 0))
+        assertThat(WidgetLogic.basalState(smb.copy(smbAt = now + 2 * min))).isEqualTo(BasalState.None)
+        assertThat(WidgetLogic.basalState(smb.copy(smbAmount = 0.0))).isEqualTo(BasalState.None)
+        // chips win, the SMB hint wins over a quiet temp
+        assertThat(WidgetLogic.basalState(smb.copy(tempBasal = true, rate = 1.85, pct = 250))).isEqualTo(BasalState.High(1.85, 250))
+        assertThat(WidgetLogic.basalState(smb.copy(tempBasal = true, rate = 0.0, pct = 0))).isEqualTo(BasalState.Zero(0))
+        assertThat(WidgetLogic.basalState(smb.copy(tempBasal = true, rate = 0.35, pct = 56))).isEqualTo(BasalState.Smb(0.35, 3))
+        assertThat(WidgetLogic.smbRecent(null, now)).isFalse()
+    }
+
+    @Test
+    fun `zero streak walks back over contiguous zero TBRs`() {
+        // zero TBRs re-issued every 5 min since now - 25 min, a normal basal before
+        val starts = (0..5).map { now - 25 * min + it * 5 * min }
+        val lookup: (Long) -> Long? = { t -> if (t < now - 25 * min) null else starts.last { it <= t } }
+        assertThat(WidgetLogic.zeroStreakStart(now, lookup)).isEqualTo(now - 25 * min)
+        assertThat(WidgetLogic.zeroStreakStart(now) { null }).isNull()
+        // endless zero: capped at 4 h
+        assertThat(WidgetLogic.zeroStreakStart(now) { t -> t - t % (5 * min) }).isEqualTo(now - 4 * 60 * min)
+        // a lookup that does not move back ends the walk
+        assertThat(WidgetLogic.zeroStreakStart(now) { now - min }).isEqualTo(now - min)
+    }
+
+    // ---------------------------------------------------------------- header: temp target, ISF
+
+    @Test
+    fun `temp target minutes left round up and end`() {
+        assertThat(WidgetLogic.ttMinutesLeft(now - 25 * min, 60 * min, now)).isEqualTo(35)
+        assertThat(WidgetLogic.ttMinutesLeft(now - 25 * min - 1, 60 * min, now)).isEqualTo(35)
+        assertThat(WidgetLogic.ttMinutesLeft(now - 60 * min + 1000, 60 * min, now)).isEqualTo(1)
+        assertThat(WidgetLogic.ttMinutesLeft(now - 60 * min, 60 * min, now)).isNull()
+        assertThat(WidgetLogic.ttMinutesLeft(now, 0, now)).isNull()
+        assertThat(WidgetLogic.minutesOrHm(35)).isEqualTo("35′")
+        assertThat(WidgetLogic.minutesOrHm(99)).isEqualTo("99′")
+        assertThat(WidgetLogic.minutesOrHm(100)).isEqualTo("1:40")
+        assertThat(WidgetLogic.minutesOrHm(125)).isEqualTo("2:05")
+    }
+
+    @Test
+    fun `isf only from a recent loop result`() {
+        assertThat(WidgetLogic.currentIsf(74.0, now - 5 * min, now)).isEqualTo(74.0)
+        assertThat(WidgetLogic.currentIsf(74.0, now - 15 * min, now)).isEqualTo(74.0)
+        assertThat(WidgetLogic.currentIsf(74.0, now - 15 * min - 1, now)).isNull()
+        assertThat(WidgetLogic.currentIsf(74.0, now + 2 * min, now)).isNull()
+        assertThat(WidgetLogic.currentIsf(null, now, now)).isNull()
+        assertThat(WidgetLogic.currentIsf(74.0, null, now)).isNull()
+        assertThat(WidgetLogic.currentIsf(0.0, now, now)).isNull()
+        assertThat(WidgetLogic.currentIsf(Double.NaN, now, now)).isNull()
+    }
+
+    @Test
+    fun `autoisf factor and its text`() {
+        assertThat(WidgetLogic.autoIsfFactor(85.0, 74.0)).isEqualTo(1.15)
+        assertThat(WidgetLogic.autoIsfFactor(74.0, 74.0)).isNull()
+        assertThat(WidgetLogic.autoIsfFactor(74.2, 74.0)).isNull()
+        assertThat(WidgetLogic.autoIsfFactor(null, 74.0)).isNull()
+        assertThat(WidgetLogic.autoIsfFactor(85.0, 0.0)).isNull()
+        assertThat(WidgetLogic.factorText(1.15)).isEqualTo("×1,15")
+        assertThat(WidgetLogic.factorText(1.4)).isEqualTo("×1,4")
+        assertThat(WidgetLogic.factorText(2.0)).isEqualTo("×2")
+        assertThat(WidgetLogic.factorText(0.89)).isEqualTo("×0,89")
+        assertThat(WidgetLogic.rateText(1.85)).isEqualTo("1,85")
+        assertThat(WidgetLogic.rateText(0.04)).isEqualTo("0")
+    }
+
+    @Test
+    fun `header width guard drops the factor first, then the temp target time`() {
+        val all = WidgetLogic.headerFit(362f, "Lyumjev FCL", "5,0", null, "4,1", "×1,15", null, false)
+        assertThat(all).isEqualTo(WidgetLogic.HeaderFit(showFactor = true, showTtSuffix = false))
+        val busy = WidgetLogic.headerFit(362f, "Lyumjev FCL 80 %", "8,3", "noch 35′", "4,6", "×0,89", "0 U/h seit 25′", true)
+        assertThat(busy.showFactor).isFalse()
+        val narrow = WidgetLogic.headerFit(200f, "Lyumjev FCL 80 %", "8,3", "noch 35′", "4,6", "×0,89", "Pausiert noch 20′", true)
+        assertThat(narrow).isEqualTo(WidgetLogic.HeaderFit(showFactor = false, showTtSuffix = false))
+        // no factor without an ISF
+        assertThat(WidgetLogic.headerFit(362f, "A", "5,0", null, null, "×1,15", null, false).showFactor).isFalse()
+    }
+
+    // ---------------------------------------------------------------- beta quick wins
+
+    @Test
+    fun `fresh bg without trend gets a neutral dash, stale none`() {
+        assertThat(WidgetLogic.arrowSlotIcon(BgRange.IN, null)).isEqualTo(R.drawable.widget_arrow_unknown)
+        assertThat(WidgetLogic.arrowSlotIcon(BgRange.LOW, TrendArrow.NONE)).isEqualTo(R.drawable.widget_arrow_unknown)
+        assertThat(WidgetLogic.arrowSlotIcon(BgRange.HIGH, TrendArrow.FLAT)).isEqualTo(R.drawable.widget_arrow_flat)
+        assertThat(WidgetLogic.arrowSlotIcon(BgRange.STALE, TrendArrow.FLAT)).isNull()
+        assertThat(WidgetLogic.arrowSlotIcon(BgRange.NONE, null)).isNull()
+    }
+
+    @Test
+    fun `locked pills name a short reason`() {
+        assertThat(WidgetLogic.lockReasonShort(Block.LOW)).isEqualTo(R.string.widget_lock_low)
+        assertThat(WidgetLogic.lockReasonShort(Block.STALE)).isEqualTo(R.string.widget_lock_stale)
+        assertThat(WidgetLogic.lockReasonShort(Block.NO_BG)).isEqualTo(R.string.widget_lock_no_bg)
+        assertThat(WidgetLogic.lockReasonShort(Block.SUSPENDED)).isEqualTo(R.string.widget_lock_paused)
+        assertThat(WidgetLogic.lockReasonShort(Block.CONSTRAINED_TO_ZERO)).isNull()
     }
 }

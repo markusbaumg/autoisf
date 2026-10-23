@@ -1,6 +1,7 @@
 package app.aaps.ui.widget
 
 import app.aaps.core.data.configuration.Constants
+import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.ui.R
 import java.time.Instant
@@ -8,6 +9,7 @@ import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.ceil
 
 /**
  * Pure (Android free) logic of the home-screen widget, unit tested in WidgetLogicTest.
@@ -194,6 +196,15 @@ object WidgetLogic {
         TrendArrow.TRIPLE_DOWN, TrendArrow.TRIPLE_UP, TrendArrow.NONE -> null
     }
 
+    /**
+     * Arrow slot next to the BG: the trend arrow, a neutral dash when the BG is fresh but no trend is known
+     * (never a blank, so "no arrow" is not read as "flat"), nothing for stale / no data.
+     */
+    fun arrowSlotIcon(range: BgRange, arrow: TrendArrow?): Int? = when {
+        range == BgRange.STALE || range == BgRange.NONE -> null
+        else -> arrow?.let { arrowIcon(it) } ?: R.drawable.widget_arrow_unknown
+    }
+
     fun centiUnitsToUnits(cu: Int): Double = cu / 100.0
 
     fun unitsToCentiUnits(u: Double): Int = Math.round(u * 100).toInt()
@@ -324,4 +335,185 @@ object WidgetLogic {
 
     fun wizardRequestValid(armedAt: Long?, nowElapsed: Long): Boolean =
         armedAt != null && nowElapsed - armedAt in 0..WIZARD_REQUEST_TTL_MS
+
+    // ---------------------------------------------------------------- locked bolus pills: short reason
+
+    /** Short reason shown instead of the locked pills ("Bolus gesperrt · tief"); null = only "Bolus gesperrt" */
+    fun lockReasonShort(block: Block): Int? = when (block) {
+        Block.LOW                                   -> R.string.widget_lock_low
+        Block.STALE                                 -> R.string.widget_lock_stale
+        Block.NO_BG                                 -> R.string.widget_lock_no_bg
+        Block.SUSPENDED                             -> R.string.widget_lock_paused
+        Block.PUMP_NOT_READY                        -> R.string.widget_lock_pump
+        Block.BOLUS_RUNNING                         -> R.string.widget_lock_running
+        Block.NOT_INITIALIZED                       -> R.string.widget_lock_starting
+        Block.RECENT_BOLUS                          -> R.string.widget_lock_recent
+        Block.NOT_SUPPORTED, Block.SCREEN_LOCKED,
+        Block.INVALID_AMOUNT, Block.CONSTRAINED_TO_ZERO -> null
+    }
+
+    // ---------------------------------------------------------------- header (display only, read-only data)
+
+    /** Minutes (or h:mm from this many minutes on) in "noch 35′" / "seit 25′" */
+    const val HM_FROM_MINUTES = 100
+
+    /** Temp target: whole minutes left, rounded up, at least 1. null when it already ended or has no end */
+    fun ttMinutesLeft(ttStart: Long, ttDurationMs: Long, now: Long): Int? {
+        if (ttDurationMs <= 0) return null
+        val leftMs = ttStart + ttDurationMs - now
+        if (leftMs <= 0) return null
+        return ceil(leftMs / 60000.0).toInt().coerceAtLeast(1)
+    }
+
+    /** Minutes as "35′" or, from [HM_FROM_MINUTES] on, "1:40" (without the leading word) */
+    fun minutesOrHm(minutes: Long): String =
+        if (minutes < HM_FROM_MINUTES) "$minutes′" else String.format(Locale.US, "%d:%02d", minutes / 60, minutes % 60)
+
+    /** No loop result older than this is shown (ISF / factor hidden) */
+    const val ISF_MAX_AGE_MS = 15 * 60 * 1000L
+
+    /** Current ISF (mg/dL) from the last loop result, null when there is none, it is too old or not positive */
+    fun currentIsf(variableSens: Double?, lastApsRun: Long?, now: Long): Double? = when {
+        variableSens == null || lastApsRun == null -> null
+        variableSens.isNaN() || variableSens <= 0.0 -> null
+        now - lastApsRun > ISF_MAX_AGE_MS || lastApsRun - now > FUTURE_TOLERANCE_MS -> null
+        else -> variableSens
+    }
+
+    /**
+     * AutoISF factor profile ISF / variable ISF (x1,4 = loop 1.4 times more aggressive than the profile),
+     * null when it is not known or rounds to 1,00.
+     */
+    fun autoIsfFactor(profileSens: Double?, variableSens: Double?): Double? {
+        if (profileSens == null || variableSens == null || profileSens <= 0.0 || variableSens <= 0.0) return null
+        val f = Math.round(profileSens / variableSens * 100) / 100.0
+        return if (abs(f - 1.0) < 0.005) null else f
+    }
+
+    /** "×1,4", "×1,15", "×0,89": 2 decimals, trailing zeros stripped */
+    fun factorText(f: Double): String = "×" + decimal(f, 2).trimEnd('0').trimEnd(',')
+
+    /** Basal rate text: 2 decimals, below 0.05 U/h the plain "0" */
+    fun rateText(rate: Double): String = if (rate < ZERO_RATE) "0" else decimal(rate, 2)
+
+    const val ZERO_RATE = 0.05
+
+    /** A high temp from this percentage on gets a chip */
+    const val HIGH_TEMP_PCT = 120
+
+    /** An SMB is shown this long ("SMB 0,35 U · vor 3′") when no basal chip is shown */
+    const val SMB_SHOW_MS = 5 * 60 * 1000L
+
+    /** Zero-temp streak: at most this many TBRs / this far back */
+    const val ZERO_STREAK_MAX_STEPS = 48
+    const val ZERO_STREAK_MAX_MS = 4 * 60 * 60 * 1000L
+
+    /**
+     * Start of the zero-temp streak (how long the loop has held the basal at 0, not the 30 min TBR that is
+     * re-issued every 5 minutes). [zeroTbStartAt] returns the start of the zero TBR running at a time, or null
+     * when no zero TBR runs then. Walks back TBR by TBR (contiguous TBRs: the next one starts where the previous ended).
+     */
+    fun zeroStreakStart(now: Long, zeroTbStartAt: (Long) -> Long?): Long? {
+        var start = zeroTbStartAt(now) ?: return null
+        val limit = now - ZERO_STREAK_MAX_MS
+        repeat(ZERO_STREAK_MAX_STEPS) {
+            if (start <= limit) return limit
+            val previous = zeroTbStartAt(start - 1000L) ?: return start
+            if (previous >= start) return start
+            start = previous
+        }
+        return start.coerceAtLeast(limit)
+    }
+
+    data class BasalInput(
+        val now: Long,
+        val mode: RM.Mode?,
+        /** activePump.isSuspended() */
+        val pumpSuspended: Boolean,
+        /** loop.minutesToEndOfSuspend() */
+        val suspendMinutesLeft: Int,
+        /** a temp basal (or converted extended bolus) runs */
+        val tempBasal: Boolean,
+        /** running rate (U/h) and its percentage of the profile basal, only with [tempBasal] */
+        val rate: Double? = null,
+        val pct: Int? = null,
+        val profileBasal: Double? = null,
+        /** start of the zero-temp streak, see [zeroStreakStart] */
+        val zeroSince: Long? = null,
+        /** newest valid SMB */
+        val smbAmount: Double? = null,
+        val smbAt: Long? = null
+    )
+
+    /** What the right end of the header shows; [chip] = drawn as a chip */
+    sealed class BasalState(val chip: Boolean) {
+        /** running basal equals the profile basal: nothing is shown */
+        object None : BasalState(false)
+        object PumpStopped : BasalState(true)
+        data class Disconnected(val minutesLeft: Int) : BasalState(true)
+        data class Paused(val minutesLeft: Int) : BasalState(true)
+        data class Zero(val sinceMinutes: Long) : BasalState(true)
+        data class High(val rate: Double, val pct: Int) : BasalState(true)
+        data class Smb(val amount: Double, val minutesAgo: Long) : BasalState(false)
+        /** a lowered (or slightly raised) temp: quiet text, [lower] = with the low-temp glyph */
+        data class Quiet(val rate: Double, val pct: Int, val lower: Boolean) : BasalState(false)
+    }
+
+    /** First match wins (chips before the SMB hint, the SMB hint before a quiet temp). Display only. */
+    fun basalState(i: BasalInput): BasalState {
+        val mode = i.mode
+        val rate = if (i.tempBasal) i.rate else null
+        val pct = if (i.tempBasal) i.pct else null
+        val equalsProfile = pct == 100 || (rate != null && i.profileBasal != null && abs(rate - i.profileBasal) < 0.005)
+        val smbAt = i.smbAt
+        return when {
+            i.pumpSuspended || mode == RM.Mode.SUSPENDED_BY_PUMP                     -> BasalState.PumpStopped
+            mode == RM.Mode.DISCONNECTED_PUMP                                        -> BasalState.Disconnected(i.suspendMinutesLeft.coerceAtLeast(0))
+            mode == RM.Mode.SUSPENDED_BY_USER || mode == RM.Mode.SUSPENDED_BY_DST ||
+                mode == RM.Mode.SUPER_BOLUS                                          -> BasalState.Paused(i.suspendMinutesLeft.coerceAtLeast(0))
+            rate != null && rate < ZERO_RATE                                         ->
+                BasalState.Zero(((i.now - (i.zeroSince ?: i.now)).coerceAtLeast(0)) / 60000L)
+            rate != null && pct != null && pct >= HIGH_TEMP_PCT                      -> BasalState.High(rate, pct)
+            smbAt != null && smbRecent(smbAt, i.now) && i.smbAmount != null && i.smbAmount > 0.0 ->
+                BasalState.Smb(i.smbAmount, ((i.now - smbAt).coerceAtLeast(0)) / 60000L)
+            rate != null && pct != null && !equalsProfile                            -> BasalState.Quiet(rate, pct, lower = pct < 100)
+            else                                                                     -> BasalState.None
+        }
+    }
+
+    /** SMB younger than [SMB_SHOW_MS] (a reading up to 1 min in the future counts as now) */
+    fun smbRecent(smbAt: Long?, now: Long): Boolean =
+        smbAt != null && now - smbAt <= SMB_SHOW_MS && smbAt - now <= FUTURE_TOLERANCE_MS
+
+    // ---------------------------------------------------------------- header width guard
+
+    /** dp per character at 12.5 sp (Samsung One UI sans, mixed digits and letters, slightly generous) */
+    private const val HEADER_DP_PER_CHAR = 6.6f
+    private const val HEADER_GAP_DP = 12f
+    private const val HEADER_PROFILE_MAX_DP = 110f
+
+    data class HeaderFit(val showFactor: Boolean, val showTtSuffix: Boolean)
+
+    /**
+     * The header is one line: profile, target, ISF, basal. When the estimated width exceeds [availableDp], the AutoISF
+     * factor goes first, then the temp-target remaining time. The profile name is capped by maxWidth (ellipsized).
+     */
+    fun headerFit(
+        availableDp: Float, profileText: String, targetText: String, ttSuffix: String?,
+        isfText: String?, factorText: String?, basalText: String?, basalChip: Boolean
+    ): HeaderFit {
+        fun w(s: String) = s.length * HEADER_DP_PER_CHAR
+        val profile = minOf(w(profileText), HEADER_PROFILE_MAX_DP)
+        val target = 15f + w(targetText)
+        val suffix = ttSuffix?.let { 4f + w(it) * 0.88f } ?: 0f
+        val isf = isfText?.let { HEADER_GAP_DP + w("ISF $it") } ?: 0f
+        val factor = if (isfText != null) factorText?.let { 4f + w(it) * 0.88f } ?: 0f else 0f
+        val basal = basalText?.let { HEADER_GAP_DP + w(it) * 0.92f + if (basalChip) 32f else 16f } ?: 0f
+        val base = profile + HEADER_GAP_DP + target + isf + basal
+        return when {
+            base + suffix + factor <= availableDp -> HeaderFit(showFactor = factor > 0f, showTtSuffix = suffix > 0f)
+            base + suffix <= availableDp           -> HeaderFit(showFactor = false, showTtSuffix = suffix > 0f)
+            else                                   -> HeaderFit(showFactor = false, showTtSuffix = false)
+        }
+    }
 }

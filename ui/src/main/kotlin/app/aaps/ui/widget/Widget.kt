@@ -16,20 +16,24 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
+import android.text.style.TypefaceSpan
 import android.util.SizeF
 import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
+import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.overview.LastBgData
 import app.aaps.core.interfaces.plugin.ActivePlugin
+import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
@@ -39,8 +43,11 @@ import app.aaps.core.interfaces.utils.TrendCalculator
 import app.aaps.core.keys.BooleanComposedKey
 import app.aaps.core.keys.IntComposedKey
 import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.objects.extensions.convertedToAbsolute
+import app.aaps.core.objects.extensions.convertedToPercent
 import app.aaps.core.objects.extensions.round
 import app.aaps.ui.R
+import app.aaps.ui.widget.WidgetLogic.BasalState
 import app.aaps.ui.widget.WidgetLogic.BgRange
 import app.aaps.ui.widget.WidgetLogic.MeterLevel
 import dagger.android.HasAndroidInjector
@@ -70,6 +77,7 @@ class Widget : AppWidgetProvider() {
     @Inject lateinit var commandQueue: CommandQueue
     @Inject lateinit var statsCache: WidgetStatsCache
     @Inject lateinit var widgetWizard: WidgetWizard
+    @Inject lateinit var processedTbrEbData: ProcessedTbrEbData
 
     companion object {
 
@@ -91,6 +99,9 @@ class Widget : AppWidgetProvider() {
         /** widget_glass_txt3 #96A2BE at 50 % / 40 %: text and unit of a locked bolus pill */
         private const val DISABLED_TEXT_COLOR = 0x8096A2BE.toInt()
         private const val DISABLED_UNIT_COLOR = 0x6696A2BE
+
+        /** Alpha (0..255) of the meters / long-term block during a low, so the red BG is the only loud thing */
+        private const val LOW_DIM_ALPHA = 0x73
     }
 
     private val intentAction = "OpenApp"
@@ -171,10 +182,10 @@ class Widget : AppWidgetProvider() {
                 val now = dateUtil.now()
                 val bg = lastBgData.lastBg()
                 val range = WidgetLogic.bgRange(bg?.recalculated, bg?.timestamp, now)
-                updateHeader(views, now)
+                updateHeader(views, range, now, headerWidthDp(appWidgetManager, appWidgetId))
                 updateBg(views, range, bg?.recalculated, bg?.timestamp, bg?.trendArrow, now)
                 updateTir(views, range)
-                updateLongTerm(views)
+                updateLongTerm(views, range)
                 updateBottom(views, range)
                 updateBolusButtons(context, views, appWidgetId, bg?.recalculated, bg?.timestamp, now)
                 updateCarbsButton(context, views, appWidgetId)
@@ -186,14 +197,175 @@ class Widget : AppWidgetProvider() {
 
     private fun isMmol() = profileFunction.getUnits() == GlucoseUnit.MMOL
 
-    private fun updateHeader(views: RemoteViews, now: Long) {
-        views.setTextViewText(R.id.profile, profileFunction.getProfileName())
-        val targetMgdl = persistenceLayer.getTemporaryTargetActiveAt(now)?.let { (it.lowTarget + it.highTarget) / 2.0 }
-            ?: profileFunction.getProfile()?.getTargetMgdl()
-        if (targetMgdl != null) {
-            views.setTextViewText(R.id.target, gs(R.string.widget_target, WidgetLogic.glucose(targetMgdl, isMmol())))
-            views.setViewVisibility(R.id.target, View.VISIBLE)
-        } else views.setViewVisibility(R.id.target, View.GONE)
+    /** Width the header line has: the portrait (narrowest) widget width minus the 2 x 22 dp padding */
+    private fun headerWidthDp(appWidgetManager: AppWidgetManager, appWidgetId: Int): Float {
+        val w = appWidgetManager.getAppWidgetOptions(appWidgetId)?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH) ?: 0
+        return (if (w > 0) w.toFloat() else 360f) - 44f
+    }
+
+    /**
+     * Header: profile name (always, "Sport 80 %"), target ("◎ 5,0", temp target blue + "noch 35′"), current ISF from
+     * the last loop result ("ISF 4,1 ×1,15"), and at the right end the basal only when it deviates from the profile
+     * (chip) or an SMB just ran. Read-only: nothing here feeds the loop.
+     */
+    private fun updateHeader(views: RemoteViews, range: BgRange, now: Long, availableDp: Float) {
+        val stale = range == BgRange.STALE || range == BgRange.NONE
+        val txt1 = color(R.color.widget_glass_txt1)
+        val txt2 = color(R.color.widget_glass_txt2)
+        val txt3 = color(R.color.widget_glass_txt3)
+
+        // Profile: always, as it is (name + % of a percentage switch)
+        val eps = persistenceLayer.getEffectiveProfileSwitchActiveAt(now)
+        val profileName = eps?.originalProfileName?.takeIf { it.isNotBlank() } ?: profileFunction.getProfileName()
+        val pct = eps?.originalPercentage?.takeIf { it != 100 }
+        val profileText = SpannableStringBuilder(profileName).also { sb ->
+            if (pct != null) appendStyled(sb, " $pct %", txt3, 0.88f)
+        }
+        views.setTextViewText(R.id.profile, profileText)
+        views.setTextColor(R.id.profile, if (stale) txt3 else txt2)
+        views.setViewVisibility(R.id.profile, View.VISIBLE)
+
+        val profile = profileFunction.getProfile()
+        if (profile == null) {
+            listOf(R.id.target_icon, R.id.target, R.id.isf, R.id.basal).forEach { views.setViewVisibility(it, View.GONE) }
+            return
+        }
+
+        // Target: temp target midpoint or the profile target
+        val tt = persistenceLayer.getTemporaryTargetActiveAt(now)
+        val targetMgdl = tt?.let { (it.lowTarget + it.highTarget) / 2.0 } ?: profile.getTargetMgdl()
+        val targetText = WidgetLogic.glucose(targetMgdl, isMmol())
+        val ttLeft = tt?.let { WidgetLogic.ttMinutesLeft(it.timestamp, it.duration, now) }
+        val ttSuffix = ttLeft?.let { gs(R.string.widget_tt_left, WidgetLogic.minutesOrHm(it.toLong())) }
+
+        // ISF: last loop result only, hidden without a recent one (> 15 min)
+        val run = loop.lastRun
+        val req = run?.request
+        val isf = if (config.APS) WidgetLogic.currentIsf(req?.variableSens, run?.lastAPSRun, now) else null
+        val isfText = isf?.let { WidgetLogic.glucose(it, isMmol()) }
+        val factor = if (isf != null && !stale) req?.oapsProfileAutoIsf?.let { WidgetLogic.autoIsfFactor(it.sens, it.variable_sens) } else null
+        val factorText = factor?.let { WidgetLogic.factorText(it) }
+
+        // Basal
+        val basal = if (config.APS) basalState(profile, now) else BasalState.None
+        val basalPlain = basalText(basal)
+
+        val fit = WidgetLogic.headerFit(availableDp, profileText.toString(), targetText, ttSuffix, isfText, factorText, basalPlain, basal.chip)
+
+        // Target view
+        views.setViewVisibility(R.id.target_icon, View.VISIBLE)
+        views.setViewVisibility(R.id.target, View.VISIBLE)
+        views.setInt(R.id.target_icon, "setColorFilter", if (tt != null && !stale) color(R.color.widget_glass_tt) else txt3)
+        val target = SpannableStringBuilder()
+        appendStyled(target, targetText, if (stale) txt3 else if (tt != null) txt1 else txt2, medium = true)
+        if (ttSuffix != null && fit.showTtSuffix) appendStyled(target, " $ttSuffix", txt3, 0.88f)
+        views.setTextViewText(R.id.target, target)
+        views.setContentDescription(R.id.target, gs(R.string.widget_target, targetText + (ttSuffix?.let { ", $it" } ?: "")))
+
+        // ISF view
+        if (isfText != null) {
+            val sb = SpannableStringBuilder()
+            appendStyled(sb, gs(R.string.widget_isf) + " ", txt3)
+            appendStyled(sb, isfText, if (stale) txt3 else txt2, medium = true)
+            if (factorText != null && fit.showFactor) appendStyled(sb, " $factorText", txt3, 0.88f)
+            views.setTextViewText(R.id.isf, sb)
+            views.setContentDescription(R.id.isf, gs(R.string.widget_isf_description, isfText + (factorText?.let { " $it" } ?: "")))
+            views.setViewVisibility(R.id.isf, View.VISIBLE)
+        } else views.setViewVisibility(R.id.isf, View.GONE)
+
+        updateBasal(views, basal, basalPlain, stale)
+    }
+
+    /** Basal slot state from read-only pump / loop / DB data */
+    private fun basalState(profile: Profile, now: Long): BasalState {
+        val tb = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
+        val rate = tb?.convertedToAbsolute(now, profile)
+        val zeroSince = if (tb != null && rate != null && rate < WidgetLogic.ZERO_RATE)
+            WidgetLogic.zeroStreakStart(now) { t ->
+                processedTbrEbData.getTempBasalIncludingConvertedExtended(t)?.takeIf { it.convertedToAbsolute(t, profile) < WidgetLogic.ZERO_RATE }?.timestamp
+            }
+        else null
+        val smb = persistenceLayer.getNewestBolusOfType(BS.Type.SMB)?.takeIf { it.isValid }
+        return WidgetLogic.basalState(
+            WidgetLogic.BasalInput(
+                now = now,
+                mode = loop.runningMode,
+                pumpSuspended = activePlugin.activePump.isSuspended(),
+                suspendMinutesLeft = loop.minutesToEndOfSuspend(),
+                tempBasal = tb != null,
+                rate = rate,
+                pct = tb?.convertedToPercent(now, profile),
+                profileBasal = profile.getBasal(now),
+                zeroSince = zeroSince,
+                smbAmount = smb?.amount,
+                smbAt = smb?.timestamp
+            )
+        )
+    }
+
+    /** Main text and suffix of the basal slot, null when nothing is shown */
+    private fun basalParts(state: BasalState): Pair<String, String?>? {
+        val rateUnit = gs(R.string.widget_unit_rate)
+        fun minutesLeft(m: Int) = if (m > 0) gs(R.string.widget_tt_left, WidgetLogic.minutesOrHm(m.toLong())) else null
+        return when (state) {
+            BasalState.None            -> null
+            BasalState.PumpStopped     -> gs(R.string.widget_pump_stopped) to null
+            is BasalState.Disconnected -> gs(R.string.widget_disconnected) to minutesLeft(state.minutesLeft)
+            is BasalState.Paused       -> gs(R.string.widget_paused) to minutesLeft(state.minutesLeft)
+            is BasalState.Zero         -> "0 $rateUnit" to gs(R.string.widget_since, WidgetLogic.minutesOrHm(state.sinceMinutes))
+            is BasalState.High         -> "${WidgetLogic.rateText(state.rate)} $rateUnit" to "${state.pct} %"
+            is BasalState.Quiet        -> "${WidgetLogic.rateText(state.rate)} $rateUnit" to "${state.pct} %"
+            is BasalState.Smb          ->
+                (if (state.minutesAgo < 1) gs(R.string.widget_smb_now, WidgetLogic.amountText(state.amount))
+                else gs(R.string.widget_smb_ago, WidgetLogic.amountText(state.amount), state.minutesAgo.toInt())) to null
+        }
+    }
+
+    private fun basalText(state: BasalState): String? = basalParts(state)?.let { (main, suffix) -> main + (suffix?.let { " $it" } ?: "") }
+
+    private fun updateBasal(views: RemoteViews, state: BasalState, plain: String?, stale: Boolean) {
+        val parts = basalParts(state)
+        if (parts == null || plain == null) {
+            views.setViewVisibility(R.id.basal, View.GONE)
+            return
+        }
+        val (main, suffix) = parts
+        val txt1 = color(R.color.widget_glass_txt1)
+        val txt2 = color(R.color.widget_glass_txt2)
+        val txt3 = color(R.color.widget_glass_txt3)
+        val rateUnit = gs(R.string.widget_unit_rate)
+        val sb = SpannableStringBuilder()
+        val mainColor = if (!state.chip) txt3 else if (stale) txt2 else txt1
+        if (main.endsWith(" $rateUnit")) {
+            appendStyled(sb, main.removeSuffix(" $rateUnit"), mainColor, medium = state.chip)
+            appendStyled(sb, " $rateUnit", txt3, 0.85f)
+        } else appendStyled(sb, main, mainColor, medium = state.chip)
+        if (suffix != null) appendStyled(sb, " $suffix", txt3, if (state.chip) 0.96f else 1f)
+        views.setTextViewText(R.id.basal_text, sb)
+        views.setContentDescription(R.id.basal, gs(R.string.widget_basal_description, plain))
+
+        val (icon, iconColor) = when (state) {
+            BasalState.PumpStopped                           -> R.drawable.widget_ic_pause to color(R.color.widget_glass_low)
+            is BasalState.Disconnected, is BasalState.Paused -> R.drawable.widget_ic_pause to color(R.color.widget_glass_high)
+            is BasalState.Zero                               -> R.drawable.widget_ic_tbr_zero to color(R.color.widget_glass_tbr)
+            is BasalState.High                               -> R.drawable.widget_ic_tbr_high to color(R.color.widget_glass_tbr)
+            is BasalState.Quiet                              -> (if (state.lower) R.drawable.widget_ic_tbr_low else null) to txt3
+            BasalState.None, is BasalState.Smb               -> null to txt3
+        }
+        if (icon != null) {
+            views.setImageViewResource(R.id.basal_icon, icon)
+            views.setInt(R.id.basal_icon, "setColorFilter", iconColor)
+            views.setViewVisibility(R.id.basal_icon, View.VISIBLE)
+        } else views.setViewVisibility(R.id.basal_icon, View.GONE)
+
+        if (state.chip) {
+            views.setInt(R.id.basal, "setBackgroundResource", R.drawable.widget_header_chip)
+            views.setViewPadding(R.id.basal, dp(7f), 0, dp(9f), 0)
+        } else {
+            views.setInt(R.id.basal, "setBackgroundResource", 0)
+            views.setViewPadding(R.id.basal, 0, 0, 0, 0)
+        }
+        views.setViewVisibility(R.id.basal, View.VISIBLE)
     }
 
     private fun rangeColor(range: BgRange): Int = color(
@@ -211,23 +383,29 @@ class Widget : AppWidgetProvider() {
         views.setTextColor(R.id.bg, col)
 
         // Same arrow as the overview; the newest glucose value's own arrow while the bucketed data is not there yet
+        // A fresh BG without a known trend gets a neutral dash in txt3, never a blank
         val arrow = if (range == BgRange.STALE || range == BgRange.NONE) null
         else WidgetLogic.trendArrow(trendCalculator.getTrendArrow(iobCobCalculator.ads), lastBgArrow)
-        val arrowIcon = arrow?.let { WidgetLogic.arrowIcon(it) }
+        val arrowIcon = WidgetLogic.arrowSlotIcon(range, arrow)
         if (arrowIcon != null) {
             views.setImageViewResource(R.id.arrow, arrowIcon)
-            views.setInt(R.id.arrow, "setColorFilter", col)
+            views.setInt(R.id.arrow, "setColorFilter", if (arrow == null) color(R.color.widget_glass_txt3) else col)
             views.setViewVisibility(R.id.arrow, View.VISIBLE)
         } else views.setViewVisibility(R.id.arrow, View.GONE)
 
         val age = bgTimestamp?.let { WidgetLogic.ageMinutes(it, now) }
+        val ageText = when {
+            age == null -> ""
+            age < 1     -> gs(R.string.widget_age_now)
+            age < 60    -> gs(R.string.widget_age_min, age.toInt())
+            else        -> gs(R.string.widget_age_hours, (age / 60).toInt())
+        }
+        // Stale: amber age plus a second line "veraltet" (the arrow slot is empty then), so a grey BG is not read as current
         views.setTextViewText(
-            R.id.age, when {
-                age == null -> ""
-                age < 1     -> gs(R.string.widget_age_now)
-                age < 60    -> gs(R.string.widget_age_min, age.toInt())
-                else        -> gs(R.string.widget_age_hours, (age / 60).toInt())
-            }
+            R.id.age,
+            if (range == BgRange.STALE && ageText.isNotEmpty())
+                SpannableStringBuilder(ageText).also { appendStyled(it, "\n" + gs(R.string.widget_age_stale), color(R.color.widget_glass_high), 0.92f, medium = true) }
+            else ageText
         )
         views.setTextColor(R.id.age, color(if (range == BgRange.STALE) R.color.widget_glass_high else R.color.widget_glass_txt2))
 
@@ -243,6 +421,11 @@ class Widget : AppWidgetProvider() {
     private fun updateTir(views: RemoteViews, range: BgRange) {
         val stats = statsCache.stats
         val stale = range == BgRange.STALE || range == BgRange.NONE
+        // Low: the meters step back (dimmed) so the red BG is the only loud thing
+        val low = range == BgRange.LOW
+        views.setTextColor(R.id.tir1_label, dimmed(color(R.color.widget_glass_txt2), low))
+        views.setTextColor(R.id.tir2_label, dimmed(color(R.color.widget_glass_txt2), low))
+        views.setTextColor(R.id.tir3_label, dimmed(color(R.color.widget_glass_txt2), low))
         // 7 / 30 d labels show the days really covered ("15 T" with 15 days of history), the nominal days without data
         val labelTexts = listOf(
             gs(R.string.widget_tir_24h),
@@ -260,10 +443,10 @@ class Widget : AppWidgetProvider() {
                 else                     -> color(R.color.widget_glass_in)
             }
             views.setInt(meterFills[i], "setColorFilter", fillColor)
-            views.setInt(meterFills[i], "setImageAlpha", if (stale) 150 else 255)
+            views.setInt(meterFills[i], "setImageAlpha", if (low) LOW_DIM_ALPHA else if (stale) 150 else 255)
             views.setInt(meterFills[i], "setImageLevel", (pct ?: 0).coerceIn(0, 100) * 100)
             views.setTextViewText(meterTexts[i], withUnit(pct?.toString() ?: gs(app.aaps.core.ui.R.string.value_unavailable_short), "%", 0.76f))
-            views.setTextColor(meterTexts[i], color(if (stale) R.color.widget_glass_txt2 else R.color.widget_glass_txt1))
+            views.setTextColor(meterTexts[i], dimmed(color(if (stale) R.color.widget_glass_txt2 else R.color.widget_glass_txt1), low))
             views.setContentDescription(meterTexts[i], gs(R.string.widget_tir_description, labelTexts[i], pct?.let { "$it %" } ?: "--"))
         }
     }
@@ -272,8 +455,13 @@ class Widget : AppWidgetProvider() {
      * 14 day mean glucose and HbA1c (statistics screen numbers). Long-term values: never range coloured, not dimmed when stale.
      * Both rows or none; [applySize] hides them again where the widget is too low.
      */
-    private fun updateLongTerm(views: RemoteViews) {
+    private fun updateLongTerm(views: RemoteViews, range: BgRange) {
         val stats = statsCache.stats
+        val low = range == BgRange.LOW
+        views.setTextColor(R.id.mean_label, dimmed(color(R.color.widget_glass_txt3), low))
+        views.setTextColor(R.id.a1c_label, dimmed(color(R.color.widget_glass_txt3), low))
+        views.setTextColor(R.id.mean_value, dimmed(color(R.color.widget_glass_txt2), low))
+        views.setTextColor(R.id.a1c_value, dimmed(color(R.color.widget_glass_txt2), low))
         val mean = stats.meanMgdl
         val a1c = stats.hbA1c
         val show = WidgetLogic.showLongTerm(mean, a1c, stats.longTermDays)
@@ -295,6 +483,9 @@ class Widget : AppWidgetProvider() {
         views.setViewPadding(R.id.history_block, 0, if (show) dp(5f) else 0, 0, 0)
     }
 
+    /** [c] at [LOW_DIM_ALPHA] when [dim] (meters and long-term rows during a low) */
+    private fun dimmed(c: Int, dim: Boolean): Int = if (dim) (c and 0x00FFFFFF) or (LOW_DIM_ALPHA shl 24) else c
+
     private fun dp(value: Float): Int = Math.round(value * appContext.resources.displayMetrics.density)
 
     private fun updateBottom(views: RemoteViews, range: BgRange) {
@@ -304,19 +495,20 @@ class Widget : AppWidgetProvider() {
         views.setTextViewText(R.id.iob, withUnit(WidgetLogic.decimal(iob, 2), unitU))
         val cob = iobCobCalculator.getCobInfo("Widget COB").displayCob
         views.setTextViewText(R.id.cob, withUnit(cob?.let { WidgetLogic.decimal(it, 0) } ?: gs(app.aaps.core.ui.R.string.value_unavailable_short), gs(R.string.widget_unit_carbs)))
-        val valueColor = color(if (stale) R.color.widget_glass_txt2 else R.color.widget_glass_txt1)
+        // Stale: every live value greys out (txt3), not only the BG; otherwise IOB / KH / TDD in the normal txt1
+        val valueColor = color(if (stale) R.color.widget_glass_txt3 else R.color.widget_glass_txt1)
         views.setTextColor(R.id.iob, valueColor)
         views.setTextColor(R.id.cob, valueColor)
-        // TDD is history, not "now": one step quieter
         val tdd = statsCache.stats.tdd24h
         views.setTextViewText(R.id.tdd, withUnit(tdd?.let { WidgetLogic.decimal(it, 1) } ?: gs(app.aaps.core.ui.R.string.value_unavailable_short), unitU))
-        views.setTextColor(R.id.tdd, color(R.color.widget_glass_txt2))
+        views.setTextColor(R.id.tdd, valueColor)
     }
 
     private fun updateBolusButtons(context: Context, views: RemoteViews, appWidgetId: Int, bgMgdl: Double?, bgTimestamp: Long?, now: Long) {
         if (!config.APS) {
             views.setViewVisibility(R.id.bolus1, View.GONE)
             views.setViewVisibility(R.id.bolus2, View.GONE)
+            views.setViewVisibility(R.id.bolus_locked, View.GONE)
             return
         }
         // Hint only, from in-memory data: WidgetBolusActivity checks everything again before and at confirmation
@@ -332,6 +524,19 @@ class Widget : AppWidgetProvider() {
                 now = now
             )
         )
+        // Locked: the pills give way to a short reason ("Bolus gesperrt · tief"); a tap explains it in full
+        if (block != null) {
+            val reason = WidgetLogic.lockReasonShort(block)
+            views.setTextViewText(R.id.bolus_locked, reason?.let { gs(R.string.widget_bolus_locked_reason, gs(it)) } ?: gs(R.string.widget_bolus_locked))
+            views.setTextColor(R.id.bolus_locked, color(R.color.widget_glass_txt3))
+            views.setContentDescription(R.id.bolus_locked, gs(R.string.widget_bolus_locked) + ": " + gs(WidgetBolusActivity.blockText(block)))
+            views.setOnClickPendingIntent(R.id.bolus_locked, WidgetBolusActivity.pendingIntent(context, appWidgetId, 1))
+            views.setViewVisibility(R.id.bolus_locked, View.VISIBLE)
+            views.setViewVisibility(R.id.bolus1, View.GONE)
+            views.setViewVisibility(R.id.bolus2, View.GONE)
+            return
+        }
+        views.setViewVisibility(R.id.bolus_locked, View.GONE)
         val unitU = gs(R.string.widget_unit_insulin)
         listOf(
             Triple(1, R.id.bolus1, IntComposedKey.WidgetBolusAmount1),
@@ -407,6 +612,15 @@ class Widget : AppWidgetProvider() {
         if (config.APS) views.setViewVisibility(R.id.carbs, if (WidgetLogic.showCarbsPill(widthDp)) View.VISIBLE else View.GONE)
         // Too low for the two long-term rows: hide them, the meters stay centred
         if (!WidgetLogic.longTermFits(heightDp)) setLongTermVisible(views, false)
+    }
+
+    /** Appends [text] in [color], optionally smaller and medium weight (spans that survive RemoteViews) */
+    private fun appendStyled(sb: SpannableStringBuilder, text: String, color: Int, relativeSize: Float = 1f, medium: Boolean = false) {
+        val start = sb.length
+        sb.append(text)
+        sb.setSpan(ForegroundColorSpan(color), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        if (relativeSize != 1f) sb.setSpan(RelativeSizeSpan(relativeSize), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        if (medium) sb.setSpan(TypefaceSpan("sans-serif-medium"), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 
     /** "3,85 U": value in the view's colour, unit smaller and quieter */

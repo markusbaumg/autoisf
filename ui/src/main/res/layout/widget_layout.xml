@@ -47,9 +47,12 @@
             android:layout_height="0dp"
             android:layout_weight="3" />
 
+        <!-- Header: profile (always), target (temp target: blue icon + remaining time), current ISF (+ AutoISF factor),
+             basal at the right end only when it deviates from the profile (chip) or an SMB just ran. Display only. -->
         <LinearLayout
+            android:id="@+id/header"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="20dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -58,20 +61,69 @@
                 style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginEnd="12dp"
                 android:ellipsize="end"
-                android:fontFamily="sans-serif-medium"
-                android:maxWidth="190dp"
+                android:maxWidth="110dp"
                 android:textSize="12.5sp"
                 tools:text="Lyumjev FCL" />
+
+            <ImageView
+                android:id="@+id/target_icon"
+                android:layout_width="11dp"
+                android:layout_height="11dp"
+                android:layout_marginEnd="4dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/widget_ic_target" />
 
             <TextView
                 android:id="@+id/target"
                 style="@style/WidgetGlassText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
                 android:textSize="12.5sp"
-                tools:text="Ziel 5,0" />
+                tools:text="5,0" />
+
+            <TextView
+                android:id="@+id/isf"
+                style="@style/WidgetGlassText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:textSize="12.5sp"
+                tools:text="ISF 4,1" />
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <!-- basal: chip (background set in code) or quiet text; GONE when the basal equals the profile -->
+            <LinearLayout
+                android:id="@+id/basal"
+                android:layout_width="wrap_content"
+                android:layout_height="20dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="7dp"
+                android:paddingEnd="9dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/basal_icon"
+                    android:layout_width="11dp"
+                    android:layout_height="11dp"
+                    android:layout_marginEnd="5dp"
+                    android:importantForAccessibility="no"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/basal_text"
+                    style="@style/WidgetGlassText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="11.5sp"
+                    tools:text="0 U/h seit 25′" />
+            </LinearLayout>
         </LinearLayout>
 
         <FrameLayout
@@ -123,6 +175,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
+                        android:maxLines="2"
                         android:textSize="12sp"
                         tools:text="vor 1′" />
                 </LinearLayout>
@@ -541,6 +594,20 @@
                 android:scaleType="fitCenter"
                 android:src="@drawable/widget_calculator" />
         </FrameLayout>
+
+        <!-- Locked quick bolus: the two pills are replaced by a short reason ("Bolus gesperrt · tief"); tap explains -->
+        <TextView
+            android:id="@+id/bolus_locked"
+            style="@style/WidgetGlassText"
+            android:layout_width="136dp"
+            android:layout_height="48dp"
+            android:ellipsize="end"
+            android:gravity="end|center_vertical"
+            android:maxLines="2"
+            android:textColor="@color/widget_glass_txt3"
+            android:textSize="12sp"
+            android:visibility="gone"
+            tools:text="Bolus gesperrt · tief" />
 
         <FrameLayout
             android:id="@+id/bolus1"

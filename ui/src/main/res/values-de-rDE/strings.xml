@@ -167,6 +167,25 @@
     <string name="widget_bolus_amount_1">Bolus-Knopf 1 (U)</string>
     <string name="widget_bolus_amount_2">Bolus-Knopf 2 (U)</string>
     <string name="widget_opacity">Glas-Tönung</string>
+    <string name="widget_tt_left">noch %1$s</string>
+    <string name="widget_since">seit %1$s</string>
+    <string name="widget_paused">Pausiert</string>
+    <string name="widget_disconnected">Getrennt</string>
+    <string name="widget_pump_stopped">Pumpe gestoppt</string>
+    <string name="widget_smb_ago">SMB %1$s U · vor %2$d′</string>
+    <string name="widget_smb_now">SMB %1$s U · jetzt</string>
+    <string name="widget_isf_description">Empfindlichkeit %1$s</string>
+    <string name="widget_basal_description">Basal %1$s</string>
+    <string name="widget_age_stale">veraltet</string>
+    <string name="widget_bolus_locked_reason">Bolus gesperrt · %1$s</string>
+    <string name="widget_lock_low">tief</string>
+    <string name="widget_lock_stale">Daten alt</string>
+    <string name="widget_lock_no_bg">keine Daten</string>
+    <string name="widget_lock_paused">pausiert</string>
+    <string name="widget_lock_pump">Pumpe</string>
+    <string name="widget_lock_running">Bolus läuft</string>
+    <string name="widget_lock_starting">startet</string>
+    <string name="widget_lock_recent">gerade Bolus</string>
     <string name="widget_configuration">Widget-Einstellungen</string>
     <string name="use_black_color">Schwarz verwenden</string>
 
