@@ -60,8 +60,11 @@ class WidgetWizard @Inject constructor(
         }
     }
 
+    /** elapsedRealtime of the last widget tap, until a MainActivity intent consumes it */
     private var armedAt: Long? = null
-    private var requested = false
+
+    /** elapsedRealtime of the tap behind the pending MainActivity request, null = nothing to open */
+    private var requestedAt: Long? = null
 
     /** Same conditions as the overview's calculator button */
     fun block(): WizardBlock? {
@@ -79,17 +82,22 @@ class WidgetWizard @Inject constructor(
         armedAt = SystemClock.elapsedRealtime()
     }
 
-    /** MainActivity.onCreate / onNewIntent */
+    /**
+     * MainActivity.onCreate / onNewIntent. The first OPEN_WIZARD intent consumes the armed tap, so a tap
+     * can never be reused by a later (external) intent; any other intent drops a pending request.
+     */
     @Synchronized fun onIntent(intent: Intent?) {
-        if (intent?.action == ACTION_OPEN_WIZARD) requested = true
+        if (intent?.action == ACTION_OPEN_WIZARD) {
+            requestedAt = armedAt?.takeIf { WidgetLogic.wizardRequestValid(it, SystemClock.elapsedRealtime()) }
+            armedAt = null
+        } else requestedAt = null
     }
 
     /** MainActivity, after its APPLICATION protection passed. Opens the wizard once per armed tap. */
     fun openIfRequested(activity: FragmentActivity) {
         val valid = synchronized(this) {
-            val v = requested && WidgetLogic.wizardRequestValid(armedAt, SystemClock.elapsedRealtime())
-            requested = false
-            armedAt = null
+            val v = WidgetLogic.wizardRequestValid(requestedAt, SystemClock.elapsedRealtime())
+            requestedAt = null
             v
         }
         if (!valid) return
