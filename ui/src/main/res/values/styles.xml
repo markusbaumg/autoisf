@@ -4,4 +4,15 @@
         <item name="android:background">?android:attr/colorBackground</item>
     </style>
 
+    <!-- Text on the glass widget: every string gets a shadow for contrast on unknown wallpapers (1 dp down, 3 dp blur at ~2.75 px/dp) -->
+    <style name="WidgetGlassText">
+        <item name="android:shadowColor">@color/widget_glass_text_shadow</item>
+        <item name="android:shadowDx">0</item>
+        <item name="android:shadowDy">2.75</item>
+        <item name="android:shadowRadius">8</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:textColor">@color/widget_glass_txt2</item>
+    </style>
+
 </resources>

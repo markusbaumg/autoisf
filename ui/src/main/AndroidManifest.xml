@@ -24,6 +24,17 @@
                 android:resource="@xml/widget_info" />
         </receiver>
 
+        <!-- Widget quick-bolus confirmation: started only by the widget's PendingIntent (not exported, no intent-filter) -->
+        <activity
+            android:name=".widget.WidgetBolusActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:taskAffinity="app.aaps.widgetbolus"
+            android:theme="@style/Theme.MaterialComponents.Translucent" />
+
         <activity
             android:name=".activities.TDDStatsActivity"
             android:exported="false"

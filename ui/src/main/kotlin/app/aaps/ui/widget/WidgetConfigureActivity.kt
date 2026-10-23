@@ -10,6 +10,7 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.ui.databinding.WidgetConfigureBinding
 import dagger.android.DaggerActivity
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 /**
  * The configuration screen for the [Widget] AppWidget.
@@ -54,6 +55,25 @@ class WidgetConfigureActivity : DaggerActivity() {
             Widget.updateWidget(this@WidgetConfigureActivity, "WidgetConfigure")
         }
 
+        // Quick-bolus amounts, per widget, in steps of 0.05 U (constraints are applied again at confirmation)
+        listOf(
+            Triple(binding.bolus1Seek, binding.bolus1Value, IntComposedKey.WidgetBolusAmount1),
+            Triple(binding.bolus2Seek, binding.bolus2Value, IntComposedKey.WidgetBolusAmount2)
+        ).forEach { (seek, label, key) ->
+            seek.max = ((WidgetLogic.MAX_AMOUNT - WidgetLogic.MIN_AMOUNT) / AMOUNT_STEP).roundToInt()
+            seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onStopTrackingTouch(seekBar: SeekBar) {}
+                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    val amount = WidgetLogic.clampAmount(WidgetLogic.MIN_AMOUNT + progress * AMOUNT_STEP)
+                    label.text = WidgetLogic.amountText(amount) + " " + getString(app.aaps.core.ui.R.string.insulin_unit_shortname)
+                    if (!fromUser || appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return
+                    preferences.put(key, appWidgetId, value = WidgetLogic.unitsToCentiUnits(amount))
+                    Widget.updateWidget(this@WidgetConfigureActivity, "WidgetConfigure")
+                }
+            })
+        }
+
         // Find the widget id from the intent.
         appWidgetId = intent.extras?.getInt(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID) ?: AppWidgetManager.INVALID_APPWIDGET_ID
 
@@ -65,6 +85,19 @@ class WidgetConfigureActivity : DaggerActivity() {
 
         binding.seekBar.progress = preferences.get(IntComposedKey.WidgetOpacity, appWidgetId)
         binding.useBlack.isChecked = preferences.get(BooleanComposedKey.WidgetUseBlack, appWidgetId)
+        binding.bolus1Seek.progress = amountToProgress(preferences.get(IntComposedKey.WidgetBolusAmount1, appWidgetId))
+        binding.bolus2Seek.progress = amountToProgress(preferences.get(IntComposedKey.WidgetBolusAmount2, appWidgetId))
+        // onProgressChanged is not called for progress 0
+        binding.bolus1Value.text = WidgetLogic.amountText(WidgetLogic.centiUnitsToUnits(preferences.get(IntComposedKey.WidgetBolusAmount1, appWidgetId))) + " " + getString(app.aaps.core.ui.R.string.insulin_unit_shortname)
+        binding.bolus2Value.text = WidgetLogic.amountText(WidgetLogic.centiUnitsToUnits(preferences.get(IntComposedKey.WidgetBolusAmount2, appWidgetId))) + " " + getString(app.aaps.core.ui.R.string.insulin_unit_shortname)
+    }
+
+    private fun amountToProgress(centiUnits: Int): Int =
+        ((WidgetLogic.clampAmount(WidgetLogic.centiUnitsToUnits(centiUnits)) - WidgetLogic.MIN_AMOUNT) / AMOUNT_STEP).roundToInt()
+
+    companion object {
+
+        private const val AMOUNT_STEP = 0.05
     }
 
     override fun onDestroy() {
@@ -72,5 +105,7 @@ class WidgetConfigureActivity : DaggerActivity() {
         binding.seekBar.setOnSeekBarChangeListener(null)
         binding.closeLayout.close.setOnClickListener(null)
         binding.useBlack.setOnCheckedChangeListener(null)
+        binding.bolus1Seek.setOnSeekBarChangeListener(null)
+        binding.bolus2Seek.setOnSeekBarChangeListener(null)
     }
 }

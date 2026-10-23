@@ -35,7 +35,7 @@
         android:layout_marginBottom="8dp"
         android:gravity="center_horizontal"
         android:labelFor="@id/seekBar"
-        android:text="@string/configure" />
+        android:text="@string/widget_opacity" />
 
     <SeekBar
         android:id="@+id/seekBar"
@@ -50,6 +50,65 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:text="@string/use_black_color" />
+
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:labelFor="@id/bolus1_seek"
+            android:text="@string/widget_bolus_amount_1" />
+
+        <TextView
+            android:id="@+id/bolus1_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="48dp"
+            android:gravity="end" />
+    </LinearLayout>
+
+    <SeekBar
+        android:id="@+id/bolus1_seek"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:minHeight="48dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:labelFor="@id/bolus2_seek"
+            android:text="@string/widget_bolus_amount_2" />
+
+        <TextView
+            android:id="@+id/bolus2_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="48dp"
+            android:gravity="end" />
+    </LinearLayout>
+
+    <SeekBar
+        android:id="@+id/bolus2_seek"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:minHeight="48dp" />
 
     <include
         android:id="@+id/close_layout"

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Glass film over the tint: frost lift (L3), sheen (L4), 1 dp rim (L6) and the brighter top specular line (L7) -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- frost lift, white 6 % to 1.5 % -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="24dp" />
+            <gradient
+                android:angle="270"
+                android:endColor="#04FFFFFF"
+                android:startColor="#0FFFFFFF" />
+        </shape>
+    </item>
+    <!-- sheen from the top left -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="24dp" />
+            <gradient
+                android:centerX="0.15"
+                android:centerY="0.0"
+                android:endColor="#00FFFFFF"
+                android:gradientRadius="70%p"
+                android:startColor="#17FFFFFF"
+                android:type="radial" />
+        </shape>
+    </item>
+    <!-- rim -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="24dp" />
+            <solid android:color="@android:color/transparent" />
+            <stroke
+                android:width="1dp"
+                android:color="#1CFFFFFF" />
+        </shape>
+    </item>
+    <!-- rim brighter at the top: top edge and top corners only (the rest of this shape is below the view and clipped) -->
+    <item android:bottom="-2000dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="24dp" />
+            <solid android:color="@android:color/transparent" />
+            <stroke
+                android:width="1dp"
+                android:color="#1FFFFFFF" />
+        </shape>
+    </item>
+    <!-- specular line at the top, fading out to both ends -->
+    <item
+        android:height="1dp"
+        android:gravity="top|fill_horizontal"
+        android:left="24dp"
+        android:right="24dp"
+        android:top="1dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="0"
+                android:centerColor="#73FFFFFF"
+                android:endColor="#00FFFFFF"
+                android:startColor="#00FFFFFF" />
+        </shape>
+    </item>
+</layer-list>

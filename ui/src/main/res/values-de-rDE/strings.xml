@@ -125,4 +125,39 @@
     <string name="overview_edit_quickwizard_valid">Gültigkeit:</string>
     <string name="a11y_drag_and_drop_handle">Drag and Drop Handle</string>
     <!--    Widget-->
+
+    <!-- kusi glass widget -->
+    <string name="widget_target">Ziel %1$s</string>
+    <string name="widget_age_now">jetzt</string>
+    <string name="widget_age_min">vor %1$d′</string>
+    <string name="widget_age_hours">vor %1$d Std</string>
+    <string name="widget_tir_7d">7 T</string>
+    <string name="widget_tir_30d">30 T</string>
+    <string name="widget_cob">KH</string>
+    <string name="widget_tir_description">Zeit im Zielbereich %1$s: %2$s</string>
+    <string name="widget_bolus_request">Bolus %1$s U anfragen</string>
+    <string name="widget_bolus_locked">Bolus gesperrt</string>
+    <string name="widget_bolus_title">Widget-Bolus</string>
+    <string name="widget_bolus_requested">Angefragt: %1$s U</string>
+    <string name="widget_bolus_iob_now">IOB jetzt: %1$s U</string>
+    <string name="widget_bolus_glucose">Glukose: %1$s (%2$s)</string>
+    <string name="widget_bolus_not_given">Nichts abgegeben: %1$s</string>
+    <string name="widget_bolus_block_not_supported">In diesem Build nicht verfügbar</string>
+    <string name="widget_bolus_block_not_initialized">AAPS startet noch</string>
+    <string name="widget_bolus_block_screen_locked">Erst entsperren</string>
+    <string name="widget_bolus_block_pump_not_ready">Pumpe nicht bereit</string>
+    <string name="widget_bolus_block_suspended">Loop pausiert oder Pumpe getrennt</string>
+    <string name="widget_bolus_block_bolus_running">Pumpe gibt gerade einen Bolus ab</string>
+    <string name="widget_bolus_block_no_bg">Keine Glukosedaten</string>
+    <string name="widget_bolus_block_stale">Glukose-Daten zu alt</string>
+    <string name="widget_bolus_block_low">Glukose tief</string>
+    <string name="widget_bolus_block_recent_bolus">Vor weniger als einer Minute wurde ein Bolus abgegeben</string>
+    <string name="widget_bolus_block_invalid_amount">Ungültige Bolusmenge</string>
+    <string name="widget_bolus_block_constrained">Begrenzung erlaubt keinen Bolus</string>
+    <string name="widget_bolus_expired">Bestätigung abgelaufen</string>
+    <string name="widget_bolus_changed">Daten haben sich inzwischen geändert</string>
+    <string name="widget_bolus_amount_1">Bolus-Knopf 1 (U)</string>
+    <string name="widget_bolus_amount_2">Bolus-Knopf 2 (U)</string>
+    <string name="widget_opacity">Glas-Tönung</string>
+
 </resources>

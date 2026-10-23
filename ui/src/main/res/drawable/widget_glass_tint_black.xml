@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Use black" variant of the glass tint (solid dark glass for busy wallpapers) -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <corners android:radius="24dp" />
+    <gradient
+        android:angle="270"
+        android:endColor="#FF000000"
+        android:startColor="#F0050608" />
+</shape>
