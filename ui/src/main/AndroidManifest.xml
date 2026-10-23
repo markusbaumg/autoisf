@@ -35,6 +35,15 @@
             android:taskAffinity="app.aaps.widgetbolus"
             android:theme="@style/Theme.MaterialComponents.Translucent" />
 
+        <!-- Widget carbs pill: arms the bolus wizard request and brings MainActivity to the front (not exported, no intent-filter) -->
+        <activity
+            android:name=".widget.WidgetWizardActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity="app.aaps.widgetwizard"
+            android:theme="@style/Theme.MaterialComponents.Translucent" />
+
         <activity
             android:name=".activities.TDDStatsActivity"
             android:exported="false"
