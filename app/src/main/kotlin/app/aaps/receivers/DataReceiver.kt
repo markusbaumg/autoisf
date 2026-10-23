@@ -6,6 +6,7 @@ import android.provider.Telephony
 import androidx.annotation.VisibleForTesting
 import androidx.work.Data
 import androidx.work.OneTimeWorkRequest
+import androidx.work.OutOfQuotaPolicy
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.receivers.Intents
@@ -46,13 +47,13 @@ open class DataReceiver : DaggerBroadcastReceiver() {
         when (intent.action) {
             Intents.ACTION_NEW_BG_ESTIMATE            ->
                 OneTimeWorkRequest.Builder(XdripSourcePlugin.XdripSourceWorker::class.java)
-                    .setInputData(dataWorkerStorage.storeInputData(bundle, intent.action)).build()
+                    .setInputData(dataWorkerStorage.storeInputData(bundle, intent.action))
 
             Intents.POCTECH_BG                        ->
                 OneTimeWorkRequest.Builder(PoctechPlugin.PoctechWorker::class.java)
                     .setInputData(Data.Builder().also {
                         it.copyString("data", bundle)
-                    }.build()).build()
+                    }.build())
 
             Intents.GLIMP_BG                          ->
                 OneTimeWorkRequest.Builder(GlimpPlugin.GlimpWorker::class.java)
@@ -60,21 +61,21 @@ open class DataReceiver : DaggerBroadcastReceiver() {
                         it.copyDouble("mySGV", bundle)
                         it.copyString("myTrend", bundle)
                         it.copyLong("myTimestamp", bundle)
-                    }.build()).build()
+                    }.build())
 
             Intents.TOMATO_BG                         ->
                 OneTimeWorkRequest.Builder(TomatoPlugin.TomatoWorker::class.java)
                     .setInputData(Data.Builder().also {
                         it.copyDouble("com.fanqies.tomatofn.Extras.BgEstimate", bundle)
                         it.copyLong("com.fanqies.tomatofn.Extras.Time", bundle)
-                    }.build()).build()
+                    }.build())
 
             Intents.NS_EMULATOR                       ->
                 OneTimeWorkRequest.Builder(MM640gPlugin.MM640gWorker::class.java)
                     .setInputData(Data.Builder().also {
                         it.copyString("collection", bundle)
                         it.copyString("data", bundle)
-                    }.build()).build()
+                    }.build())
 
             Intents.OTTAI_APP, Intents.OTTAI_APP_CN,
             Intents.SYAI_APP                          ->
@@ -82,32 +83,41 @@ open class DataReceiver : DaggerBroadcastReceiver() {
                     .setInputData(Data.Builder().also {
                         it.copyString("collection", bundle)
                         it.copyString("data", bundle)
-                    }.build()).build()
+                    }.build())
 
             Intents.SI_APP                            ->
                 OneTimeWorkRequest.Builder(PatchedSiAppPlugin.PatchedSiAppWorker::class.java)
                     .setInputData(Data.Builder().also {
                         it.copyString("collection", bundle)
                         it.copyString("data", bundle)
-                    }.build()).build()
+                    }.build())
 
             Intents.SINO_APP                          ->
                 OneTimeWorkRequest.Builder(PatchedSinoAppPlugin.PatchedSinoAppWorker::class.java)
                     .setInputData(Data.Builder().also {
                         it.copyString("collection", bundle)
                         it.copyString("data", bundle)
-                    }.build()).build()
+                    }.build())
 
             Telephony.Sms.Intents.SMS_RECEIVED_ACTION ->
                 OneTimeWorkRequest.Builder(SmsCommunicatorPlugin.SmsCommunicatorWorker::class.java)
-                    .setInputData(dataWorkerStorage.storeInputData(bundle, intent.action)).build()
+                    .setInputData(dataWorkerStorage.storeInputData(bundle, intent.action))
 
             Intents.DEXCOM_BG, Intents.DEXCOM_G7_BG   ->
                 OneTimeWorkRequest.Builder(DexcomPlugin.DexcomWorker::class.java)
-                    .setInputData(dataWorkerStorage.storeInputData(bundle, intent.action)).build()
+                    .setInputData(dataWorkerStorage.storeInputData(bundle, intent.action))
 
             else                                      -> null
-        }?.let { request -> dataWorkerStorage.enqueue(request) }
+        }?.let { builder ->
+            // Expedited, because a plain job can be kept waiting for a long time: Android counts the
+            // run time of plain jobs against a quota (since Android 16 also for an app with a foreground
+            // service), and other AAPS jobs (widget, NS sync) can use it up. A new BG is then not stored
+            // and the loop does not run. Expedited jobs have a quota of their own, of which storing BG
+            // values uses only a few minutes a day. When that is used up too, it runs as a plain job, as
+            // before. (minSdk 31: expedited work is a JobScheduler expedited job, getForegroundInfo is
+            // not needed.)
+            dataWorkerStorage.enqueue(builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST).build())
+        }
 
         // Verify KeepAlive is running
         // Sometimes the schedule fail

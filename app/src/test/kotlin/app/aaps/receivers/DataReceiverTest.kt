@@ -65,6 +65,8 @@ class DataReceiverTest : TestBase() {
         verify(dataWorkerStorage).enqueue(workRequestCaptor.capture())
         val capturedRequest = workRequestCaptor.singleValue
         assert(capturedRequest.workSpec.workerClassName == workerClass.java.name)
+        // Expedited, so a plain job quota that other work used up cannot keep a new BG waiting.
+        assert(capturedRequest.workSpec.expedited)
     }
 
     @Test
