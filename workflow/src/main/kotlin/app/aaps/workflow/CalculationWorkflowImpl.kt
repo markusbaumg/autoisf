@@ -21,6 +21,7 @@ import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.rx.events.Event
 import app.aaps.core.interfaces.utils.DateUtil
+import app.aaps.core.interfaces.workflow.CalculationWakeLock
 import app.aaps.core.interfaces.workflow.CalculationWorkflow
 import app.aaps.core.interfaces.workflow.CalculationWorkflow.Companion.JOB
 import app.aaps.core.interfaces.workflow.CalculationWorkflow.Companion.MAIN_CALCULATION
@@ -34,6 +35,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 
 @Singleton
 class CalculationWorkflowImpl @Inject constructor(
@@ -58,6 +60,11 @@ class CalculationWorkflowImpl @Inject constructor(
     private var staleGraphInput: StaleGraphInput? = null // guarded by staleGraphLock
     private var screenOnReceiverRegistered = false // guarded by staleGraphLock
 
+    private val wakeLock: CalculationWakeLock = AndroidCalculationWakeLock(context)
+
+    /** The lock of the newest main calculation run, until its loop worker has ended. */
+    private var loopWakeLock: LoopWakeLock? = null // guarded by staleGraphLock
+
     override fun stopCalculation(job: String, from: String) {
         aapsLogger.debug(LTag.WORKER, "Stopping calculation thread: $from")
         WorkManager.getInstance(context).cancelUniqueWork(job)
@@ -78,6 +85,15 @@ class CalculationWorkflowImpl @Inject constructor(
         aapsLogger.debug(LTag.WORKER, "Waiting for $job to finish")
         return awaitIdle(timeout, IDLE_POLL_MS) { isCalculationRunning(job) }
     }
+
+    override fun keepAwake(timeout: Duration): CalculationWakeLock.Held? =
+        try {
+            wakeLock.acquire(timeout.inWholeMilliseconds)
+        } catch (e: Exception) {
+            // Without the lock the run can only come late, as before; it must not fail because of it.
+            aapsLogger.error(LTag.WORKER, "Wake lock not taken", e)
+            null
+        }
 
     override fun runCalculation(
         job: String,
@@ -101,8 +117,17 @@ class CalculationWorkflowImpl @Inject constructor(
                 staleGraphInput = if (drawGraph) null else StaleGraphInput(iobCobCalculator, overviewData)
                 if (!drawGraph) aapsLogger.debug(LTag.WORKER, "Screen off: overview graph data skipped, rebuilt when the screen turns on")
             }
+            // The system holds a wake lock for a worker only while it runs, not in the gaps between the
+            // workers of the chain. Keep the device awake from here until the loop worker has ended, so
+            // a new BG is looped promptly with the screen off. REPLACE below drops the previous run: a
+            // loop worker of it that has not started never will, so its lock is given back here.
+            val awake = if (isMain) keepAwake(LOOP_WAKE_LOCK_TIMEOUT)?.let { LoopWakeLock(it) } else null
+            if (isMain) {
+                loopWakeLock?.releaseIfUnclaimed()
+                loopWakeLock = awake
+            }
             val steps = calculationSteps(isMain, drawGraph)
-            val requests = steps.map { request(it, job, iobCobCalculator, overviewData, reason, end, bgDataReload, cause) }
+            val requests = steps.map { request(it, job, iobCobCalculator, overviewData, reason, end, bgDataReload, cause, awake) }
             WorkManager.getInstance(context)
                 .beginUniqueWork(job, ExistingWorkPolicy.REPLACE, requests.first())
                 .thenEach(requests.drop(1))
@@ -167,7 +192,8 @@ class CalculationWorkflowImpl @Inject constructor(
         reason: String,
         end: Long,
         bgDataReload: Boolean,
-        cause: Event?
+        cause: Event?,
+        awake: LoopWakeLock? = null
     ): OneTimeWorkRequest = when (step) {
         Step.LOAD_BG_DATA                ->
             if (bgDataReload) OneTimeWorkRequest.Builder(LoadBgDataWorker::class.java).setInputData(dataWorkerStorage.storeInputData(LoadBgDataWorker.LoadBgData(iobCobCalculator, end))).build()
@@ -187,7 +213,7 @@ class CalculationWorkflowImpl @Inject constructor(
 
         Step.INVOKE_LOOP                 ->
             OneTimeWorkRequest.Builder(InvokeLoopWorker::class.java)
-                .setInputData(dataWorkerStorage.storeInputData(InvokeLoopWorker.InvokeLoopData(cause)))
+                .setInputData(dataWorkerStorage.storeInputData(InvokeLoopWorker.InvokeLoopData(cause, awake)))
                 .build()
 
         Step.UPDATE_WIDGET               -> OneTimeWorkRequest.Builder(UpdateWidgetWorker::class.java).build()
@@ -378,6 +404,12 @@ class CalculationWorkflowImpl @Inject constructor(
 
         /** awaitCalculationIdle waits for minutes, not seconds, so it asks WorkManager only twice a second. */
         private const val IDLE_POLL_MS = 500L
+
+        /**
+         * Upper bound of the lock from enqueueing a main calculation until its loop worker ended. A
+         * normal run takes seconds; the timeout only matters for a chain that fails or hangs.
+         */
+        private val LOOP_WAKE_LOCK_TIMEOUT = 3.minutes
 
         /**
          * Polls [busy] every [pollMs] until it answers false (true is returned) or [timeout] runs out

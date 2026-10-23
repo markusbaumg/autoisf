@@ -21,8 +21,10 @@ class InvokeLoopWorker(
     @Inject lateinit var iobCobCalculator: IobCobCalculator
     @Inject lateinit var loop: Loop
 
-    class InvokeLoopData(
-        val cause: Event?
+    internal class InvokeLoopData(
+        val cause: Event?,
+        /** Held since the calculation was enqueued, released when this worker ends. */
+        val awake: LoopWakeLock? = null
     )
 
     /*
@@ -37,6 +39,15 @@ class InvokeLoopWorker(
         val data = dataWorkerStorage.pickupObject(inputData.getLong(DataWorkerStorage.STORE_KEY, -1)) as InvokeLoopData?
             ?: return Result.failure(workDataOf("Error" to "missing input data"))
 
+        data.awake?.claim()
+        try {
+            return invokeLoop(data)
+        } finally {
+            data.awake?.release()
+        }
+    }
+
+    private fun invokeLoop(data: InvokeLoopData): Result {
         if (data.cause !is EventNewBG) return Result.success(workDataOf("Result" to "no calculation needed"))
         val glucoseValue = iobCobCalculator.ads.actualBg() ?: return Result.success(workDataOf("Result" to "bg outdated"))
         if (glucoseValue.timestamp <= loop.lastBgTriggeredRun) return Result.success(workDataOf("Result" to "already looped with that value"))

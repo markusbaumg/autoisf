@@ -493,7 +493,8 @@ class IobCobCalculatorPlugin @Inject constructor(
         onRunFailed = {
             clearCache()
             ads.reset()
-        }
+        },
+        keepAwake = { timeout -> calculationWorkflow.keepAwake(timeout) }
     ) { oldDataTimestamp, reloadBgData, newestGlucoseValueTimestamp ->
         persistenceLayer.clearCachedTddData(MidnightTime.calc(oldDataTimestamp))
         newHistoryData(
