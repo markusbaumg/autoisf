@@ -95,11 +95,11 @@ class Widget : AppWidgetProvider() {
         private val meterFills = intArrayOf(R.id.tir1_fill, R.id.tir2_fill, R.id.tir3_fill)
         private val meterTexts = intArrayOf(R.id.tir1, R.id.tir2, R.id.tir3)
 
-        /** widget_glass_txt3 #96A2BE at 50 % / 40 %: text and unit of a locked bolus pill */
-        private const val DISABLED_TEXT_COLOR = 0x8096A2BE.toInt()
-        private const val DISABLED_UNIT_COLOR = 0x6696A2BE
+        /** widget_glass_txt3 #B4BED5, solid: text and unit of a locked bolus pill (the pill background marks it locked) */
+        private const val DISABLED_TEXT_COLOR = 0xFFB4BED5.toInt()
+        private const val DISABLED_UNIT_COLOR = 0xFFB4BED5.toInt()
 
-        /** Alpha (0..255) of the meters / long-term block during a low, so the red BG is the only loud thing */
+        /** Alpha (0..255) of the meter fills during a low, so the red BG is the only loud thing (texts use solid txt3) */
         private const val LOW_DIM_ALPHA = 0x73
     }
 
@@ -485,8 +485,8 @@ class Widget : AppWidgetProvider() {
         views.setViewPadding(R.id.history_block, 0, if (show) dp(5f) else 0, 0, 0)
     }
 
-    /** [c] at [LOW_DIM_ALPHA] when [dim] (meters and long-term rows during a low) */
-    private fun dimmed(c: Int, dim: Boolean): Int = if (dim) (c and 0x00FFFFFF) or (LOW_DIM_ALPHA shl 24) else c
+    /** Solid txt3 instead of [c] when [dim] (meter and long-term texts during a low); an alpha dim measured only 1.95:1 */
+    private fun dimmed(c: Int, dim: Boolean): Int = if (dim) color(R.color.widget_glass_txt3) else c
 
     private fun dp(value: Float): Int = Math.round(value * appContext.resources.displayMetrics.density)
 

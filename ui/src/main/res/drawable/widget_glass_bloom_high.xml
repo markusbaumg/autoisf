@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Range bloom behind the BG digits (recipe L2), stronger and wider since 24 Oct: dense core, soft wide falloff.
+<!-- Range bloom behind the BG digits (recipe L2), softer core since the 24 Oct contrast fix (sits on the BG scrim): dense core, soft wide falloff.
      Static drawable (no blur at runtime). There is no bloom for low: red digits on a red glow fail contrast. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
     <gradient
-        android:centerColor="#29FFA92E"
+        android:centerColor="#1CFFA92E"
         android:endColor="#00FFA92E"
         android:gradientRadius="50%p"
-        android:startColor="#57FFA92E"
+        android:startColor="#3DFFA92E"
         android:type="radial" />
 </shape>

@@ -15,6 +15,24 @@
         android:src="@drawable/widget_glass_tint" />
 
     <ImageView
+        android:id="@+id/glass_film"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_glass_film" />
+
+    <!-- static dark scrim behind the BG digits, under the bloom: the frost no longer lightens it -->
+    <ImageView
+        android:id="@+id/bg_scrim"
+        android:layout_width="230dp"
+        android:layout_height="176dp"
+        android:layout_gravity="start|center_vertical"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_glass_scrim_bg" />
+
+    <ImageView
         android:id="@+id/bloom"
         android:layout_width="230dp"
         android:layout_height="176dp"
@@ -22,14 +40,6 @@
         android:importantForAccessibility="no"
         android:scaleType="fitXY"
         android:src="@drawable/widget_glass_bloom_in" />
-
-    <ImageView
-        android:id="@+id/glass_film"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:importantForAccessibility="no"
-        android:scaleType="fitXY"
-        android:src="@drawable/widget_glass_film" />
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -146,7 +156,7 @@
 
                 <TextView
                     android:id="@+id/bg"
-                    style="@style/WidgetGlassText"
+                    style="@style/WidgetGlassText.Bg"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="-1.5dp"

@@ -2,16 +2,16 @@
 <resources>
     <!-- Glass widget tokens (watch family, one step lighter for text on glass) -->
     <color name="widget_glass_txt1">#F4F6FA</color>
-    <color name="widget_glass_txt2">#C6CEE0</color>
-    <color name="widget_glass_txt3">#96A2BE</color>
+    <color name="widget_glass_txt2">#D2D9E8</color>
+    <color name="widget_glass_txt3">#B4BED5</color>
     <color name="widget_glass_in">#3DDC97</color>
     <color name="widget_glass_high">#FFB547</color>
-    <color name="widget_glass_low">#FF5A6E</color>
+    <color name="widget_glass_low">#FF7A88</color>
     <color name="widget_glass_stale">#8A93A8</color>
     <!-- header: temp target icon, temp basal icons (AAPS temp-basal violet) -->
     <color name="widget_glass_tt">#7CC4FF</color>
     <color name="widget_glass_tbr">#CF8BFE</color>
-    <color name="widget_glass_text_shadow">#8C000000</color>
+    <color name="widget_glass_text_shadow">#B3000000</color>
     <color name="widget_glass_tint_aapsclient1">#E8C50C</color>
     <color name="widget_glass_tint_aapsclient2">#0FBBE0</color>
 </resources>

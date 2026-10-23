@@ -176,25 +176,25 @@ class WidgetLogicTest {
 
     @Test
     fun `glass tint alpha keeps a floor and reaches full`() {
-        // floor 36 %: 30 % at the top of the 85 % -> 100 % drawable
-        assertThat(WidgetLogic.glassTintAlpha(0)).isEqualTo(92)
+        // floor 62 %: 59 % at the top of the 95 % -> 100 % drawable
+        assertThat(WidgetLogic.glassTintAlpha(0)).isEqualTo(158)
         assertThat(WidgetLogic.glassTintAlpha(255)).isEqualTo(255)
-        assertThat(WidgetLogic.glassTintAlpha(-5)).isEqualTo(92)
+        assertThat(WidgetLogic.glassTintAlpha(-5)).isEqualTo(158)
         assertThat(WidgetLogic.glassTintAlpha(300)).isEqualTo(255)
-        // default setting: a step lighter than R2 (145), more wallpaper shows through
-        assertThat(WidgetLogic.glassTintAlpha(25)).isEqualTo(128)
+        // default setting: the R2 density (0.74)
+        assertThat(WidgetLogic.glassTintAlpha(25)).isEqualTo(189)
         // bright wallpaper: at least "dense"
-        assertThat(WidgetLogic.glassTintAlpha(0, brightWallpaper = true)).isEqualTo(184)
-        assertThat(WidgetLogic.glassTintAlpha(25, brightWallpaper = true)).isEqualTo(184)
+        assertThat(WidgetLogic.glassTintAlpha(0, brightWallpaper = true)).isEqualTo(219)
+        assertThat(WidgetLogic.glassTintAlpha(25, brightWallpaper = true)).isEqualTo(219)
         assertThat(WidgetLogic.glassTintAlpha(255, brightWallpaper = true)).isEqualTo(255)
     }
 
     @Test
     fun `glass tint percent shown at the slider`() {
-        assertThat(WidgetLogic.glassTintPercent(0)).isEqualTo(36)
-        assertThat(WidgetLogic.glassTintPercent(12)).isEqualTo(43)
-        assertThat(WidgetLogic.glassTintPercent(25)).isEqualTo(50)
-        assertThat(WidgetLogic.glassTintPercent(140)).isEqualTo(75)
+        assertThat(WidgetLogic.glassTintPercent(0)).isEqualTo(62)
+        assertThat(WidgetLogic.glassTintPercent(12)).isEqualTo(68)
+        assertThat(WidgetLogic.glassTintPercent(25)).isEqualTo(74)
+        assertThat(WidgetLogic.glassTintPercent(140)).isEqualTo(87)
         assertThat(WidgetLogic.glassTintPercent(255)).isEqualTo(100)
     }
 

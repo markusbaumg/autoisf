@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Glass film over the tint: frost lift (L3), sheen (L4), 1 dp rim (L6) and the brighter top specular line (L7) -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- frost lift, white 13 % to 3 % -->
+    <!-- frost lift, white 8 % to 1.5 % -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="24dp" />
             <gradient
                 android:angle="270"
-                android:endColor="#08FFFFFF"
-                android:startColor="#21FFFFFF" />
+                android:endColor="#04FFFFFF"
+                android:startColor="#14FFFFFF" />
         </shape>
     </item>
-    <!-- sheen from the top left -->
+    <!-- sheen from the top left, 8 %, kept faint because the BG digits sit under it -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="24dp" />
@@ -20,7 +20,7 @@
                 android:centerY="0.0"
                 android:endColor="#00FFFFFF"
                 android:gradientRadius="80%p"
-                android:startColor="#3DFFFFFF"
+                android:startColor="#14FFFFFF"
                 android:type="radial" />
         </shape>
     </item>
