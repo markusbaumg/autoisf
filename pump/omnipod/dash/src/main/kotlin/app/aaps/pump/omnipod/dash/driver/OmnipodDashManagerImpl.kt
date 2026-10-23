@@ -49,6 +49,7 @@ import java.util.Date
 import java.util.EnumSet
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -64,6 +65,11 @@ class OmnipodDashManagerImpl @Inject constructor(
 
         const val NONCE = 1229869870 // The Omnipod Dash seems to use a fixed nonce
     }
+
+    private val activationRunning = AtomicBoolean(false)
+
+    override val isActivationRunning: Boolean
+        get() = activationRunning.get()
 
     private val observePodReadyForActivationPart1: Observable<PodEvent>
         get() = Observable.defer {
@@ -271,6 +277,7 @@ class OmnipodDashManagerImpl @Inject constructor(
             observeActivationPart1Commands(lowReservoirAlertTrigger)
         ).doOnComplete(ActivationProgressUpdater(ActivationProgress.PHASE_1_COMPLETED))
             .interceptPodEvents()
+            .markActivationRunning()
     }
 
     private fun observeActivationPart1Commands(lowReservoirAlertTrigger: AlertTrigger.ReservoirVolumeTrigger?): Observable<PodEvent> {
@@ -374,6 +381,7 @@ class OmnipodDashManagerImpl @Inject constructor(
             observeActivationPart2Commands(basalProgram, userConfiguredExpirationReminderHours, userConfiguredExpirationAlarmHours)
         ).doOnComplete(ActivationProgressUpdater(ActivationProgress.COMPLETED))
             .interceptPodEvents()
+            .markActivationRunning()
     }
 
     private fun observeActivationPart2Commands(basalProgram: BasalProgram, userConfiguredExpirationReminderHours: Long?, userConfiguredExpirationAlarmHours: Long?):
@@ -772,6 +780,12 @@ class OmnipodDashManagerImpl @Inject constructor(
         return this.doOnNext(PodEventInterceptor())
             .doOnError(ErrorInterceptor())
             .subscribeOn(aapsSchedulers.io)
+    }
+
+    // Placed after subscribeOn, so the flag is set on the subscribing thread before any BLE work starts.
+    private fun Observable<PodEvent>.markActivationRunning(): Observable<PodEvent> {
+        return this.doOnSubscribe { activationRunning.set(true) }
+            .doFinally { activationRunning.set(false) }
     }
 
     inner class ErrorInterceptor : Consumer<Throwable> {
