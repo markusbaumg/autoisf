@@ -24,25 +24,30 @@
                 android:type="radial" />
         </shape>
     </item>
-    <!-- rim -->
+    <!-- rim, the dim bottom value (recipe L6 bottom ~6 %) -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="24dp" />
             <solid android:color="@android:color/transparent" />
             <stroke
                 android:width="1dp"
-                android:color="#1CFFFFFF" />
+                android:color="#12FFFFFF" />
         </shape>
     </item>
-    <!-- rim brighter at the top: top edge and top corners only (the rest of this shape is below the view and clipped) -->
-    <item android:bottom="-2000dp">
-        <shape android:shape="rectangle">
-            <corners android:radius="24dp" />
-            <solid android:color="@android:color/transparent" />
-            <stroke
-                android:width="1dp"
-                android:color="#1FFFFFFF" />
-        </shape>
+    <!-- rim brighter at the top (L6 top ~26 %): the same rim again, clipped to the top quarter.
+         Widget.kt sets the clip with setImageLevel(WIDGET_RIM_LEVEL); without it only the dim rim shows. -->
+    <item>
+        <clip
+            android:clipOrientation="vertical"
+            android:gravity="top">
+            <shape android:shape="rectangle">
+                <corners android:radius="24dp" />
+                <solid android:color="@android:color/transparent" />
+                <stroke
+                    android:width="1dp"
+                    android:color="#33FFFFFF" />
+            </shape>
+        </clip>
     </item>
     <!-- specular line at the top, fading out to both ends -->
     <item

@@ -110,9 +110,16 @@ object WidgetLogic {
 
     /**
      * Alpha (0..255) of the glass smoke tint for the WidgetOpacity setting (0..255).
-     * Never below ~34 % so text on glass keeps its contrast (glass recipe "hard floor"); 255 = full dark glass.
+     * widget_glass_tint.xml runs 78 % -> 100 %, so the default setting (25) gives the recipe's "smoke" 44 % -> 56 %.
+     * Never below 0.52 (top 41 %), the recipe's hard floor is 30 %. On a bright wallpaper the recipe's "dense" tier
+     * (66 % -> 76 %) is the minimum, otherwise the secondary labels lose their contrast.
      */
-    fun glassTintAlpha(opacity: Int): Int = Math.round((0.34 + 0.66 * opacity.coerceIn(0, 255) / 255.0) * 255).toInt()
+    fun glassTintAlpha(opacity: Int, brightWallpaper: Boolean = false): Int {
+        val fraction = 0.52 + 0.48 * opacity.coerceIn(0, 255) / 255.0
+        return Math.round((if (brightWallpaper) maxOf(fraction, DENSE_TINT) else fraction) * 255).toInt()
+    }
+
+    private const val DENSE_TINT = 0.80
 
     fun centiUnitsToUnits(cu: Int): Double = cu / 100.0
 

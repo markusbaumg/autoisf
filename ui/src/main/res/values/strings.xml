@@ -193,6 +193,8 @@
     <string name="widget_cob">COB</string>
     <string name="widget_tdd" translatable="false">TDD</string>
     <string name="widget_unit_carbs" translatable="false">g</string>
+    <!-- the owner wants "U" on the widget in every language (core insulin_unit_shortname is "IE" in German) -->
+    <string name="widget_unit_insulin" translatable="false">U</string>
     <string name="widget_tir_description">Time in range %1$s: %2$s</string>
     <string name="widget_bolus_request">Request bolus of %1$s U</string>
     <string name="widget_bolus_locked">Bolus locked</string>

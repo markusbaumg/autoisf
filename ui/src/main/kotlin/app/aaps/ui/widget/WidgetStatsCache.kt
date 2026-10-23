@@ -48,7 +48,7 @@ class WidgetStatsCache @Inject constructor(
     @Volatile private var daysComputedFor = 0L
     private val running = AtomicBoolean(false)
 
-    /** Called on every widget refresh. Cheap when nothing is due. */
+    /** Called on every widget refresh. Cheap when nothing is due; recomputes every 15 min and right after midnight. */
     fun refreshIfNeeded() {
         val now = dateUtil.now()
         val today = MidnightTime.calc(now)
@@ -58,32 +58,30 @@ class WidgetStatsCache @Inject constructor(
         if (!running.compareAndSet(false, true)) return
         aapsSchedulers.io.scheduleDirect {
             try {
-                compute(now, today, dayDue)
+                compute(now, today)
             } catch (e: Exception) {
                 aapsLogger.error(LTag.WIDGET, "Widget stats failed", e)
-                // keep the last values, try again at the next cadence
+                // keep the last values, try again at the next 15 min cadence (not at every widget update)
                 computedAt = now
+                daysComputedFor = today
             } finally {
                 running.set(false)
             }
         }
     }
 
-    private fun compute(now: Long, today: Long, dayDue: Boolean) {
+    private fun compute(now: Long, today: Long) {
         val readings = persistenceLayer.getBgReadingsDataFromTimeToTime(WidgetLogic.rolling24hStart(now), now, true)
         val tir24 = WidgetLogic.countTir(readings.map { it.value }).displayPct()
         val tdd24 = tddCalculator.calculateDaily(-24, 0)?.totalAmount
-        var tir7 = stats.tir7d
-        var tir30 = stats.tir30d
-        if (dayDue) {
-            tir7 = pooled(7)
-            tir30 = pooled(30)
-        }
+        // 7 / 30 days are recomputed every cycle too, so backfilled or invalidated past readings show up like on the statistics screen
+        val tir7 = pooled(7)
+        val tir30 = pooled(30)
         val new = Stats(tir24, tir7, tir30, tdd24)
         val changed = new != stats
         stats = new
         computedAt = now
-        if (dayDue) daysComputedFor = today
+        daysComputedFor = today
         aapsLogger.debug(LTag.WIDGET, "Widget stats $new")
         if (changed) Widget.updateWidget(context, "WidgetStatsCache")
     }

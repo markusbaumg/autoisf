@@ -170,9 +170,14 @@ class WidgetLogicTest {
 
     @Test
     fun `glass tint alpha keeps a floor and reaches full`() {
-        assertThat(WidgetLogic.glassTintAlpha(0)).isEqualTo(87)
+        assertThat(WidgetLogic.glassTintAlpha(0)).isEqualTo(133)
         assertThat(WidgetLogic.glassTintAlpha(255)).isEqualTo(255)
-        assertThat(WidgetLogic.glassTintAlpha(-5)).isEqualTo(87)
-        assertThat(WidgetLogic.glassTintAlpha(25)).isGreaterThan(87)
+        assertThat(WidgetLogic.glassTintAlpha(-5)).isEqualTo(133)
+        // default setting = recipe "smoke": 44 % at the top of the 78 % -> 100 % drawable
+        assertThat(WidgetLogic.glassTintAlpha(25)).isEqualTo(145)
+        // bright wallpaper: at least "dense"
+        assertThat(WidgetLogic.glassTintAlpha(0, brightWallpaper = true)).isEqualTo(204)
+        assertThat(WidgetLogic.glassTintAlpha(25, brightWallpaper = true)).isEqualTo(204)
+        assertThat(WidgetLogic.glassTintAlpha(255, brightWallpaper = true)).isEqualTo(255)
     }
 }

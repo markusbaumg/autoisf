@@ -1,6 +1,8 @@
 package app.aaps.ui.widget
 
 import android.app.PendingIntent
+import android.app.WallpaperColors
+import android.app.WallpaperManager
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
@@ -107,6 +109,15 @@ class Widget : AppWidgetProvider() {
 
     private fun color(id: Int) = rh.gc(id)
 
+    /** Glass recipe "auto tier": a wallpaper that supports dark text is bright and needs the denser tint. No permission needed. */
+    private fun brightWallpaper(context: Context): Boolean =
+        try {
+            val hints = WallpaperManager.getInstance(context).getWallpaperColors(WallpaperManager.FLAG_SYSTEM)?.colorHints ?: 0
+            hints and WallpaperColors.HINT_SUPPORTS_DARK_TEXT != 0
+        } catch (e: Exception) {
+            false
+        }
+
     private fun updateAppWidget(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
         val views = RemoteViews(context.packageName, R.layout.widget_layout)
         val opacity = preferences.get(IntComposedKey.WidgetOpacity, appWidgetId)
@@ -119,8 +130,12 @@ class Widget : AppWidgetProvider() {
         views.setOnClickPendingIntent(R.id.widget_layout, pendingIntent)
 
         // Glass: the opacity setting scales the smoke tint, "use black" turns it into dark glass
+        // Rim: the bright top layer of the film / pills is a <clip>; levels are 0..10000 of the height
+        views.setInt(R.id.glass_film, "setImageLevel", 2500)
+        views.setInt(R.id.bolus1_bg, "setImageLevel", 5000)
+        views.setInt(R.id.bolus2_bg, "setImageLevel", 5000)
         views.setImageViewResource(R.id.glass_tint, if (useBlack) R.drawable.widget_glass_tint_black else R.drawable.widget_glass_tint)
-        views.setInt(R.id.glass_tint, "setImageAlpha", WidgetLogic.glassTintAlpha(opacity))
+        views.setInt(R.id.glass_tint, "setImageAlpha", WidgetLogic.glassTintAlpha(opacity, brightWallpaper(context)))
         when {
             useBlack || config.APS -> views.setInt(R.id.glass_tint, "setColorFilter", Color.TRANSPARENT)
             config.AAPSCLIENT1     -> views.setInt(R.id.glass_tint, "setColorFilter", color(R.color.widget_glass_tint_aapsclient1))
@@ -220,7 +235,7 @@ class Widget : AppWidgetProvider() {
 
     private fun updateBottom(views: RemoteViews, range: BgRange) {
         val stale = range == BgRange.STALE || range == BgRange.NONE
-        val unitU = rh.gs(app.aaps.core.ui.R.string.insulin_unit_shortname)
+        val unitU = rh.gs(R.string.widget_unit_insulin)
         val iob = iobCobCalculator.calculateIobFromBolus().round().iob + iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().round().basaliob
         views.setTextViewText(R.id.iob, withUnit(WidgetLogic.decimal(iob, 2), unitU))
         val cob = iobCobCalculator.getCobInfo("Widget COB").displayCob
@@ -253,7 +268,7 @@ class Widget : AppWidgetProvider() {
                 now = now
             )
         )
-        val unitU = rh.gs(app.aaps.core.ui.R.string.insulin_unit_shortname)
+        val unitU = rh.gs(R.string.widget_unit_insulin)
         listOf(
             Triple(1, R.id.bolus1, IntComposedKey.WidgetBolusAmount1),
             Triple(2, R.id.bolus2, IntComposedKey.WidgetBolusAmount2)

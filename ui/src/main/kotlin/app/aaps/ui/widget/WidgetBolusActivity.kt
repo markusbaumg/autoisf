@@ -258,7 +258,7 @@ class WidgetBolusActivity : TranslatedDaggerAppCompatActivity() {
         val pumpDescription = activePlugin.activePump.pumpDescription
         val amount = snap.input.amount ?: return done()
         val after = snap.amountAfterConstraints
-        val unitU = rh.gs(app.aaps.core.ui.R.string.insulin_unit_shortname)
+        val unitU = rh.gs(R.string.widget_unit_insulin)
         val lines = mutableListOf<String>()
         lines.add(
             rh.gs(app.aaps.core.ui.R.string.bolus) + ": " + (decimalFormatter.toPumpSupportedBolus(after, pumpDescription.bolusStep) + " " + unitU)
