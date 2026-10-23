@@ -217,6 +217,11 @@
     <string name="widget_bolus_block_constrained">Constraints allow no bolus</string>
     <string name="widget_bolus_expired">Confirmation expired</string>
     <string name="widget_bolus_changed">Data changed in the meantime</string>
+    <string name="widget_carbs_pill">Carbs</string>
+    <string name="widget_carbs_description">Open bolus wizard</string>
+    <string name="widget_wizard_not_opened">Bolus wizard not opened: %1$s</string>
+    <string name="widget_wizard_block_no_profile">No profile</string>
+    <string name="widget_wizard_block_pump_suspended">Pump suspended or disconnected</string>
     <string name="widget_bolus_amount_1">Bolus button 1 (U)</string>
     <string name="widget_bolus_amount_2">Bolus button 2 (U)</string>
     <string name="widget_opacity">Glass tint</string>

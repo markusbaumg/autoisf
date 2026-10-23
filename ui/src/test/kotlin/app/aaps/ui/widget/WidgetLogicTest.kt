@@ -7,6 +7,7 @@ import app.aaps.ui.widget.WidgetLogic.BolusInput
 import app.aaps.ui.widget.WidgetLogic.MeterLevel
 import app.aaps.ui.widget.WidgetLogic.Refusal
 import app.aaps.ui.widget.WidgetLogic.TirCounts
+import app.aaps.ui.widget.WidgetLogic.WizardBlock
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
 import java.util.Locale
@@ -215,5 +216,65 @@ class WidgetLogicTest {
         )
         assertThat(WidgetLogic.arrowIcon(TrendArrow.FORTY_FIVE_DOWN)).isEqualTo(app.aaps.ui.R.drawable.widget_arrow_forty_five_down)
         assertThat(shown.map { WidgetLogic.arrowIcon(it) }.toSet()).hasSize(7)
+    }
+
+    @Test
+    fun `BG size grows with the owner's 406 x 206 widget and fits its middle row`() {
+        val size = WidgetLogic.bgTextSizeDp(406f, 206f)
+        assertThat(size).isGreaterThan(WidgetLogic.BG_BASE_DP * 1.3f)
+        assertThat(size).isAtMost(WidgetLogic.BG_MAX_DP)
+        // text box (~1.17 em, no font padding) fits the middle row: 206 - padding 16 - header 17 - bottom row 48
+        assertThat(size * 1.17f).isAtMost(206f - 81f)
+        // "14,4" (~2 em) + gap + scaled age column fit next to the 142 dp TIR column
+        assertThat(size * 2.0f + 8f + 9 * 0.52f * 12f * size / WidgetLogic.BG_BASE_DP).isAtMost(406f - 44f - 142f)
+    }
+
+    @Test
+    fun `BG size shrinks for smaller widgets and never gets tiny`() {
+        val big = WidgetLogic.bgTextSizeDp(406f, 206f)
+        val min = WidgetLogic.bgTextSizeDp(360f, 170f)
+        assertThat(min).isLessThan(big)
+        assertThat(min * 1.17f).isAtMost(170f - 81f)
+        assertThat(WidgetLogic.bgTextSizeDp(360f, 110f)).isEqualTo(WidgetLogic.BG_MIN_DP)
+        assertThat(WidgetLogic.bgTextSizeDp(800f, 600f)).isEqualTo(WidgetLogic.BG_MAX_DP)
+        // height limited, width limited
+        assertThat(WidgetLogic.bgTextSizeDp(800f, 150f)).isLessThan(WidgetLogic.bgTextSizeDp(800f, 180f))
+        assertThat(WidgetLogic.bgTextSizeDp(380f, 300f)).isLessThan(WidgetLogic.bgTextSizeDp(400f, 300f))
+    }
+
+    @Test
+    fun `carbs pill only where the bottom row has room`() {
+        assertThat(WidgetLogic.showCarbsPill(406f, 2)).isTrue()
+        assertThat(WidgetLogic.showCarbsPill(396f, 2)).isTrue()
+        assertThat(WidgetLogic.showCarbsPill(395f, 2)).isFalse()
+        assertThat(WidgetLogic.showCarbsPill(360f, 2)).isFalse()
+        // "Carbs" needs more room than "KH"
+        assertThat(WidgetLogic.showCarbsPill(406f, 5)).isFalse()
+        assertThat(WidgetLogic.showCarbsPill(420f, 5)).isTrue()
+    }
+
+    @Test
+    fun `wizard follows the overview calculator button, not the BG`() {
+        assertThat(WidgetLogic.wizardBlock(aps = true, appInitialized = true, profileAvailable = true, pumpInitialized = true, pumpSuspendedOrDisconnected = false)).isNull()
+        assertThat(WidgetLogic.wizardBlock(aps = false, appInitialized = true, profileAvailable = true, pumpInitialized = true, pumpSuspendedOrDisconnected = false))
+            .isEqualTo(WizardBlock.NOT_SUPPORTED)
+        assertThat(WidgetLogic.wizardBlock(aps = true, appInitialized = false, profileAvailable = false, pumpInitialized = false, pumpSuspendedOrDisconnected = true))
+            .isEqualTo(WizardBlock.NOT_INITIALIZED)
+        assertThat(WidgetLogic.wizardBlock(aps = true, appInitialized = true, profileAvailable = false, pumpInitialized = true, pumpSuspendedOrDisconnected = false))
+            .isEqualTo(WizardBlock.NO_PROFILE)
+        assertThat(WidgetLogic.wizardBlock(aps = true, appInitialized = true, profileAvailable = true, pumpInitialized = false, pumpSuspendedOrDisconnected = false))
+            .isEqualTo(WizardBlock.PUMP_NOT_READY)
+        assertThat(WidgetLogic.wizardBlock(aps = true, appInitialized = true, profileAvailable = true, pumpInitialized = true, pumpSuspendedOrDisconnected = true))
+            .isEqualTo(WizardBlock.PUMP_SUSPENDED)
+    }
+
+    @Test
+    fun `wizard request is valid once armed and only for a minute`() {
+        val t = 5_000_000L
+        assertThat(WidgetLogic.wizardRequestValid(null, t)).isFalse()
+        assertThat(WidgetLogic.wizardRequestValid(t, t)).isTrue()
+        assertThat(WidgetLogic.wizardRequestValid(t, t + WidgetLogic.WIZARD_REQUEST_TTL_MS)).isTrue()
+        assertThat(WidgetLogic.wizardRequestValid(t, t + WidgetLogic.WIZARD_REQUEST_TTL_MS + 1)).isFalse()
+        assertThat(WidgetLogic.wizardRequestValid(t, t - 1)).isFalse()
     }
 }

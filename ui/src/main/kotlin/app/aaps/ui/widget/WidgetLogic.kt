@@ -239,4 +239,61 @@ object WidgetLogic {
         shownNewestBolus != freshNewestBolus -> Refusal.CHANGED
         else -> null
     }
+
+    // ---------------------------------------------------------------- BG size (by available space)
+
+    /** BG text size of the layout (dp at font scale 1); arrow and age scale with it */
+    const val BG_BASE_DP = 44f
+
+    /** Largest BG size: about 1.45 x the base, keeps the card calm */
+    const val BG_MAX_DP = 64f
+    const val BG_MIN_DP = 30f
+
+    /** widget_layout.xml: padding 12 + 4, header line ~17, bottom row 48 (spacers take only the rest) */
+    private const val CHROME_HEIGHT_DP = 81f
+
+    /** widget_layout.xml: padding 22 + 22, TIR column 142 */
+    private const val CHROME_WIDTH_DP = 186f
+
+    /**
+     * Text box (no font padding) is ~1.17 em high: 1.3 em leaves a margin.
+     * Width per em: "14,4" ~2.0 em + 8 dp gap + age column up to 9 chars of 12/44 em ("vor 3 Std").
+     */
+    private const val HEIGHT_PER_EM = 1.3f
+    private const val WIDTH_PER_EM = 2.0f + 8f / BG_BASE_DP + 9 * 0.52f * 12f / BG_BASE_DP
+
+    /** BG size (dp) that fits the middle row of a widget of [widthDp] x [heightDp] */
+    fun bgTextSizeDp(widthDp: Float, heightDp: Float): Float {
+        val byHeight = (heightDp - CHROME_HEIGHT_DP) / HEIGHT_PER_EM
+        val byWidth = (widthDp - CHROME_WIDTH_DP) / WIDTH_PER_EM
+        return minOf(BG_MAX_DP, byHeight, byWidth).coerceAtLeast(BG_MIN_DP)
+    }
+
+    /**
+     * The carbs pill only shows when the bottom row has room for it, so the bolus pills are never clipped.
+     * Row content: IOB 66 + COB 58 + TDD ~40 + bolus pills 64 + 8 + 64 + carbs pill ~42 + 6 = 348 dp, plus 44 dp padding.
+     * A longer label than "KH" needs ~8 dp per extra character.
+     */
+    fun showCarbsPill(widthDp: Float, labelChars: Int): Boolean =
+        widthDp >= 396f + 8f * (labelChars - 2).coerceAtLeast(0)
+
+    // ---------------------------------------------------------------- carbs pill -> bolus wizard
+
+    /** Same conditions as the overview's calculator button (OverviewFragment). BG is not checked: carbs are fine on a low. */
+    enum class WizardBlock { NOT_SUPPORTED, NOT_INITIALIZED, NO_PROFILE, PUMP_NOT_READY, PUMP_SUSPENDED }
+
+    fun wizardBlock(aps: Boolean, appInitialized: Boolean, profileAvailable: Boolean, pumpInitialized: Boolean, pumpSuspendedOrDisconnected: Boolean): WizardBlock? = when {
+        !aps -> WizardBlock.NOT_SUPPORTED
+        !appInitialized -> WizardBlock.NOT_INITIALIZED
+        !profileAvailable -> WizardBlock.NO_PROFILE
+        !pumpInitialized -> WizardBlock.PUMP_NOT_READY
+        pumpSuspendedOrDisconnected -> WizardBlock.PUMP_SUSPENDED
+        else -> null
+    }
+
+    /** A carbs pill tap opens the wizard in MainActivity only within this time (elapsedRealtime), APPLICATION protection included */
+    const val WIZARD_REQUEST_TTL_MS = 60 * 1000L
+
+    fun wizardRequestValid(armedAt: Long?, nowElapsed: Long): Boolean =
+        armedAt != null && nowElapsed - armedAt in 0..WIZARD_REQUEST_TTL_MS
 }

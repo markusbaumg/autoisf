@@ -10,11 +10,14 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Handler
+import android.os.Bundle
 import android.os.HandlerThread
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
+import android.util.SizeF
+import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
 import app.aaps.core.data.model.GlucoseUnit
@@ -65,6 +68,7 @@ class Widget : AppWidgetProvider() {
     @Inject lateinit var persistenceLayer: PersistenceLayer
     @Inject lateinit var commandQueue: CommandQueue
     @Inject lateinit var statsCache: WidgetStatsCache
+    @Inject lateinit var widgetWizard: WidgetWizard
 
     companion object {
 
@@ -101,6 +105,11 @@ class Widget : AppWidgetProvider() {
         for (appWidgetId in appWidgetIds) {
             updateAppWidget(context, appWidgetManager, appWidgetId)
         }
+    }
+
+    override fun onAppWidgetOptionsChanged(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int, newOptions: Bundle?) {
+        // resized: BG size and carbs pill follow the new size
+        updateAppWidget(context, appWidgetManager, appWidgetId)
     }
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
@@ -162,8 +171,9 @@ class Widget : AppWidgetProvider() {
                 updateTir(views, range)
                 updateBottom(views, range)
                 updateBolusButtons(context, views, appWidgetId, bg?.recalculated, bg?.timestamp, now)
+                updateCarbsButton(context, views, appWidgetId)
                 // Instruct the widget manager to update the widget
-                appWidgetManager.updateAppWidget(appWidgetId, views)
+                appWidgetManager.updateAppWidget(appWidgetId, sized(views, appWidgetManager, appWidgetId))
             }
         }
     }
@@ -301,6 +311,54 @@ class Widget : AppWidgetProvider() {
             // Also when locked: the activity then only explains why (never offers OK)
             views.setOnClickPendingIntent(id, WidgetBolusActivity.pendingIntent(context, appWidgetId, slot))
         }
+    }
+
+    /** Carbs pill: opens the AAPS bolus wizard (via WidgetWizardActivity). Not locked on a low BG, only by the wizard button's own conditions. */
+    private fun updateCarbsButton(context: Context, views: RemoteViews, appWidgetId: Int) {
+        if (!config.APS) {
+            views.setViewVisibility(R.id.carbs, View.GONE)
+            return
+        }
+        val block = widgetWizard.block()
+        views.setInt(R.id.carbs_bg, "setImageLevel", 5000)
+        views.setImageViewResource(R.id.carbs_bg, if (block == null) R.drawable.widget_pill else R.drawable.widget_pill_disabled)
+        views.setTextColor(R.id.carbs_text, if (block == null) color(R.color.widget_glass_txt2) else 0x8096A2BE.toInt())
+        views.setContentDescription(
+            R.id.carbs,
+            if (block == null) rh.gs(R.string.widget_carbs_description)
+            else rh.gs(R.string.widget_wizard_not_opened, rh.gs(WidgetWizard.blockText(block)))
+        )
+        // Also when blocked: MainActivity then only says why
+        views.setOnClickPendingIntent(R.id.carbs, WidgetWizardActivity.pendingIntent(context, appWidgetId))
+    }
+
+    /**
+     * One layout per size the launcher may show (portrait / landscape), so the BG is as big as its row allows
+     * and the carbs pill only shows where the bottom row has room. Without a size list: the smaller size.
+     */
+    private fun sized(views: RemoteViews, appWidgetManager: AppWidgetManager, appWidgetId: Int): RemoteViews {
+        val options = appWidgetManager.getAppWidgetOptions(appWidgetId)
+        @Suppress("DEPRECATION")
+        val sizes = options?.getParcelableArrayList<SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)?.filter { it.width > 0 && it.height > 0 }
+        if (sizes.isNullOrEmpty()) {
+            val w = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH) ?: 0
+            val h = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 0
+            // widget_info.xml minimum size when the launcher tells nothing
+            applySize(views, if (w > 0) w.toFloat() else 360f, if (h > 0) h.toFloat() else 170f)
+            return views
+        }
+        if (sizes.size == 1) return views.also { applySize(it, sizes[0].width, sizes[0].height) }
+        return RemoteViews(sizes.distinct().take(16).associateWith { size -> RemoteViews(views).also { applySize(it, size.width, size.height) } })
+    }
+
+    private fun applySize(views: RemoteViews, widthDp: Float, heightDp: Float) {
+        val bgDp = WidgetLogic.bgTextSizeDp(widthDp, heightDp)
+        val scale = bgDp / WidgetLogic.BG_BASE_DP
+        views.setTextViewTextSize(R.id.bg, TypedValue.COMPLEX_UNIT_DIP, bgDp)
+        views.setTextViewTextSize(R.id.age, TypedValue.COMPLEX_UNIT_DIP, 12f * scale)
+        views.setViewLayoutWidth(R.id.arrow, 22f * scale, TypedValue.COMPLEX_UNIT_DIP)
+        views.setViewLayoutHeight(R.id.arrow, 22f * scale, TypedValue.COMPLEX_UNIT_DIP)
+        if (config.APS) views.setViewVisibility(R.id.carbs, if (WidgetLogic.showCarbsPill(widthDp, rh.gs(R.string.widget_carbs_pill).length)) View.VISIBLE else View.GONE)
     }
 
     /** "3,85 U": value in the view's colour, unit smaller and quieter */

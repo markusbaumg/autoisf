@@ -99,6 +99,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="-1.5dp"
                     android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false"
                     android:textColor="@color/widget_glass_in"
                     android:textSize="44sp"
                     tools:text="6,5" />
@@ -435,6 +436,37 @@
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1" />
+
+        <!-- Carbs pill: opens the AAPS bolus wizard (WidgetWizardActivity -> MainActivity), no amount of its own -->
+        <FrameLayout
+            android:id="@+id/carbs"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginEnd="6dp"
+            android:minWidth="42dp">
+
+            <ImageView
+                android:id="@+id/carbs_bg"
+                android:layout_width="match_parent"
+                android:layout_height="30dp"
+                android:layout_gravity="center"
+                android:importantForAccessibility="no"
+                android:scaleType="fitXY"
+                android:src="@drawable/widget_pill" />
+
+            <TextView
+                android:id="@+id/carbs_text"
+                style="@style/WidgetGlassText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:paddingStart="11dp"
+                android:paddingEnd="11dp"
+                android:fontFamily="sans-serif-medium"
+                android:text="@string/widget_carbs_pill"
+                android:textColor="@color/widget_glass_txt2"
+                android:textSize="14sp" />
+        </FrameLayout>
 
         <FrameLayout
             android:id="@+id/bolus1"
