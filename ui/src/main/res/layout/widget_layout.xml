@@ -147,10 +147,19 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
+            <!-- BG block. Fresh: BG + (arrow over age), centred. Stale / no data (Widget.kt): top gravity, smaller BG or "– –",
+                 arrow column gone, the age / "Keine Daten seit 01:18" line under it (bg_status) on the Ø Glukose baseline -->
             <LinearLayout
+                android:id="@+id/bg_block"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -167,6 +176,7 @@
                     tools:text="6,5" />
 
                 <LinearLayout
+                    android:id="@+id/age_column"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
@@ -189,6 +199,21 @@
                         android:textSize="12sp"
                         tools:text="vor 1′" />
                 </LinearLayout>
+            </LinearLayout>
+
+                <!-- stale: "vor 23 Min. · zuletzt tief"; no data: "Keine Daten seit 01:18" (+ second line "zuletzt 3,8 tief") -->
+                <TextView
+                    android:id="@+id/bg_status"
+                    style="@style/WidgetGlassText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:lineSpacingExtra="1.7dp"
+                    android:maxLines="2"
+                    android:textColor="@color/widget_glass_high"
+                    android:textSize="13sp"
+                    android:visibility="gone"
+                    tools:text="vor 23 Min." />
             </LinearLayout>
 
             <LinearLayout
@@ -578,6 +603,51 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1" />
 
+        <!-- Right group: calculator pill, quick-bolus pills or the lock text. While the quick bolus is locked by old / no data
+             a caption "BZ manuell" sits over the calculator pill on the IOB / KH / TDD label line (it may run into the lock
+             column, whose texts are right-aligned and leave that space free). -->
+        <FrameLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent">
+
+        <!-- caption column: same metrics as the IOB column (label + invisible 16 sp value) so the baselines match -->
+        <LinearLayout
+            android:id="@+id/carbs_caption_group"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="start|center_vertical"
+            android:importantForAccessibility="no"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/carbs_caption"
+                style="@style/WidgetGlassText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:importantForAccessibility="no"
+                android:text="@string/widget_calc_manual"
+                android:textColor="@color/widget_glass_txt2"
+                android:textSize="11sp" />
+
+            <TextView
+                style="@style/WidgetGlassText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:fontFamily="sans-serif-medium"
+                android:importantForAccessibility="no"
+                android:text=" "
+                android:textSize="16sp"
+                android:visibility="invisible" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
         <!-- Carbs pill: calculator glyph, opens the AAPS bolus wizard (WidgetWizardActivity -> MainActivity), no amount of its own -->
         <FrameLayout
             android:id="@+id/carbs"
@@ -605,19 +675,36 @@
                 android:src="@drawable/widget_calculator" />
         </FrameLayout>
 
-        <!-- Locked quick bolus: the two pills are replaced by a short reason ("Bolus gesperrt · tief"); tap explains -->
-        <TextView
+        <!-- Locked quick bolus: the two pills are replaced by "Schnellbolus" / "gesperrt · tief" on the IOB / KH / TDD grid; tap explains -->
+        <LinearLayout
             android:id="@+id/bolus_locked"
-            style="@style/WidgetGlassText"
             android:layout_width="136dp"
             android:layout_height="48dp"
-            android:ellipsize="end"
             android:gravity="end|center_vertical"
-            android:maxLines="2"
-            android:textColor="@color/widget_glass_txt3"
-            android:textSize="12sp"
-            android:visibility="gone"
-            tools:text="Bolus gesperrt · tief" />
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/WidgetGlassText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:importantForAccessibility="no"
+                android:text="@string/widget_quick_bolus"
+                android:textColor="@color/widget_glass_txt3"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/bolus_locked_text"
+                style="@style/WidgetGlassText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:ellipsize="end"
+                android:importantForAccessibility="no"
+                android:textColor="@color/widget_glass_txt2"
+                android:textSize="12.5sp"
+                tools:text="gesperrt · tief" />
+        </LinearLayout>
 
         <FrameLayout
             android:id="@+id/bolus1"
@@ -669,6 +756,9 @@
                 android:fontFamily="sans-serif-medium"
                 android:textColor="@color/widget_glass_txt1"
                 android:textSize="14sp" />
+        </FrameLayout>
+
+        </LinearLayout>
         </FrameLayout>
 
         </LinearLayout>

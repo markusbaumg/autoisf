@@ -8,6 +8,9 @@
     <color name="widget_glass_high">#FFB547</color>
     <color name="widget_glass_low">#FF7A88</color>
     <color name="widget_glass_stale">#8A93A8</color>
+    <!-- stale last low / high: the number keeps a dimmed range colour (with the word "zuletzt tief / hoch") -->
+    <color name="widget_glass_low_dim">#E86A79</color>
+    <color name="widget_glass_high_dim">#E0A048</color>
     <!-- header: temp target icon, temp basal icons (AAPS temp-basal violet) -->
     <color name="widget_glass_tt">#7CC4FF</color>
     <color name="widget_glass_tbr">#CF8BFE</color>

@@ -202,7 +202,7 @@
     <string name="widget_mean_glucose_description">Average glucose, 14 days: %1$s %2$s</string>
     <string name="widget_hba1c_description">Estimated HbA1c, 14 days: %1$s percent</string>
     <string name="widget_bolus_request">Request bolus of %1$s U</string>
-    <string name="widget_bolus_locked">Bolus locked</string>
+    <string name="widget_bolus_locked">Quick bolus locked</string>
     <string name="widget_bolus_title">Widget bolus</string>
     <string name="widget_bolus_requested">Requested: %1$s U</string>
     <string name="widget_bolus_iob_now">IOB now: %1$s U</string>
@@ -240,16 +240,27 @@
     <string name="widget_smb_now">SMB %1$s U · now</string>
     <string name="widget_isf_description">Sensitivity %1$s</string>
     <string name="widget_basal_description">Basal %1$s</string>
-    <string name="widget_age_stale">stale</string>
-    <string name="widget_bolus_locked_reason">Bolus locked · %1$s</string>
+    <string name="widget_bolus_locked_reason">Quick bolus locked · %1$s</string>
     <string name="widget_lock_low">low</string>
-    <string name="widget_lock_stale">data old</string>
+    <string name="widget_lock_stale">old data</string>
     <string name="widget_lock_no_bg">no data</string>
     <string name="widget_lock_paused">paused</string>
     <string name="widget_lock_pump">pump</string>
     <string name="widget_lock_running">bolus running</string>
     <string name="widget_lock_starting">starting</string>
     <string name="widget_lock_recent">just bolused</string>
+    <string name="widget_age_minutes_long">%1$d min ago</string>
+    <string name="widget_last_low">last: low</string>
+    <string name="widget_last_high">last: high</string>
+    <string name="widget_no_data_since">No data since %1$s</string>
+    <string name="widget_no_data_since_low">No data since %1$s\nlast: %2$s low</string>
+    <string name="widget_no_data">No data</string>
+    <string name="widget_quick_bolus">Quick bolus</string>
+    <string name="widget_quick_bolus_locked">locked · %1$s</string>
+    <string name="widget_locked">locked</string>
+    <string name="widget_calc_manual">manual BG</string>
+    <string name="widget_calc_manual_description">Open bolus calculator – enter BG manually</string>
+    <string name="widget_value_unknown" translatable="false">–</string>
     <string name="widget_percent" translatable="false">%1$d %%</string>
 
 </resources>

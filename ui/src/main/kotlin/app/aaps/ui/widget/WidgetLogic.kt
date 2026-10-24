@@ -28,6 +28,9 @@ object WidgetLogic {
     /** Data older than this is stale (same minute as the watch faces flip to STALE) */
     const val STALE_MS = 12 * 60 * 1000L
 
+    /** Without a reading this long the widget shows "Keine Daten seit 01:18" instead of the number */
+    const val NO_DATA_MS = 30 * 60 * 1000L
+
     /** A reading this far in the future is not trusted */
     const val FUTURE_TOLERANCE_MS = 60 * 1000L
 
@@ -65,6 +68,31 @@ object WidgetLogic {
 
     fun isStale(bgTimestamp: Long?, now: Long): Boolean =
         bgTimestamp == null || now - bgTimestamp >= STALE_MS || bgTimestamp - now > FUTURE_TOLERANCE_MS
+
+    /** Fresh (< 12 min), stale (12..30 min: smaller number + age) or no data (>= 30 min / never: "– –") */
+    enum class Freshness { FRESH, STALE, NO_DATA }
+
+    fun freshness(bgTimestamp: Long?, now: Long): Freshness = when {
+        bgTimestamp == null                         -> Freshness.NO_DATA
+        bgTimestamp - now > FUTURE_TOLERANCE_MS     -> Freshness.STALE
+        now - bgTimestamp >= NO_DATA_MS             -> Freshness.NO_DATA
+        now - bgTimestamp >= STALE_MS               -> Freshness.STALE
+        else                                        -> Freshness.FRESH
+    }
+
+    /**
+     * Range of the last value, also when it is stale: a stale low must never look harmless (it keeps its red and the word
+     * "zuletzt tief"), a stale high keeps a dimmed amber. Only IN, HIGH or LOW.
+     */
+    fun lastRange(bgMgdl: Double): BgRange = when {
+        bgMgdl < LOW_MGDL      -> BgRange.LOW
+        bgMgdl > TIR_HIGH_MGDL -> BgRange.HIGH
+        else                   -> BgRange.IN
+    }
+
+    /** Size of the stale BG relative to the fresh one, and of the "– –" without data */
+    const val STALE_BG_SCALE = 0.63f
+    const val NO_DATA_BG_SCALE = 0.535f
 
     /**
      * Counts of a time in range, same rule as TirCalculatorImpl:
@@ -338,10 +366,18 @@ object WidgetLogic {
 
     // ---------------------------------------------------------------- locked bolus pills: short reason
 
-    /** Short reason shown instead of the locked pills ("Bolus gesperrt · tief"); null = only "Bolus gesperrt" */
-    fun lockReasonShort(block: Block): Int? = when (block) {
+    /**
+     * Short reason shown instead of the locked pills ("Schnellbolus / gesperrt · tief"); null = only "gesperrt".
+     * Text only, the block itself is unchanged: on stale data with a last value below [LOW_MGDL] the low reason wins
+     * over the old data, and from [NO_DATA_MS] on it reads "keine Daten".
+     */
+    fun lockReasonShort(block: Block, bgMgdl: Double? = null, bgTimestamp: Long? = null, now: Long = 0L): Int? = when (block) {
         Block.LOW                                   -> R.string.widget_lock_low
-        Block.STALE                                 -> R.string.widget_lock_stale
+        Block.STALE                                 -> when {
+            bgMgdl != null && bgMgdl < LOW_MGDL                    -> R.string.widget_lock_low
+            freshness(bgTimestamp, now) == Freshness.NO_DATA       -> R.string.widget_lock_no_bg
+            else                                                   -> R.string.widget_lock_stale
+        }
         Block.NO_BG                                 -> R.string.widget_lock_no_bg
         Block.SUSPENDED                             -> R.string.widget_lock_paused
         Block.PUMP_NOT_READY                        -> R.string.widget_lock_pump
@@ -354,8 +390,8 @@ object WidgetLogic {
 
     // ---------------------------------------------------------------- header (display only, read-only data)
 
-    /** Minutes (or h:mm from this many minutes on) in "noch 35′" / "seit 25′" */
-    const val HM_FROM_MINUTES = 100
+    /** Minutes (or hours + minutes from this many minutes on) in "noch 35′" / "seit 1 h 20" */
+    const val HM_FROM_MINUTES = 60
 
     /** Temp target: whole minutes left, rounded up, at least 1. null when it already ended or has no end */
     fun ttMinutesLeft(ttStart: Long, ttDurationMs: Long, now: Long): Int? {
@@ -365,9 +401,16 @@ object WidgetLogic {
         return ceil(leftMs / 60000.0).toInt().coerceAtLeast(1)
     }
 
-    /** Minutes as "35′" or, from [HM_FROM_MINUTES] on, "1:40" (without the leading word) */
-    fun minutesOrHm(minutes: Long): String =
-        if (minutes < HM_FROM_MINUTES) "$minutes′" else String.format(Locale.US, "%d:%02d", minutes / 60, minutes % 60)
+    /**
+     * Duration without the leading word: "35′", from [HM_FROM_MINUTES] on "1 h", "1 h 20", "2 h 05" (never "4:00", which
+     * reads like a clock time); [capped] (zero streak at [ZERO_STREAK_MAX_MS]) gives "> 4 h".
+     */
+    fun durationShort(minutes: Long, capped: Boolean = false): String = when {
+        capped                    -> "> ${ZERO_STREAK_MAX_MS / 3_600_000L} h"
+        minutes < HM_FROM_MINUTES -> "$minutes′"
+        minutes % 60 == 0L        -> "${minutes / 60} h"
+        else                      -> String.format(Locale.US, "%d h %02d", minutes / 60, minutes % 60)
+    }
 
     /** No loop result older than this is shown (ISF / factor hidden) */
     const val ISF_MAX_AGE_MS = 15 * 60 * 1000L
@@ -459,7 +502,8 @@ object WidgetLogic {
         object PumpStopped : BasalState(true)
         data class Disconnected(val minutesLeft: Int) : BasalState(true)
         data class Paused(val minutesLeft: Int) : BasalState(true)
-        data class Zero(val sinceMinutes: Long) : BasalState(true)
+        /** [capped] = the streak reaches back the full [ZERO_STREAK_MAX_MS] ("seit > 4 h") */
+        data class Zero(val sinceMinutes: Long, val capped: Boolean = false) : BasalState(true)
         data class High(val rate: Double, val pct: Int) : BasalState(true)
         data class Smb(val amount: Double, val minutesAgo: Long) : BasalState(false)
         /** a lowered (or slightly raised) temp: quiet text, [lower] = with the low-temp glyph */
@@ -480,7 +524,10 @@ object WidgetLogic {
                 mode == RM.Mode.SUPER_BOLUS                                          -> BasalState.Paused(i.suspendMinutesLeft.coerceAtLeast(0))
             // a zero temp during a zero profile basal equals the profile: nothing (falls through to SMB / None)
             rate != null && rate < ZERO_RATE && !(i.profileBasal != null && i.profileBasal < ZERO_RATE) ->
-                BasalState.Zero(((i.now - (i.zeroSince ?: i.now)).coerceAtLeast(0)) / 60000L)
+                BasalState.Zero(
+                    ((i.now - (i.zeroSince ?: i.now)).coerceAtLeast(0)) / 60000L,
+                    capped = i.zeroSince != null && i.zeroSince <= i.now - ZERO_STREAK_MAX_MS
+                )
             rate != null && pct != null && pct >= HIGH_TEMP_PCT                      -> BasalState.High(rate, pct)
             smbAt != null && smbRecent(smbAt, i.now) && i.smbAmount != null && i.smbAmount > 0.0 ->
                 BasalState.Smb(i.smbAmount, ((i.now - smbAt).coerceAtLeast(0)) / 60000L)

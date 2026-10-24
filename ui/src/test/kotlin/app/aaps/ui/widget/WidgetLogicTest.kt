@@ -431,10 +431,60 @@ class WidgetLogicTest {
         assertThat(WidgetLogic.ttMinutesLeft(now - 60 * min + 1000, 60 * min, now)).isEqualTo(1)
         assertThat(WidgetLogic.ttMinutesLeft(now - 60 * min, 60 * min, now)).isNull()
         assertThat(WidgetLogic.ttMinutesLeft(now, 0, now)).isNull()
-        assertThat(WidgetLogic.minutesOrHm(35)).isEqualTo("35′")
-        assertThat(WidgetLogic.minutesOrHm(99)).isEqualTo("99′")
-        assertThat(WidgetLogic.minutesOrHm(100)).isEqualTo("1:40")
-        assertThat(WidgetLogic.minutesOrHm(125)).isEqualTo("2:05")
+    }
+
+    @Test
+    fun `durations read as hours and minutes, never like a clock time`() {
+        assertThat(WidgetLogic.durationShort(0)).isEqualTo("0′")
+        assertThat(WidgetLogic.durationShort(35)).isEqualTo("35′")
+        assertThat(WidgetLogic.durationShort(59)).isEqualTo("59′")
+        assertThat(WidgetLogic.durationShort(60)).isEqualTo("1 h")
+        assertThat(WidgetLogic.durationShort(80)).isEqualTo("1 h 20")
+        assertThat(WidgetLogic.durationShort(100)).isEqualTo("1 h 40")
+        assertThat(WidgetLogic.durationShort(120)).isEqualTo("2 h")
+        assertThat(WidgetLogic.durationShort(125)).isEqualTo("2 h 05")
+        assertThat(WidgetLogic.durationShort(240)).isEqualTo("4 h")
+        assertThat(WidgetLogic.durationShort(240, capped = true)).isEqualTo("> 4 h")
+    }
+
+    @Test
+    fun `zero streak at the 4 h cap is flagged capped`() {
+        val zeroTb = BasalInput(now = now, mode = RM.Mode.CLOSED_LOOP, pumpSuspended = false, suspendMinutesLeft = 0, tempBasal = true, rate = 0.0, pct = 0, profileBasal = 0.8)
+        assertThat(WidgetLogic.basalState(zeroTb.copy(zeroSince = now - WidgetLogic.ZERO_STREAK_MAX_MS))).isEqualTo(BasalState.Zero(240, capped = true))
+        assertThat(WidgetLogic.basalState(zeroTb.copy(zeroSince = now - WidgetLogic.ZERO_STREAK_MAX_MS + min))).isEqualTo(BasalState.Zero(239, capped = false))
+        assertThat(WidgetLogic.basalState(zeroTb.copy(zeroSince = null))).isEqualTo(BasalState.Zero(0, capped = false))
+    }
+
+    // ---------------------------------------------------------------- stale / no data
+
+    @Test
+    fun `freshness thresholds 12 and 30 min`() {
+        assertThat(WidgetLogic.freshness(null, now)).isEqualTo(WidgetLogic.Freshness.NO_DATA)
+        assertThat(WidgetLogic.freshness(now - 12 * min + 1, now)).isEqualTo(WidgetLogic.Freshness.FRESH)
+        assertThat(WidgetLogic.freshness(now - 12 * min, now)).isEqualTo(WidgetLogic.Freshness.STALE)
+        assertThat(WidgetLogic.freshness(now - 30 * min + 1, now)).isEqualTo(WidgetLogic.Freshness.STALE)
+        assertThat(WidgetLogic.freshness(now - 30 * min, now)).isEqualTo(WidgetLogic.Freshness.NO_DATA)
+        assertThat(WidgetLogic.freshness(now + 61_000, now)).isEqualTo(WidgetLogic.Freshness.STALE)
+        assertThat(WidgetLogic.freshness(now + 30_000, now)).isEqualTo(WidgetLogic.Freshness.FRESH)
+    }
+
+    @Test
+    fun `last range of a stale value keeps low and high`() {
+        assertThat(WidgetLogic.lastRange(68.4)).isEqualTo(BgRange.LOW)   // 3,8 mmol/L
+        assertThat(WidgetLogic.lastRange(70.2)).isEqualTo(BgRange.IN)
+        assertThat(WidgetLogic.lastRange(180.0)).isEqualTo(BgRange.IN)
+        assertThat(WidgetLogic.lastRange(227.0)).isEqualTo(BgRange.HIGH) // 12,6 mmol/L
+    }
+
+    @Test
+    fun `stale lock reason - low wins over old data, no data from 30 min`() {
+        assertThat(WidgetLogic.lockReasonShort(Block.STALE, 117.0, now - 23 * min, now)).isEqualTo(R.string.widget_lock_stale)
+        assertThat(WidgetLogic.lockReasonShort(Block.STALE, 68.4, now - 23 * min, now)).isEqualTo(R.string.widget_lock_low)
+        assertThat(WidgetLogic.lockReasonShort(Block.STALE, 117.0, now - 45 * min, now)).isEqualTo(R.string.widget_lock_no_bg)
+        assertThat(WidgetLogic.lockReasonShort(Block.STALE, 68.4, now - 45 * min, now)).isEqualTo(R.string.widget_lock_low)
+        assertThat(WidgetLogic.lockReasonShort(Block.STALE, 250.0, now - 45 * min, now)).isEqualTo(R.string.widget_lock_no_bg)
+        // the block itself is unchanged: stale data with a low value is still STALE first
+        assertThat(WidgetLogic.bolusBlock(ok.copy(bgMgdl = 68.4, bgTimestamp = now - 23 * min))).isEqualTo(Block.STALE)
     }
 
     @Test
@@ -496,7 +546,7 @@ class WidgetLogicTest {
     @Test
     fun `locked pills name a short reason`() {
         assertThat(WidgetLogic.lockReasonShort(Block.LOW)).isEqualTo(R.string.widget_lock_low)
-        assertThat(WidgetLogic.lockReasonShort(Block.STALE)).isEqualTo(R.string.widget_lock_stale)
+        assertThat(WidgetLogic.lockReasonShort(Block.STALE, 117.0, now - 15 * min, now)).isEqualTo(R.string.widget_lock_stale)
         assertThat(WidgetLogic.lockReasonShort(Block.NO_BG)).isEqualTo(R.string.widget_lock_no_bg)
         assertThat(WidgetLogic.lockReasonShort(Block.SUSPENDED)).isEqualTo(R.string.widget_lock_paused)
         assertThat(WidgetLogic.lockReasonShort(Block.CONSTRAINED_TO_ZERO)).isNull()
