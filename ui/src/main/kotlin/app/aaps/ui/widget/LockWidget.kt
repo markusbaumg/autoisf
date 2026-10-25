@@ -35,7 +35,6 @@ import app.aaps.core.objects.extensions.convertedToAbsolute
 import app.aaps.core.objects.extensions.round
 import app.aaps.ui.R
 import app.aaps.ui.widget.LockWidgetLogic.PaletteKind
-import app.aaps.ui.widget.LockWidgetLogic.Tier
 import app.aaps.ui.widget.WidgetLogic.BasalState
 import dagger.android.HasAndroidInjector
 import java.text.SimpleDateFormat
@@ -89,7 +88,7 @@ class LockWidget : AppWidgetProvider() {
                     it.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
                     it.putExtra(EXTRA_FROM, from)
                 })
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "updateWidget failed", e)
             }
         }
@@ -113,7 +112,8 @@ class LockWidget : AppWidgetProvider() {
                 return
             }
             super.onReceive(context, intent)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Throwable, not Exception: an OEM API mismatch (NoSuchMethodError ...) must not take down the loop process
             Log.e(TAG, "onReceive failed", e)
         }
     }
@@ -149,22 +149,22 @@ class LockWidget : AppWidgetProvider() {
                 for (id in ids) {
                     try {
                         val sizes = sizes(manager, id)
-                        val tiers = sizes.map { LockWidgetLogic.tier(it.width, it.height) }
-                        val models = tiers.distinct().associateWith { LockWidgetLogic.build(input, it, palette, texts) }
-                        val key = "$tiers|${palette.kind}|$scrim|$fontScale|$models"
+                        // per size the largest tier whose texts fit (estimated), so no digit is ever cut
+                        val fitted = sizes.map { LockWidgetLogic.fit(input, it.width, it.height, fontScale, palette, texts) }
+                        val key = "${palette.kind}|$scrim|$fontScale|$fitted"
                         if (!force && lastKeys[id] == key) continue
                         val views =
-                            if (sizes.size == 1) LockWidgetRenderer.build(ctx, models.getValue(tiers[0]), tiers[0], palette, texts, scrim, fontScale, click)
+                            if (sizes.size == 1) LockWidgetRenderer.build(ctx, fitted[0].second, fitted[0].first, palette, texts, scrim, fontScale, click)
                             else RemoteViews(sizes.indices.associate { i ->
-                                sizes[i] to LockWidgetRenderer.build(ctx, models.getValue(tiers[i]), tiers[i], palette, texts, scrim, fontScale, click)
+                                sizes[i] to LockWidgetRenderer.build(ctx, fitted[i].second, fitted[i].first, palette, texts, scrim, fontScale, click)
                             })
                         manager.updateAppWidget(id, views)
                         lastKeys[id] = key
-                    } catch (e: Exception) {
+                    } catch (e: Throwable) {
                         aapsLogger.error(LTag.WIDGET, "LockWidget render $id failed", e)
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 aapsLogger.error(LTag.WIDGET, "LockWidget render failed", e)
             }
         }
@@ -190,7 +190,7 @@ class LockWidget : AppWidgetProvider() {
             val system = if (lock == null) wm.getWallpaperColors(WallpaperManager.FLAG_SYSTEM) else null
             val kind = LockWidgetLogic.paletteKind(lock?.colorHints, system?.colorHints)
             kind to LockWidgetLogic.scrimAlpha((lock ?: system)?.primaryColor?.toArgb())
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             PaletteKind.LIGHT to LockWidgetLogic.SCRIM_ALPHA_MID
         }
 
@@ -203,10 +203,13 @@ class LockWidget : AppWidgetProvider() {
         val cob = iobCobCalculator.getCobInfo("LockWidget COB").displayCob
         val profile = profileFunction.getProfile()
         val aps = config.APS
-        val basal = if (aps && profile != null) basalState(profile, now) else BasalState.None
+        // The record itself, read once: Loop.runningMode / minutesToEndOfSuspend() run runningModePreCheck(), which can
+        // insert running-mode records (a loop input). This widget must only read.
+        val rm = if (aps) persistenceLayer.getRunningModeActiveAt(now) else null
+        val pumpSuspended = aps && activePlugin.activePump.isSuspended()
+        val basal = if (rm != null && profile != null) basalState(profile, rm, pumpSuspended, now) else BasalState.None
         val tt = persistenceLayer.getTemporaryTargetActiveAt(now)
-        val mode = if (aps) loop.runningMode else null
-        val loopOff = aps && (mode == RM.Mode.DISABLED_LOOP || mode?.isSuspended() == true || activePlugin.activePump.isSuspended())
+        val loopOff = LockWidgetLogic.loopOff(aps, rm?.mode, pumpSuspended)
         return LockWidgetLogic.Input(
             now = now,
             bgMgdl = bg?.recalculated,
@@ -226,7 +229,7 @@ class LockWidget : AppWidgetProvider() {
         )
     }
 
-    /** "17:16", "gestern 23:40", older: "23.10. 23:40" (system 12 / 24 h setting) */
+    /** "17:16", "gestern 23:40", older: "23.10. 23:40" (system 12 / 24 h setting; date and time apart, no comma) */
     private fun sinceText(timestamp: Long, now: Long): String {
         val locale = appContext.resources.configuration.locales[0]
         val time = if (DateFormat.is24HourFormat(appContext)) "HHmm" else "hmma"
@@ -237,12 +240,13 @@ class LockWidget : AppWidgetProvider() {
                 SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, time), locale).format(Date(timestamp))
             )
 
-            else -> SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "dM$time"), locale).format(Date(timestamp))
+            else -> SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "dM"), locale).format(Date(timestamp)) + " " +
+                SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, time), locale).format(Date(timestamp))
         }
     }
 
     /** Same read-only basal state as Widget.basalState (pump / loop / DB), display only */
-    private fun basalState(profile: Profile, now: Long): BasalState {
+    private fun basalState(profile: Profile, rm: RM, pumpSuspended: Boolean, now: Long): BasalState {
         val tb = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
         val rate = tb?.convertedToAbsolute(now, profile)
         val zeroSince = if (tb != null && rate != null && rate < WidgetLogic.ZERO_RATE)
@@ -254,9 +258,9 @@ class LockWidget : AppWidgetProvider() {
         return WidgetLogic.basalState(
             WidgetLogic.BasalInput(
                 now = now,
-                mode = loop.runningMode,
-                pumpSuspended = activePlugin.activePump.isSuspended(),
-                suspendMinutesLeft = loop.minutesToEndOfSuspend(),
+                mode = rm.mode,
+                pumpSuspended = pumpSuspended,
+                suspendMinutesLeft = LockWidgetLogic.suspendMinutesLeft(rm.mode, rm.timestamp, rm.duration, now),
                 tempBasal = tb != null,
                 rate = rate,
                 pct = tb?.let { WidgetLogic.tbrPercent(it.isAbsolute, it.rate, profile.getBasal(now)) },
