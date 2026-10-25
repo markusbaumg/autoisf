@@ -339,8 +339,9 @@ class Widget : AppWidgetProvider() {
             is BasalState.Disconnected -> gs(R.string.widget_disconnected) to minutesLeft(state.minutesLeft)
             is BasalState.Paused       -> gs(R.string.widget_paused) to minutesLeft(state.minutesLeft)
             is BasalState.Zero         -> "0 $rateUnit" to gs(R.string.widget_since, WidgetLogic.durationShort(state.sinceMinutes, state.capped))
-            is BasalState.High         -> "${WidgetLogic.rateText(state.rate)} $rateUnit" to "${state.pct} %"
-            is BasalState.Quiet        -> "${WidgetLogic.rateText(state.rate)} $rateUnit" to "${state.pct} %"
+            // U/h only: on a low profile hour the % reads like an overdose (0,95 U/h = 633 % of 0,15 U/h)
+            is BasalState.High         -> "${WidgetLogic.rateText(state.rate)} $rateUnit" to null
+            is BasalState.Quiet        -> "${WidgetLogic.rateText(state.rate)} $rateUnit" to null
             is BasalState.Smb          ->
                 (if (state.minutesAgo < 1) gs(R.string.widget_smb_now, WidgetLogic.amountText(state.amount))
                 else gs(R.string.widget_smb_ago, WidgetLogic.amountText(state.amount), state.minutesAgo.toInt())) to null
