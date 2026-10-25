@@ -37,6 +37,7 @@ import app.aaps.ui.dialogs.TreatmentDialog
 import app.aaps.ui.dialogs.WizardDialog
 import app.aaps.ui.dialogs.WizardInfoDialog
 import app.aaps.ui.services.AlarmSoundService
+import app.aaps.ui.widget.LockWidget // KUSI: lock-widget
 import app.aaps.ui.widget.Widget
 import app.aaps.ui.widget.WidgetBolusActivity
 import app.aaps.ui.widget.WidgetWizardActivity
@@ -49,6 +50,7 @@ abstract class UiModule {
     @ContributesAndroidInjector abstract fun contributesAlarmSoundService(): AlarmSoundService
 
     @ContributesAndroidInjector abstract fun contributesWidget(): Widget
+    @ContributesAndroidInjector abstract fun contributesLockWidget(): LockWidget // KUSI: lock-widget
     @ContributesAndroidInjector abstract fun contributesWidgetConfigureActivity(): WidgetConfigureActivity
     @ContributesAndroidInjector abstract fun contributesWidgetBolusActivity(): WidgetBolusActivity
     @ContributesAndroidInjector abstract fun contributesWidgetWizardActivity(): WidgetWizardActivity

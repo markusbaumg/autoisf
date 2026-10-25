@@ -24,6 +24,20 @@
                 android:resource="@xml/widget_info" />
         </receiver>
 
+        <!-- KUSI: lock-widget. Lock-screen widget (Good Lock LockStar), display only, updated via Widget.updateWidget -->
+        <receiver
+            android:name=".widget.LockWidget"
+            android:exported="true"
+            android:label="@string/lock_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_lock_info" />
+        </receiver>
+
         <!-- Widget quick-bolus confirmation: started only by the widget's PendingIntent (not exported, no intent-filter) -->
         <activity
             android:name=".widget.WidgetBolusActivity"

@@ -88,6 +88,7 @@ class Widget : AppWidgetProvider() {
         private var handler = Handler(HandlerThread(this::class.simpleName + "Handler").also { it.start() }.looper)
 
         fun updateWidget(context: Context, from: String) {
+            LockWidget.updateWidget(context, from) // KUSI: lock-widget
             context.sendBroadcast(Intent().also {
                 it.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, AppWidgetManager.getInstance(context)?.getAppWidgetIds(ComponentName(context, Widget::class.java)))
                 it.putExtra("from", from)

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- KUSI: lock-widget -->
+<resources>
+    <string name="lock_widget_name">AAPS Sperrbildschirm</string>
+    <string name="lock_widget_description">Glukose, Trend und IOB unter der Uhr des Sperrbildschirms (Good Lock LockStar)</string>
+    <string name="lock_widget_pill_low">TIEF</string>
+    <string name="lock_widget_pill_high">HOCH</string>
+    <string name="lock_widget_pill_stale">ALT</string>
+    <string name="lock_widget_pill_no_data">KEINE DATEN</string>
+    <string name="lock_widget_now">jetzt</string>
+    <string name="lock_widget_ago">vor %1$s</string>
+    <string name="lock_widget_last_low">zuletzt tief</string>
+    <string name="lock_widget_last_high">zuletzt hoch</string>
+    <string name="lock_widget_last_in">zuletzt im Ziel</string>
+    <string name="lock_widget_since">seit %1$s</string>
+    <string name="lock_widget_yesterday">gestern %1$s</string>
+    <string name="lock_widget_loop_stalled_short">Loop steht</string>
+    <string name="lock_widget_loop_late">Loop seit %1$s</string>
+    <string name="lock_widget_loop_stalled">Loop steht seit %1$s</string>
+    <string name="lock_widget_loop_off">Loop aus</string>
+    <string name="lock_widget_temp_target">Temp-Ziel %1$s · noch %2$s</string>
+    <string name="lock_widget_temp_target_no_end">Temp-Ziel %1$s</string>
+    <string name="lock_widget_basal">Basal</string>
+    <string name="lock_widget_basal_zero_low">0 U/h · Pause seit %1$s</string>
+    <string name="lock_widget_basal_zero">0 U/h seit %1$s</string>
+    <string name="lock_widget_carbs">KH</string>
+    <string name="lock_widget_tir">Im Ziel 24 h</string>
+    <string name="lock_widget_preview_bg">6,4</string>
+    <string name="lock_widget_preview_meta">jetzt  ·  IOB 1,20 U</string>
+    <string name="lock_widget_preview_tir" formatted="false">Im Ziel 24 h  94 %</string>
+</resources>

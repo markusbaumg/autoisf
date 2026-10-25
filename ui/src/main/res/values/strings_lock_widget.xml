@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- KUSI: lock-widget. Texts of the lock-screen widget (LockWidget), resolved in the system language like Widget.gs() -->
+<resources>
+    <string name="lock_widget_name">AAPS lock screen</string>
+    <string name="lock_widget_description">Glucose, trend and IOB under the lock-screen clock (Good Lock LockStar)</string>
+    <string name="lock_widget_pill_low">LOW</string>
+    <string name="lock_widget_pill_high">HIGH</string>
+    <string name="lock_widget_pill_stale">OLD</string>
+    <string name="lock_widget_pill_no_data">NO DATA</string>
+    <string name="lock_widget_now">now</string>
+    <string name="lock_widget_ago">%1$s ago</string>
+    <string name="lock_widget_iob" translatable="false">IOB</string>
+    <string name="lock_widget_insulin" translatable="false">%1$s U</string>
+    <string name="lock_widget_last_low">last low</string>
+    <string name="lock_widget_last_high">last high</string>
+    <string name="lock_widget_last_in">last in range</string>
+    <string name="lock_widget_since">since %1$s</string>
+    <string name="lock_widget_yesterday">yesterday %1$s</string>
+    <string name="lock_widget_loop_stalled_short">Loop stalled</string>
+    <string name="lock_widget_loop_late">Loop %1$s ago</string>
+    <string name="lock_widget_loop_stalled">Loop stalled for %1$s</string>
+    <string name="lock_widget_loop_off">Loop off</string>
+    <string name="lock_widget_temp_target">Temp target %1$s · %2$s left</string>
+    <string name="lock_widget_temp_target_no_end">Temp target %1$s</string>
+    <string name="lock_widget_basal">Basal</string>
+    <string name="lock_widget_basal_zero_low">0 U/h · paused for %1$s</string>
+    <string name="lock_widget_basal_zero">0 U/h for %1$s</string>
+    <string name="lock_widget_basal_rate" translatable="false">%1$s U/h</string>
+    <string name="lock_widget_carbs">Carbs</string>
+    <string name="lock_widget_carbs_value" translatable="false">%1$s g</string>
+    <string name="lock_widget_tir">In range 24 h</string>
+    <string name="lock_widget_percent" translatable="false">%1$s %%</string>
+    <string name="lock_widget_preview_bg">6.4</string>
+    <string name="lock_widget_preview_meta">now  ·  IOB 1.20 U</string>
+    <string name="lock_widget_preview_tir" formatted="false">In range 24 h  94 %</string>
+</resources>
