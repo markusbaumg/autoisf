@@ -54,12 +54,15 @@ import app.aaps.ui.widget.WidgetLogic.Block
 import io.reactivex.rxjava3.core.Single
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
+import java.util.Optional
 import javax.inject.Inject
 import kotlin.math.abs
 
 /**
  * Entry point of the widget's quick-bolus pills. Not exported, no intent filter: only the widget's PendingIntent starts it.
  * The intent carries the widget id and the slot (1 | 2), never a dose. The amount comes from that widget's settings.
+ * Slot [SLOT_EXPLAIN] (the lock text and the disabled calculator pill) only explains the current lock: no protection,
+ * no confirmation, never a bolus.
  *
  * Same path as InsulinDialog (non record-only branch): constraints, ProtectionCheck BOLUS, OKDialog.showConfirmation,
  * uel.log + commandQueue.bolus. Locks (low / stale BG, pump or loop not ready, bolus running, recent bolus) are checked
@@ -86,12 +89,16 @@ class WidgetBolusActivity : TranslatedDaggerAppCompatActivity() {
     @Inject lateinit var rh: ResourceHelper
     @Inject lateinit var dateUtil: DateUtil
     @Inject lateinit var decimalFormatter: DecimalFormatter
+    @Inject lateinit var widgetWizard: WidgetWizard
 
     companion object {
 
         const val ACTION_WIDGET_BOLUS = "app.aaps.ui.widget.BOLUS"
         const val EXTRA_WIDGET_ID = "widget_id"
         const val EXTRA_SLOT = "slot"
+
+        /** Explanation only (lock text, disabled calculator pill): shows why the bolus is locked, never offers OK */
+        const val SLOT_EXPLAIN = 0
 
         /** From tap to confirmation (protection included) */
         private const val REQUEST_CAP_MS = 120 * 1000L
@@ -150,11 +157,12 @@ class WidgetBolusActivity : TranslatedDaggerAppCompatActivity() {
         widgetId = intent.getIntExtra(EXTRA_WIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
         slot = intent.getIntExtra(EXTRA_SLOT, 0)
         val ids = AppWidgetManager.getInstance(this)?.getAppWidgetIds(ComponentName(this, Widget::class.java)) ?: IntArray(0)
-        if (intent.action != ACTION_WIDGET_BOLUS || slot !in 1..2 || widgetId !in ids || intent.data != dataUri(widgetId, slot)) {
+        if (intent.action != ACTION_WIDGET_BOLUS || slot !in SLOT_EXPLAIN..2 || widgetId !in ids || intent.data != dataUri(widgetId, slot)) {
             aapsLogger.warn(LTag.WIDGET, "Widget bolus: invalid request")
             return done()
         }
         if (!config.APS) return done()
+        if (slot == SLOT_EXPLAIN) return explain()
         if (!config.appInitialized) return refuse(Block.NOT_INITIALIZED)
         if (screenLocked()) return refuse(Block.SCREEN_LOCKED)
         requestStartedAt = SystemClock.elapsedRealtime()
@@ -203,6 +211,27 @@ class WidgetBolusActivity : TranslatedDaggerAppCompatActivity() {
     private fun refuse(reason: String) {
         ToastUtils.warnToast(this, rh.gs(R.string.widget_bolus_not_given, reason))
         done()
+    }
+
+    /** Lock text / disabled calculator pill: the lock on fresh data, explained; the widget renders again either way */
+    private fun explain() {
+        phase = Phase.DONE
+        disposable += Single.fromCallable { Optional.ofNullable(widgetWizard.quickBolusBlock()) }
+            .subscribeOn(aapsSchedulers.io)
+            .observeOn(aapsSchedulers.main)
+            .subscribe({ block ->
+                           Widget.updateWidget(this, "WidgetBolusExplain")
+                           if (isFinishing) return@subscribe
+                           if (block.isPresent)
+                               OKDialog.show(this, rh.gs(R.string.widget_bolus_title), rh.gs(R.string.widget_bolus_locked) + ": " + rh.gs(blockText(block.get())), true) { done() }
+                           else {
+                               ToastUtils.infoToast(this, rh.gs(R.string.widget_bolus_unlocked))
+                               done()
+                           }
+                       }, {
+                           aapsLogger.error(LTag.WIDGET, "Widget bolus explain failed", it)
+                           done()
+                       })
     }
 
     private fun screenLocked(): Boolean =

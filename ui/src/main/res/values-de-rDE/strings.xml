@@ -140,7 +140,7 @@
     <string name="widget_mean_glucose_description">Durchschnittliche Glukose, 14 Tage: %1$s %2$s</string>
     <string name="widget_hba1c_description">Geschätztes HbA1c, 14 Tage: %1$s Prozent</string>
     <string name="widget_bolus_request">Bolus %1$s U anfragen</string>
-    <string name="widget_bolus_locked">Schnellbolus gesperrt</string>
+    <string name="widget_bolus_locked">Bolus gesperrt</string>
     <string name="widget_bolus_title">Widget-Bolus</string>
     <string name="widget_bolus_requested">Angefragt: %1$s U</string>
     <string name="widget_bolus_iob_now">IOB jetzt: %1$s U</string>
@@ -176,7 +176,7 @@
     <string name="widget_smb_now">SMB %1$s U · jetzt</string>
     <string name="widget_isf_description">Empfindlichkeit %1$s</string>
     <string name="widget_basal_description">Basal %1$s</string>
-    <string name="widget_bolus_locked_reason">Schnellbolus gesperrt · %1$s</string>
+    <string name="widget_bolus_locked_reason">Bolus gesperrt · %1$s</string>
     <string name="widget_lock_low">tief</string>
     <string name="widget_lock_stale">Daten alt</string>
     <string name="widget_lock_no_bg">keine Daten</string>
@@ -191,11 +191,11 @@
     <string name="widget_no_data_since">Keine Daten seit %1$s</string>
     <string name="widget_no_data_since_low">Keine Daten seit %1$s\nzuletzt %2$s tief</string>
     <string name="widget_no_data">Keine Daten</string>
-    <string name="widget_quick_bolus">Schnellbolus</string>
+    <string name="widget_bolus_label">Bolus</string>
     <string name="widget_quick_bolus_locked">gesperrt · %1$s</string>
     <string name="widget_locked">gesperrt</string>
-    <string name="widget_calc_manual">BZ manuell</string>
-    <string name="widget_calc_manual_description">Bolus-Rechner öffnen – BZ manuell eingeben</string>
+    <string name="widget_calc_locked">Bolus-Rechner gesperrt: %1$s</string>
+    <string name="widget_bolus_unlocked">Bolus nicht mehr gesperrt</string>
     <string name="widget_configuration">Widget-Einstellungen</string>
     <string name="use_black_color">Schwarz verwenden</string>
 

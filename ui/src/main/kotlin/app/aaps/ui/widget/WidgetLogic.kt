@@ -346,7 +346,7 @@ object WidgetLogic {
 
     // ---------------------------------------------------------------- carbs pill -> bolus wizard
 
-    /** Same conditions as the overview's calculator button (OverviewFragment). BG is not checked: carbs are fine on a low. */
+    /** Same conditions as the overview's calculator button (OverviewFragment). The quick-bolus lock is added on top, see [calcPill]. */
     enum class WizardBlock { NOT_SUPPORTED, NOT_INITIALIZED, NO_PROFILE, PUMP_NOT_READY, PUMP_SUSPENDED }
 
     fun wizardBlock(aps: Boolean, appInitialized: Boolean, profileAvailable: Boolean, pumpInitialized: Boolean, pumpSuspendedOrDisconnected: Boolean): WizardBlock? = when {
@@ -364,10 +364,46 @@ object WidgetLogic {
     fun wizardRequestValid(armedAt: Long?, nowElapsed: Long): Boolean =
         armedAt != null && nowElapsed - armedAt in 0..WIZARD_REQUEST_TTL_MS
 
+    /**
+     * What a calculator pill tap does. Every quick-bolus lock disables it too (owner decision 25 Oct): the tap only explains
+     * the lock (WidgetBolusActivity, no bolus offered), the wizard opens only when neither the quick bolus nor the wizard
+     * is blocked. Text and routing only, the lock decision itself is [bolusBlock] / [wizardBlock].
+     */
+    enum class CalcPill { OPEN, BOLUS_LOCKED, WIZARD_BLOCKED }
+
+    fun calcPill(bolus: Block?, wizard: WizardBlock?): CalcPill = when {
+        bolus != null  -> CalcPill.BOLUS_LOCKED
+        wizard != null -> CalcPill.WIZARD_BLOCKED
+        else           -> CalcPill.OPEN
+    }
+
+    // ---------------------------------------------------------------- short locks: follow-up render
+
+    /** While a bolus runs the widget renders again this often, so the lock clears soon after the pump finished */
+    const val LOCK_FOLLOW_UP_MS = 10 * 1000L
+
+    /** ... but at most this long after the lock was first rendered (then the minute refresh takes over) */
+    const val LOCK_FOLLOW_UP_MAX_MS = 3 * 60 * 1000L
+
+    /**
+     * Delay (ms) to one more widget render for a lock that ends by itself, null = none (no polling while unlocked or
+     * for locks that a new BG / loop run clears). [lockedSince] = first render with this lock.
+     * BOLUS_RUNNING: every [LOCK_FOLLOW_UP_MS], up to [LOCK_FOLLOW_UP_MAX_MS]. RECENT_BOLUS: once, just after its
+     * [RECENT_BOLUS_MS] expire ([lastBolusAt] known), otherwise like a running bolus.
+     */
+    fun lockFollowUpDelay(block: Block?, lockedSince: Long?, now: Long, lastBolusAt: Long? = null): Long? {
+        if (block != Block.BOLUS_RUNNING && block != Block.RECENT_BOLUS) return null
+        if (block == Block.RECENT_BOLUS && lastBolusAt != null)
+            return (lastBolusAt + RECENT_BOLUS_MS - now + 1000L).coerceIn(1000L, RECENT_BOLUS_MS + 1000L)
+        val since = lockedSince ?: now
+        if (now - since >= LOCK_FOLLOW_UP_MAX_MS) return null
+        return LOCK_FOLLOW_UP_MS
+    }
+
     // ---------------------------------------------------------------- locked bolus pills: short reason
 
     /**
-     * Short reason shown instead of the locked pills ("Schnellbolus / gesperrt · tief"); null = only "gesperrt".
+     * Short reason shown instead of the locked pills ("Bolus / gesperrt · tief"); null = only "gesperrt".
      * Text only, the block itself is unchanged: on stale data with a last value below [LOW_MGDL] the low reason wins
      * over the old data, and from [NO_DATA_MS] on it reads "keine Daten".
      */

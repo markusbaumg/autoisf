@@ -8,6 +8,7 @@ import app.aaps.ui.widget.WidgetLogic.BasalState
 import app.aaps.ui.widget.WidgetLogic.BgRange
 import app.aaps.ui.widget.WidgetLogic.Block
 import app.aaps.ui.widget.WidgetLogic.BolusInput
+import app.aaps.ui.widget.WidgetLogic.CalcPill
 import app.aaps.ui.widget.WidgetLogic.MeterLevel
 import app.aaps.ui.widget.WidgetLogic.Refusal
 import app.aaps.ui.widget.WidgetLogic.TirCounts
@@ -299,7 +300,7 @@ class WidgetLogicTest {
     }
 
     @Test
-    fun `wizard follows the overview calculator button, not the BG`() {
+    fun `wizard conditions follow the overview calculator button`() {
         assertThat(WidgetLogic.wizardBlock(aps = true, appInitialized = true, profileAvailable = true, pumpInitialized = true, pumpSuspendedOrDisconnected = false)).isNull()
         assertThat(WidgetLogic.wizardBlock(aps = false, appInitialized = true, profileAvailable = true, pumpInitialized = true, pumpSuspendedOrDisconnected = false))
             .isEqualTo(WizardBlock.NOT_SUPPORTED)
@@ -550,5 +551,52 @@ class WidgetLogicTest {
         assertThat(WidgetLogic.lockReasonShort(Block.NO_BG)).isEqualTo(R.string.widget_lock_no_bg)
         assertThat(WidgetLogic.lockReasonShort(Block.SUSPENDED)).isEqualTo(R.string.widget_lock_paused)
         assertThat(WidgetLogic.lockReasonShort(Block.CONSTRAINED_TO_ZERO)).isNull()
+    }
+
+    @Test
+    fun `calculator pill is disabled by every quick-bolus lock`() {
+        // every lock the widget can render (refresh-level input) disables the pill, before any wizard condition
+        Block.entries.forEach { block ->
+            assertThat(WidgetLogic.calcPill(block, null)).isEqualTo(CalcPill.BOLUS_LOCKED)
+            assertThat(WidgetLogic.calcPill(block, WizardBlock.NO_PROFILE)).isEqualTo(CalcPill.BOLUS_LOCKED)
+        }
+        assertThat(WidgetLogic.calcPill(null, WizardBlock.NO_PROFILE)).isEqualTo(CalcPill.WIZARD_BLOCKED)
+        assertThat(WidgetLogic.calcPill(null, null)).isEqualTo(CalcPill.OPEN)
+        // the rendered states: low, stale, no data, paused, pump, bolus running, starting all lock the pill
+        val refresh = ok.copy(lastBolusAt = null, amount = null, amountAfterConstraints = null)
+        listOf(
+            refresh.copy(bgMgdl = 60.0),
+            refresh.copy(bgTimestamp = now - 15 * min),
+            refresh.copy(bgMgdl = null, bgTimestamp = null),
+            refresh.copy(suspended = true),
+            refresh.copy(pumpInitialized = false),
+            refresh.copy(bolusInQueue = true),
+            refresh.copy(appInitialized = false)
+        ).forEach { assertThat(WidgetLogic.calcPill(WidgetLogic.bolusBlock(it), null)).isEqualTo(CalcPill.BOLUS_LOCKED) }
+        assertThat(WidgetLogic.calcPill(WidgetLogic.bolusBlock(refresh), null)).isEqualTo(CalcPill.OPEN)
+    }
+
+    @Test
+    fun `running bolus renders again every 10 s for at most 3 min, nothing while unlocked`() {
+        assertThat(WidgetLogic.lockFollowUpDelay(null, null, now)).isNull()
+        listOf(Block.LOW, Block.STALE, Block.NO_BG, Block.SUSPENDED, Block.PUMP_NOT_READY, Block.NOT_INITIALIZED)
+            .forEach { assertThat(WidgetLogic.lockFollowUpDelay(it, now - min, now)).isNull() }
+        assertThat(WidgetLogic.lockFollowUpDelay(Block.BOLUS_RUNNING, null, now)).isEqualTo(WidgetLogic.LOCK_FOLLOW_UP_MS)
+        assertThat(WidgetLogic.lockFollowUpDelay(Block.BOLUS_RUNNING, now, now)).isEqualTo(10_000L)
+        assertThat(WidgetLogic.lockFollowUpDelay(Block.BOLUS_RUNNING, now - 3 * min + 1, now)).isEqualTo(10_000L)
+        assertThat(WidgetLogic.lockFollowUpDelay(Block.BOLUS_RUNNING, now - 3 * min, now)).isNull()
+    }
+
+    @Test
+    fun `just-bolused lock renders again right after its 60 s`() {
+        // bolus 20 s ago: the 60 s lock ends in 40 s, render 1 s after that
+        assertThat(WidgetLogic.lockFollowUpDelay(Block.RECENT_BOLUS, now, now, lastBolusAt = now - 20_000L)).isEqualTo(41_000L)
+        // already over (clock): soon, at least 1 s
+        assertThat(WidgetLogic.lockFollowUpDelay(Block.RECENT_BOLUS, now, now, lastBolusAt = now - 90_000L)).isEqualTo(1_000L)
+        // bolus timestamp in the future: never more than the lock itself + 1 s
+        assertThat(WidgetLogic.lockFollowUpDelay(Block.RECENT_BOLUS, now, now, lastBolusAt = now + 10 * min)).isEqualTo(61_000L)
+        // bolus time unknown: like a running bolus
+        assertThat(WidgetLogic.lockFollowUpDelay(Block.RECENT_BOLUS, now, now)).isEqualTo(10_000L)
+        assertThat(WidgetLogic.lockFollowUpDelay(Block.RECENT_BOLUS, now - 3 * min, now)).isNull()
     }
 }

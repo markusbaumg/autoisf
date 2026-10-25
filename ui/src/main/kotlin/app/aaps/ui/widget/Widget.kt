@@ -36,7 +36,6 @@ import app.aaps.core.interfaces.overview.LastBgData
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.interfaces.profile.ProfileFunction
-import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
@@ -49,6 +48,8 @@ import app.aaps.core.objects.extensions.round
 import app.aaps.ui.R
 import app.aaps.ui.widget.WidgetLogic.BasalState
 import app.aaps.ui.widget.WidgetLogic.BgRange
+import app.aaps.ui.widget.WidgetLogic.Block
+import app.aaps.ui.widget.WidgetLogic.CalcPill
 import app.aaps.ui.widget.WidgetLogic.MeterLevel
 import dagger.android.HasAndroidInjector
 import java.text.SimpleDateFormat
@@ -58,7 +59,7 @@ import javax.inject.Inject
 /**
  * Home-screen widget, design R2 "Luft" (glass card).
  * Shows BG + trend + data age, time in range 24 h / 7 d / 30 d, 14 day mean glucose + HbA1c, IOB / COB / TDD,
- * a calculator pill (bolus wizard) and two quick-bolus pills.
+ * a calculator pill (bolus wizard) and two quick-bolus pills. Every quick-bolus lock disables the calculator pill too.
  * The pills never bolus: they open [WidgetBolusActivity], which asks for protection and an extra confirmation.
  */
 class Widget : AppWidgetProvider() {
@@ -76,7 +77,6 @@ class Widget : AppWidgetProvider() {
     @Inject lateinit var config: Config
     @Inject lateinit var preferences: Preferences
     @Inject lateinit var persistenceLayer: PersistenceLayer
-    @Inject lateinit var commandQueue: CommandQueue
     @Inject lateinit var statsCache: WidgetStatsCache
     @Inject lateinit var widgetWizard: WidgetWizard
     @Inject lateinit var processedTbrEbData: ProcessedTbrEbData
@@ -98,15 +98,29 @@ class Widget : AppWidgetProvider() {
         private val meterFills = intArrayOf(R.id.tir1_fill, R.id.tir2_fill, R.id.tir3_fill)
         private val meterTexts = intArrayOf(R.id.tir1, R.id.tir2, R.id.tir3)
 
-        /** widget_glass_txt3 #B4BED5, solid: text and unit of a locked bolus pill (the pill background marks it locked) */
+        /** widget_glass_txt3 #B4BED5, solid: glyph of the disabled calculator pill (the pill background marks it locked) */
         private const val DISABLED_TEXT_COLOR = 0xFFB4BED5.toInt()
-        private const val DISABLED_UNIT_COLOR = 0xFFB4BED5.toInt()
 
         /** Alpha (0..255) of the meter fills during a low, so the red BG is the only loud thing (texts use solid txt3) */
         private const val LOW_DIM_ALPHA = 0x73
 
-        /** Calculator pill moved down from the row centre onto the IOB / KH / TDD value line (old data) */
-        private const val CALC_VALUE_LINE_SHIFT_DP = 9.5f
+        /** First render (wall clock) of the current self-ending lock (bolus running), see [scheduleLockFollowUp] */
+        private var lockedSince: Long? = null
+        private var lockFollowUp: Runnable? = null
+
+        /**
+         * A lock that ends without a new BG or loop run (bolus running) would stay on the widget until the next refresh:
+         * render once more after [WidgetLogic.lockFollowUpDelay] (10 s, repeated while it lasts, at most 3 min).
+         * Nothing is scheduled while unlocked or for the other locks. Runs on [handler].
+         */
+        private fun scheduleLockFollowUp(context: Context, block: Block?, now: Long) {
+            lockedSince = if (block == Block.BOLUS_RUNNING || block == Block.RECENT_BOLUS) lockedSince ?: now else null
+            lockFollowUp?.let { handler.removeCallbacks(it) }
+            lockFollowUp = null
+            val delay = WidgetLogic.lockFollowUpDelay(block, lockedSince, now) ?: return
+            val appContext = context.applicationContext
+            lockFollowUp = Runnable { updateWidget(appContext, "LockFollowUp") }.also { handler.postDelayed(it, delay) }
+        }
     }
 
     private val intentAction = "OpenApp"
@@ -116,9 +130,6 @@ class Widget : AppWidgetProvider() {
 
     /** BG text size relative to the fresh size (stale / no data smaller), set by [updateBg], used by [applySize] */
     private var bgScale = 1f
-
-    /** "BZ manuell" caption over the calculator pill (quick bolus locked by old / no data), set by [updateCarbsButton] */
-    private var showCalcCaption = false
 
     override fun onReceive(context: Context, intent: Intent?) {
         (context.applicationContext as HasAndroidInjector).androidInjector().inject(this)
@@ -198,10 +209,11 @@ class Widget : AppWidgetProvider() {
                 updateTir(views, range)
                 updateLongTerm(views, range)
                 updateBottom(views, range)
-                updateBolusButtons(context, views, appWidgetId, bg?.recalculated, bg?.timestamp, now)
-                updateCarbsButton(context, views, appWidgetId, range == BgRange.STALE || range == BgRange.NONE)
+                val bolusBlock = updateBolusButtons(context, views, appWidgetId, bg?.recalculated, bg?.timestamp, now)
+                updateCarbsButton(context, views, appWidgetId, bolusBlock)
                 // Instruct the widget manager to update the widget
                 appWidgetManager.updateAppWidget(appWidgetId, sized(views, appWidgetManager, appWidgetId))
+                scheduleLockFollowUp(context, bolusBlock, now)
             }
         }
     }
@@ -596,27 +608,17 @@ class Widget : AppWidgetProvider() {
         views.setTextColor(R.id.tdd, valueColor)
     }
 
-    private fun updateBolusButtons(context: Context, views: RemoteViews, appWidgetId: Int, bgMgdl: Double?, bgTimestamp: Long?, now: Long) {
+    /** Quick-bolus pills or the lock text; returns the lock (null = unlocked or no APS build) */
+    private fun updateBolusButtons(context: Context, views: RemoteViews, appWidgetId: Int, bgMgdl: Double?, bgTimestamp: Long?, now: Long): Block? {
         if (!config.APS) {
             views.setViewVisibility(R.id.bolus1, View.GONE)
             views.setViewVisibility(R.id.bolus2, View.GONE)
             views.setViewVisibility(R.id.bolus_locked, View.GONE)
-            return
+            return null
         }
         // Hint only, from in-memory data: WidgetBolusActivity checks everything again before and at confirmation
-        val block = WidgetLogic.bolusBlock(
-            WidgetLogic.BolusInput(
-                aps = config.APS,
-                appInitialized = config.appInitialized,
-                pumpInitialized = activePlugin.activePump.isInitialized(),
-                suspended = loop.runningMode.isSuspended(),
-                bolusInQueue = commandQueue.bolusInQueue(),
-                bgMgdl = bgMgdl,
-                bgTimestamp = bgTimestamp,
-                now = now
-            )
-        )
-        // Locked: the pills give way to "Schnellbolus" / "gesperrt · tief"; a tap explains it in full.
+        val block = widgetWizard.quickBolusBlock(bgMgdl, bgTimestamp, now)
+        // Locked: the pills give way to "Bolus" / "gesperrt · tief"; a tap explains it in full.
         // On stale data with a last low the low reason wins (text only, the block is the same)
         if (block != null) {
             val reason = WidgetLogic.lockReasonShort(block, bgMgdl, bgTimestamp, now)
@@ -635,11 +637,12 @@ class Widget : AppWidgetProvider() {
             views.setTextViewText(R.id.bolus_locked_text, sb)
             val sentence = reason?.let { gs(R.string.widget_bolus_locked_reason, gs(it)) } ?: gs(R.string.widget_bolus_locked)
             views.setContentDescription(R.id.bolus_locked, sentence + ": " + gs(WidgetBolusActivity.blockText(block)))
-            views.setOnClickPendingIntent(R.id.bolus_locked, WidgetBolusActivity.pendingIntent(context, appWidgetId, 1))
+            // Explanation only: never a bolus confirmation, even when the lock has ended by the time of the tap
+            views.setOnClickPendingIntent(R.id.bolus_locked, WidgetBolusActivity.pendingIntent(context, appWidgetId, WidgetBolusActivity.SLOT_EXPLAIN))
             views.setViewVisibility(R.id.bolus_locked, View.VISIBLE)
             views.setViewVisibility(R.id.bolus1, View.GONE)
             views.setViewVisibility(R.id.bolus2, View.GONE)
-            return
+            return block
         }
         views.setViewVisibility(R.id.bolus_locked, View.GONE)
         val unitU = gs(R.string.widget_unit_insulin)
@@ -652,64 +655,54 @@ class Widget : AppWidgetProvider() {
             val textId = if (slot == 1) R.id.bolus1_text else R.id.bolus2_text
             val amountText = WidgetLogic.amountText(amount)
             views.setViewVisibility(id, View.VISIBLE)
-            // Locked (stale, low, no pump ...): visibly disabled, txt3 at reduced alpha on a faint flat pill
-            views.setImageViewResource(bgId, if (block == null) R.drawable.widget_pill else R.drawable.widget_pill_disabled)
-            views.setInt(bgId, "setImageAlpha", if (block == null) 255 else 150)
-            views.setTextViewText(textId, withUnit("+$amountText", unitU, 0.79f, if (block == null) null else DISABLED_UNIT_COLOR))
-            views.setTextColor(textId, if (block == null) color(R.color.widget_glass_txt1) else DISABLED_TEXT_COLOR)
-            views.setContentDescription(
-                id,
-                if (block == null) gs(R.string.widget_bolus_request, amountText)
-                else gs(R.string.widget_bolus_locked) + ": " + gs(WidgetBolusActivity.blockText(block))
-            )
-            // Also when locked: the activity then only explains why (never offers OK)
+            views.setImageViewResource(bgId, R.drawable.widget_pill)
+            views.setInt(bgId, "setImageAlpha", 255)
+            views.setTextViewText(textId, withUnit("+$amountText", unitU, 0.79f))
+            views.setTextColor(textId, color(R.color.widget_glass_txt1))
+            views.setContentDescription(id, gs(R.string.widget_bolus_request, amountText))
+            // WidgetBolusActivity checks every lock again before and at the confirmation
             views.setOnClickPendingIntent(id, WidgetBolusActivity.pendingIntent(context, appWidgetId, slot))
         }
+        return null
     }
 
-    /** Carbs pill: opens the AAPS bolus wizard (via WidgetWizardActivity). Not locked on a low BG, only by the wizard button's own conditions. */
     /**
-     * Carbs pill: opens the AAPS bolus wizard (via WidgetWizardActivity). Not locked on a low or old BG, only by the wizard
-     * button's own conditions. With old / no data ([oldData]) it gets the caption "BZ manuell" and moves onto the value
-     * line: the quick bolus is locked then, the wizard (own confirmation, manual finger-prick BG) is not. No dosing change.
+     * Calculator pill: opens the AAPS bolus wizard (via WidgetWizardActivity). Disabled (dimmed like a locked pill) whenever
+     * the quick bolus is locked, for every reason ([bolusBlock]), or the wizard button's own conditions fail. A tap on a
+     * pill disabled by the quick-bolus lock only explains the lock (WidgetBolusActivity, explanation mode); one disabled by
+     * the wizard conditions lets MainActivity say why. WidgetWizard checks both again before the wizard opens. No dosing change.
      */
-    private fun updateCarbsButton(context: Context, views: RemoteViews, appWidgetId: Int, oldData: Boolean) {
-        showCalcCaption = false
+    private fun updateCarbsButton(context: Context, views: RemoteViews, appWidgetId: Int, bolusBlock: Block?) {
         if (!config.APS) {
             views.setViewVisibility(R.id.carbs, View.GONE)
-            views.setViewVisibility(R.id.carbs_caption_group, View.GONE)
             return
         }
-        val block = widgetWizard.block()
-        val manual = oldData && block == null
-        showCalcCaption = manual
+        val wizardBlock = widgetWizard.block()
+        val pill = WidgetLogic.calcPill(bolusBlock, wizardBlock)
+        val enabled = pill == CalcPill.OPEN
         views.setInt(R.id.carbs_bg, "setImageLevel", 5000)
-        views.setImageViewResource(R.id.carbs_bg, if (block == null) R.drawable.widget_pill else R.drawable.widget_pill_disabled)
-        views.setInt(R.id.carbs_bg, "setImageAlpha", 255)
-        // Calculator glyph in txt2 (txt1 when it is the only active button); never locked by a stale or low BG
-        views.setInt(
-            R.id.carbs_icon, "setColorFilter",
-            if (block != null) DISABLED_TEXT_COLOR else color(if (manual) R.color.widget_glass_txt1 else R.color.widget_glass_txt2)
-        )
-        // Fresh: pill 30 dp centred in the 48 dp row. Old data: 26 dp pill (15 dp glyph) on the value line under the caption
-        val shift = if (manual) CALC_VALUE_LINE_SHIFT_DP else 0f
-        views.setViewLayoutHeight(R.id.carbs_bg, if (manual) 26f else 30f, TypedValue.COMPLEX_UNIT_DIP)
-        views.setViewLayoutMargin(R.id.carbs_bg, RemoteViews.MARGIN_TOP, shift, TypedValue.COMPLEX_UNIT_DIP)
-        views.setViewLayoutWidth(R.id.carbs_icon, if (manual) 15f else 18f, TypedValue.COMPLEX_UNIT_DIP)
-        views.setViewLayoutHeight(R.id.carbs_icon, if (manual) 15f else 18f, TypedValue.COMPLEX_UNIT_DIP)
-        views.setViewLayoutMargin(R.id.carbs_icon, RemoteViews.MARGIN_TOP, shift, TypedValue.COMPLEX_UNIT_DIP)
-        views.setContentDescription(
-            R.id.carbs,
-            when {
-                block != null -> gs(R.string.widget_wizard_not_opened, gs(WidgetWizard.blockText(block)))
-                manual        -> gs(R.string.widget_calc_manual_description)
-                else          -> gs(R.string.widget_carbs_description)
+        views.setImageViewResource(R.id.carbs_bg, if (enabled) R.drawable.widget_pill else R.drawable.widget_pill_disabled)
+        views.setInt(R.id.carbs_bg, "setImageAlpha", if (enabled) 255 else 150)
+        views.setInt(R.id.carbs_icon, "setColorFilter", if (enabled) color(R.color.widget_glass_txt2) else DISABLED_TEXT_COLOR)
+        views.setInt(R.id.carbs_icon, "setImageAlpha", if (enabled) 255 else 150)
+        when (pill) {
+            CalcPill.BOLUS_LOCKED   -> {
+                val reason = gs(WidgetBolusActivity.blockText(bolusBlock!!))
+                views.setContentDescription(R.id.carbs, gs(R.string.widget_calc_locked, reason))
+                views.setOnClickPendingIntent(R.id.carbs, WidgetBolusActivity.pendingIntent(context, appWidgetId, WidgetBolusActivity.SLOT_EXPLAIN))
             }
-        )
-        // Also when blocked: MainActivity then only says why. The caption opens the wizard too.
-        val wizard = WidgetWizardActivity.pendingIntent(context, appWidgetId)
-        views.setOnClickPendingIntent(R.id.carbs, wizard)
-        views.setOnClickPendingIntent(R.id.carbs_caption_group, wizard)
+
+            CalcPill.WIZARD_BLOCKED -> {
+                views.setContentDescription(R.id.carbs, gs(R.string.widget_calc_locked, gs(WidgetWizard.blockText(wizardBlock!!))))
+                // MainActivity only says why (WidgetWizard.openIfRequested)
+                views.setOnClickPendingIntent(R.id.carbs, WidgetWizardActivity.pendingIntent(context, appWidgetId))
+            }
+
+            CalcPill.OPEN           -> {
+                views.setContentDescription(R.id.carbs, gs(R.string.widget_carbs_description))
+                views.setOnClickPendingIntent(R.id.carbs, WidgetWizardActivity.pendingIntent(context, appWidgetId))
+            }
+        }
     }
 
     /**
@@ -741,7 +734,6 @@ class Widget : AppWidgetProvider() {
         if (config.APS) {
             val carbs = WidgetLogic.showCarbsPill(widthDp)
             views.setViewVisibility(R.id.carbs, if (carbs) View.VISIBLE else View.GONE)
-            views.setViewVisibility(R.id.carbs_caption_group, if (carbs && showCalcCaption) View.VISIBLE else View.GONE)
         }
         // Too low for the two long-term rows: hide them, the meters stay centred
         if (!WidgetLogic.longTermFits(heightDp)) setLongTermVisible(views, false)
