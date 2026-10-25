@@ -13,6 +13,10 @@ on the owner's phone (Samsung Galaxy S24) and Galaxy Watch5 Pro. Insulin is dose
 - Upstream AndroidAPS fixes come from `nightscout/AndroidAPS` `dev` (heavily refactored: KMP,
   Metro, flows). Port the intent by hand; cherry-picks rarely apply.
 
+- **AAPS 4 migration is backlog** until AutoISF has a 4.x line (`make upstream-status`). Plan, audit of all
+  kusi changes and upstream state: `_docs/aaps4/`. Read it before any 4.x or upstream work.
+- New kusi changes are additive: new files/modules, only thin hooks in core files (see `_docs/aaps4/MIGRATION_AAPS4.md`).
+
 ## Safety rules
 
 - Never change dosing math, SMB/AutoISF logic or limits as a side effect. Changes to loop inputs
